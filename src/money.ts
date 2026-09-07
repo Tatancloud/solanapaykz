@@ -35,6 +35,16 @@ export function parseDecimalToUnits(
   decimals: number,
   options?: { allowTruncation?: boolean },
 ): bigint {
+  // Явная проверка типа — раньше регулярное выражение приводило нестроковое
+  // значение к строке через неявный toString и иногда проходило (например,
+  // число совпадает с форматом), после чего падал невнятный TypeError на
+  // value.split. Для нетипизированных интеграций (например, вызов SDK из
+  // обычного JS без проверки типов) сообщение должно называть проблему.
+  if (typeof value !== 'string') {
+    throw new ConfigError(
+      `Некорректное десятичное число: ожидалась строка, получено ${typeof value} (${JSON.stringify(value)})`,
+    );
+  }
   if (!isValidDecimalFormat(value)) {
     throw new ConfigError(`Некорректное десятичное число: ${JSON.stringify(value)}`);
   }

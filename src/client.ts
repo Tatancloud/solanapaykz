@@ -1,6 +1,6 @@
 import { address, createSolanaRpc } from '@solana/kit';
 import type { Cluster, TokenSymbol } from './config.js';
-import { DEFAULT_QUOTE_TTL_MS } from './config.js';
+import { DEFAULT_QUOTE_TTL_MS, DEFAULT_RATE_CACHE_TTL_MS } from './config.js';
 import { ConfigError } from './errors.js';
 import { createPaymentRequest, type PaymentRequest, type PaymentRequestOptions } from './payment/request.js';
 import { createQuote, type Quote } from './quote/quote.js';
@@ -42,6 +42,14 @@ export class SolanaPayKZ {
     if (!options.rpcUrl) {
       throw new ConfigError('Не указан rpcUrl — адрес RPC обязателен');
     }
+    // Проверка через конструктор URL — опечатка в адресе должна всплыть
+    // сразу как явная ошибка конфигурации, а не как непонятный сетевой сбой
+    // при первом обращении к RPC.
+    try {
+      new URL(options.rpcUrl);
+    } catch (error) {
+      throw new ConfigError(`Некорректный rpcUrl: ${options.rpcUrl}`, { cause: error });
+    }
     try {
       address(options.recipient);
     } catch (error) {
@@ -54,9 +62,14 @@ export class SolanaPayKZ {
       quoteTtlMs: options.quoteTtlMs ?? DEFAULT_QUOTE_TTL_MS,
     };
     this.rpc = createSolanaRpc(options.rpcUrl);
+    // Срок жизни кеша курса — независимая от quoteTtlMs величина. См.
+    // DEFAULT_RATE_CACHE_TTL_MS в config.ts: раньше quoteTtlMs управлял и
+    // сроком котировки, и сроком кеша курса одновременно, что удваивало
+    // окно ценового риска (а для quoteTtlMs в сутки — растягивало кеш курса
+    // на сутки).
     this.rateProvider = new RateProvider(
       [new BinanceRateSource(), new SyntheticRateSource()],
-      this.options.quoteTtlMs,
+      DEFAULT_RATE_CACHE_TTL_MS,
     );
   }
 
@@ -83,6 +96,7 @@ export class SolanaPayKZ {
       reference: params.reference,
       quote: params.quote,
       recipient: this.options.recipient,
+      cluster: this.options.cluster,
     });
   }
 }

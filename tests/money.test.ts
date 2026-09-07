@@ -36,6 +36,18 @@ describe('разбор десятичных строк', () => {
     expect(() => parseDecimalToUnits('-5', 2)).toThrow(ConfigError);
     expect(() => parseDecimalToUnits('', 2)).toThrow(ConfigError);
   });
+
+  it('отвергает нестроку с внятным ConfigError, а не TypeError', () => {
+    // Без явной проверки typeof регулярное выражение приводит нестроковое
+    // значение к строке через toString и может случайно пройти (например,
+    // число 100 совпадёт с форматом), а затем value.split упадёт с невнятным
+    // TypeError — особенно неприятно для нетипизированных интеграций.
+    expect(() => parseDecimalToUnits(100 as unknown as string, 2)).toThrow(ConfigError);
+    expect(() => parseDecimalToUnits(null as unknown as string, 2)).toThrow(ConfigError);
+    expect(() => parseDecimalToUnits(undefined as unknown as string, 2)).toThrow(ConfigError);
+    expect(() => parseDecimalToUnits({} as unknown as string, 2)).toThrow(ConfigError);
+    expect(() => parseDecimalToUnits([] as unknown as string, 2)).toThrow(ConfigError);
+  });
 });
 
 describe('проверка формата десятичного числа', () => {

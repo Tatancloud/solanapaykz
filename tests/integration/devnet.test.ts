@@ -25,6 +25,7 @@ describe('devnet', () => {
         expiresAt: new Date(Date.now() + 900_000).toISOString(),
       },
       recipient: '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
+      cluster: 'devnet',
     });
     expect(status.status).toBe('pending');
   }, 30_000);

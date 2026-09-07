@@ -3,7 +3,7 @@ import { encodeURL } from '@solana/pay';
 import QRCode from 'qrcode';
 import { resolveToken } from '../config.js';
 import { QuoteExpiredError } from '../errors.js';
-import { isQuoteExpired, type Quote } from '../quote/quote.js';
+import { assertValidQuote, isQuoteExpired, type Quote } from '../quote/quote.js';
 
 export interface PaymentRequestOptions {
   /** Solana-адрес продавца. */
@@ -39,6 +39,10 @@ export async function createPaymentRequest(
   quote: Quote,
   options: PaymentRequestOptions,
 ): Promise<PaymentRequest> {
+  // Котировка приходит от продавца (из его БД) — проверяем её целостность
+  // раньше любого другого действия. См. assertValidQuote.
+  assertValidQuote(quote);
+
   if (isQuoteExpired(quote)) {
     throw new QuoteExpiredError(
       `Котировка ${quote.quoteId} просрочена (истекла ${quote.expiresAt})`,

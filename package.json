@@ -18,12 +18,35 @@
     "dist",
     "README.md"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Tatancloud/solanapaykz.git"
+  },
+  "homepage": "https://github.com/Tatancloud/solanapaykz#readme",
+  "bugs": {
+    "url": "https://github.com/Tatancloud/solanapaykz/issues"
+  },
+  "keywords": [
+    "solana",
+    "solana-pay",
+    "usdc",
+    "sol",
+    "kzt",
+    "tenge",
+    "payments",
+    "crypto",
+    "blockchain",
+    "sdk",
+    "typescript"
+  ],
+  "author": "Tatancloud <ruslan@satybaldin.kz>",
   "scripts": {
     "build": "tsup",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:integration": "vitest run --config vitest.integration.config.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm test && npm run typecheck && npm run build"
   },
   "dependencies": {
     "@solana-program/memo": "0.11.2",
@@ -42,6 +65,9 @@
     "vitest": "2.1.8"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20.18.0"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
