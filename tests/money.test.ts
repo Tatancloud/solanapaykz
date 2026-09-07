@@ -86,6 +86,12 @@ describe('конвертация тенге в единицы токена', () 
     expect(() => convertKztToTokenUnits('10000', '0', 6)).toThrow(RateSourceError);
     expect(() => convertKztToTokenUnits('10000', '-1', 6)).toThrow(ConfigError);
   });
+
+  it('отвергает сумму с избыточной точностью', () => {
+    expect(() => convertKztToTokenUnits('100.999', '459.60', 6)).toThrow(ConfigError);
+    // Проверяем что корректная точность работает
+    expect(convertKztToTokenUnits('100.99', '459.60', 6)).toBeGreaterThan(0n);
+  });
 });
 
 describe('перемножение курсов', () => {
@@ -117,5 +123,11 @@ describe('наценка продавца', () => {
     expect(() => applyMarkup('10000', 100)).not.toThrow();
     expect(() => applyMarkup('10000', 100.01)).toThrow(ConfigError);
     expect(() => applyMarkup('10000', 1e21)).toThrow(ConfigError);
+  });
+
+  it('отвергает сумму с избыточной точностью', () => {
+    expect(() => applyMarkup('100.999', 1)).toThrow(ConfigError);
+    // Проверяем что корректная точность работает
+    expect(applyMarkup('100.99', 1)).toBe('102.00');
   });
 });

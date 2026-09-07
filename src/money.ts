@@ -75,7 +75,7 @@ export function applyMarkup(amountKzt: string, markupPercent: number): string {
   }
 
   const base = parseDecimalToUnits(amountKzt, KZT_DECIMALS, { allowTruncation: false });
-  // Переводим процент в целые четырёхзначные единицы (basis points × 10),
+  // Переводим процент в целые четырёхзначные единицы,
   // что соответствует шагу 0.01 процентного пункта.
   const permyriad = BigInt(Math.round(markupPercent * 100));
 
