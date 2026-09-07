@@ -1,7 +1,7 @@
 import type { TokenSymbol } from '../config.js';
 import { DEFAULT_RATE_TIMEOUT_MS } from '../config.js';
 import { RateSourceError } from '../errors.js';
-import { multiplyRates } from '../money.js';
+import { isValidDecimalFormat, multiplyRates } from '../money.js';
 import { fetchJson } from './http.js';
 import type { RateSource } from './types.js';
 
@@ -38,7 +38,7 @@ export class BinanceRateSource implements RateSource {
       throw new RateSourceError(`Binance ${symbol}: непригодная цена ${JSON.stringify(price)}`);
     }
     // Проверяем формат: только цифры, опциональная точка, цифры
-    if (!/^\d+(\.\d+)?$/.test(price)) {
+    if (!isValidDecimalFormat(price)) {
       throw new RateSourceError(`Binance ${symbol}: непригодная цена ${JSON.stringify(price)}`);
     }
     // Проверяем, что число положительное
