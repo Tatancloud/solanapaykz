@@ -74,6 +74,15 @@ describe('создание платёжного запроса', () => {
       .rejects.toThrow(QuoteExpiredError);
   });
 
+  it('выбрасывает ConfigError для невалидного recipient (не голый SolanaError)', async () => {
+    // Тот же класс ошибки, что и в checkPayment для невалидного recipient —
+    // одинаковый неверный ввод должен давать одинаковый тип ошибки в обеих
+    // функциях SDK.
+    await expect(
+      createPaymentRequest(quoteFixture(), { recipient: 'не-валидный-адрес' }),
+    ).rejects.toThrow(ConfigError);
+  });
+
   describe('проверяет котировку до любых других действий (чужая база)', () => {
     it('отвергает amountToken === null', async () => {
       const quote = quoteFixture({ amountToken: null as unknown as string });
