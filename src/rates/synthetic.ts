@@ -1,7 +1,7 @@
 import type { TokenSymbol } from '../config.js';
 import { DEFAULT_RATE_TIMEOUT_MS } from '../config.js';
 import { RateSourceError } from '../errors.js';
-import { RATE_DECIMALS, multiplyRates } from '../money.js';
+import { RATE_DECIMALS, isValidDecimalFormat, multiplyRates } from '../money.js';
 import { fetchJson } from './http.js';
 import type { RateSource } from './types.js';
 
@@ -26,17 +26,16 @@ export class SyntheticRateSource implements RateSource {
   constructor(private readonly timeoutMs: number = DEFAULT_RATE_TIMEOUT_MS) {}
 
   async getKztPerToken(token: TokenSymbol): Promise<string> {
-    const kztPerUsd = await this.fetchKztPerUsd();
-    const usdPerToken = await this.fetchUsdPerToken(token);
+    const [kztPerUsd, usdPerToken] = await Promise.all([
+      this.fetchKztPerUsd(),
+      this.fetchUsdPerToken(token),
+    ]);
     return multiplyRates(kztPerUsd, usdPerToken);
   }
 
   private async fetchKztPerUsd(): Promise<string> {
     const data = await fetchJson(FX_ENDPOINT, this.timeoutMs);
-    // Проверяем, что data - объект (не null, не массив, не примитив)
-    if (!data || typeof data !== 'object' || Array.isArray(data)) {
-      throw new RateSourceError(`Курс валют: ответ не является объектом`);
-    }
+    assertIsObject(data, 'Курс валют: ответ не является объектом');
     const typedData = data as {
       result?: unknown;
       rates?: Record<string, unknown>;
@@ -44,28 +43,47 @@ export class SyntheticRateSource implements RateSource {
     if (typedData.result !== 'success') {
       throw new RateSourceError(`Курс валют: ответ не success (${String(typedData.result)})`);
     }
-    return toRateString(typedData.rates?.['KZT'], 'Курс валют: нет KZT в ответе');
+    return toRateString(typedData.rates?.['KZT'], 'Курс валют');
   }
 
   private async fetchUsdPerToken(token: TokenSymbol): Promise<string> {
     const id = COINGECKO_IDS[token];
     const url = `${COINGECKO_ENDPOINT}?ids=${id}&vs_currencies=usd`;
     const data = await fetchJson(url, this.timeoutMs);
-    // Проверяем, что data - объект (не null, не массив, не примитив)
-    if (!data || typeof data !== 'object' || Array.isArray(data)) {
-      throw new RateSourceError(`CoinGecko: ответ не является объектом`);
-    }
+    assertIsObject(data, 'CoinGecko: ответ не является объектом');
     const typedData = data as Record<string, { usd?: unknown }>;
     // CoinGecko на неподдерживаемую валюту отвечает HTTP 200 и пустым объектом:
     // {"usd-coin":{}}. Это отказ источника, а не нулевая цена.
-    return toRateString(typedData[id]?.usd, `CoinGecko: нет цены для ${id}`);
+    return toRateString(typedData[id]?.usd, `CoinGecko`);
+  }
+}
+
+/** Проверяет что значение - объект (не null, не массив, не примитив). */
+function assertIsObject(data: unknown, errorMessage: string): void {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw new RateSourceError(errorMessage);
   }
 }
 
 /** Приводит число к строке курса, отвергая всё непригодное. */
-function toRateString(value: unknown, errorMessage: string): string {
+function toRateString(value: unknown, source: string): string {
+  // Проверяем, что это число
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
-    throw new RateSourceError(`${errorMessage} (получено ${JSON.stringify(value)})`);
+    throw new RateSourceError(`${source}: непригодное значение ${JSON.stringify(value)}`);
   }
-  return value.toFixed(RATE_DECIMALS);
+
+  // Форматируем в строку курса
+  const formatted = value.toFixed(RATE_DECIMALS);
+
+  // Проверяем что после форматирования строка остаётся валидной десятичной
+  if (!isValidDecimalFormat(formatted)) {
+    throw new RateSourceError(`${source}: непригодное значение после форматирования ${JSON.stringify(value)} -> "${formatted}"`);
+  }
+
+  // Проверяем что результат не нулевой (от очень маленьких чисел toFixed может вернуть "0.00000000")
+  if (Number(formatted) === 0) {
+    throw new RateSourceError(`${source}: значение округлилось до нуля ${JSON.stringify(value)}`);
+  }
+
+  return formatted;
 }

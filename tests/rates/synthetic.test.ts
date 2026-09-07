@@ -76,6 +76,42 @@ describe('SyntheticRateSource', () => {
       .rejects.toThrow(RateSourceError);
   });
 
+  it('падает на экспоненциально большом курсе FX (1e21)', async () => {
+    mockFetch({
+      'open.er-api.com': { body: { result: 'success', rates: { KZT: 1e21 } } },
+      'coingecko': { body: { 'usd-coin': { usd: 1.0 } } },
+    });
+    await expect(new SyntheticRateSource().getKztPerToken('USDC'))
+      .rejects.toThrow(RateSourceError);
+  });
+
+  it('падает на экспоненциально большой цене CoinGecko (1e21)', async () => {
+    mockFetch({
+      'open.er-api.com': { body: { result: 'success', rates: { KZT: 455.296 } } },
+      'coingecko': { body: { 'usd-coin': { usd: 1e21 } } },
+    });
+    await expect(new SyntheticRateSource().getKztPerToken('USDC'))
+      .rejects.toThrow(RateSourceError);
+  });
+
+  it('падает на экспоненциально малом курсе FX (4e-10 = нулевой)', async () => {
+    mockFetch({
+      'open.er-api.com': { body: { result: 'success', rates: { KZT: 4e-10 } } },
+      'coingecko': { body: { 'usd-coin': { usd: 1.0 } } },
+    });
+    await expect(new SyntheticRateSource().getKztPerToken('USDC'))
+      .rejects.toThrow(RateSourceError);
+  });
+
+  it('падает на экспоненциально малой цене CoinGecko (4e-10 = нулевой)', async () => {
+    mockFetch({
+      'open.er-api.com': { body: { result: 'success', rates: { KZT: 455.296 } } },
+      'coingecko': { body: { 'usd-coin': { usd: 4e-10 } } },
+    });
+    await expect(new SyntheticRateSource().getKztPerToken('USDC'))
+      .rejects.toThrow(RateSourceError);
+  });
+
   it('имеет имя для аудита', () => {
     expect(new SyntheticRateSource().name).toBe('synthetic');
   });
