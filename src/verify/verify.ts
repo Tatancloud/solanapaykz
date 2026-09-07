@@ -7,8 +7,10 @@ import {
   validateTransfer,
   type ConfirmedSignatureInfo,
 } from '@solana/pay';
+import type { Cluster } from '../config.js';
 import { resolveToken } from '../config.js';
-import { isQuoteExpired, type Quote } from '../quote/quote.js';
+import { ConfigError } from '../errors.js';
+import { assertValidQuote, isQuoteExpired, type Quote } from '../quote/quote.js';
 
 export type PaymentStatus =
   | { status: 'pending' }
@@ -41,6 +43,13 @@ export interface CheckPaymentParams {
   reference: string;
   quote: Quote;
   recipient: string;
+  /**
+   * Кластер клиента (тот, с которым сконфигурирован SolanaPayKZ). Сверяется
+   * с quote.cluster — котировка из чужого кластера (например, devnet при
+   * клиенте в mainnet) иначе даёт вечный mismatch по чужой монете вместо
+   * явной ошибки конфигурации.
+   */
+  cluster: Cluster;
 }
 
 type PaymentRpc = Rpc<GetSignaturesForAddressApi & GetTransactionApi>;
@@ -55,14 +64,39 @@ export async function checkPayment(
   rpc: PaymentRpc,
   params: CheckPaymentParams,
 ): Promise<PaymentStatus> {
-  const { reference, quote, recipient } = params;
+  const { reference, quote, recipient, cluster } = params;
+
+  // Котировка приходит от продавца (из его БД) — проверяем её целостность
+  // раньше любого другого действия, включая сравнение адресов и сеть.
+  assertValidQuote(quote);
+
+  if (quote.cluster !== cluster) {
+    throw new ConfigError(
+      `Кластер котировки (${quote.cluster}) не совпадает с кластером клиента ` +
+      `(${cluster}). Котировка из другого кластера — это ошибка конфигурации, ` +
+      'а не платёж, который нужно проверять.',
+    );
+  }
 
   // Преобразование адресов — вне сетевых вызовов и до них. Невалидный адрес
   // получателя или метки — это ошибка конфигурации продавца, а не результат
   // проверки платежа: она должна всплыть сразу и отдельно, а не
   // маскироваться под mismatch внутри catch, обёрнутого вокруг сети.
-  const referenceAddress = address(reference) as Address;
-  const recipientAddress = address(recipient);
+  // @solana/kit бросает свой SolanaError — приводим к ConfigError, чтобы
+  // тип ошибки на невалидный адрес был одинаковым везде в SDK (конструктор
+  // SolanaPayKZ уже бросает ConfigError на невалидный recipient).
+  let referenceAddress: Address;
+  let recipientAddress: ReturnType<typeof address>;
+  try {
+    referenceAddress = address(reference) as Address;
+  } catch (error) {
+    throw new ConfigError(`Некорректная метка платежа (reference): ${reference}`, { cause: error });
+  }
+  try {
+    recipientAddress = address(recipient);
+  } catch (error) {
+    throw new ConfigError(`Некорректный адрес получателя: ${recipient}`, { cause: error });
+  }
 
   let found: ConfirmedSignatureInfo;
   try {

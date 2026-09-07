@@ -17,6 +17,3 @@ export class QuoteExpiredError extends SolanaPayKzError {}
 
 /** Неверная конфигурация SDK. */
 export class ConfigError extends SolanaPayKzError {}
-
-/** Транзакция найдена, но не проходит проверку. */
-export class PaymentValidationError extends SolanaPayKzError {}

@@ -2,8 +2,8 @@ import { address, getAddressDecoder } from '@solana/kit';
 import { encodeURL } from '@solana/pay';
 import QRCode from 'qrcode';
 import { resolveToken } from '../config.js';
-import { QuoteExpiredError } from '../errors.js';
-import { isQuoteExpired, type Quote } from '../quote/quote.js';
+import { ConfigError, QuoteExpiredError } from '../errors.js';
+import { assertValidQuote, isQuoteExpired, type Quote } from '../quote/quote.js';
 
 export interface PaymentRequestOptions {
   /** Solana-адрес продавца. */
@@ -39,6 +39,10 @@ export async function createPaymentRequest(
   quote: Quote,
   options: PaymentRequestOptions,
 ): Promise<PaymentRequest> {
+  // Котировка приходит от продавца (из его БД) — проверяем её целостность
+  // раньше любого другого действия. См. assertValidQuote.
+  assertValidQuote(quote);
+
   if (isQuoteExpired(quote)) {
     throw new QuoteExpiredError(
       `Котировка ${quote.quoteId} просрочена (истекла ${quote.expiresAt})`,
@@ -48,11 +52,21 @@ export async function createPaymentRequest(
   const reference = generateReference();
   const { mint } = resolveToken(quote.cluster, quote.token);
 
+  // @solana/kit бросает свой SolanaError на невалидный адрес — приводим к
+  // ConfigError, чтобы тип ошибки на невалидный recipient был одинаковым
+  // везде в SDK (checkPayment уже делает то же самое).
+  let recipientAddress: ReturnType<typeof address>;
+  try {
+    recipientAddress = address(options.recipient);
+  } catch (error) {
+    throw new ConfigError(`Некорректный адрес получателя: ${options.recipient}`, { cause: error });
+  }
+
   // encodeURL принимает amount типом number — это граница библиотеки.
   // Внутренние расчёты ведутся в целых единицах, здесь происходит
   // единственное преобразование к number.
   const url = encodeURL({
-    recipient: address(options.recipient),
+    recipient: recipientAddress,
     amount: Number(quote.amountToken),
     ...(mint ? { splToken: address(mint) } : {}),
     reference: address(reference),

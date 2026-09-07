@@ -1,8 +1,25 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RateProvider } from '../src/rates/provider.js';
-import { createQuote, isQuoteExpired } from '../src/quote/quote.js';
+import { assertValidQuote, createQuote, isQuoteExpired, type Quote } from '../src/quote/quote.js';
 import type { RateSource } from '../src/rates/types.js';
 import { ConfigError, RateUnavailableError } from '../src/errors.js';
+
+function quoteFixture(overrides: Partial<Quote> = {}): Quote {
+  const now = Date.now();
+  return {
+    quoteId: '11111111-2222-3333-4444-555555555555',
+    amountKzt: '10000',
+    amountKztCharged: '10000.00',
+    token: 'USDC',
+    cluster: 'mainnet',
+    amountToken: '21.758051',
+    rate: '459.60000000',
+    rateSource: 'binance',
+    createdAt: new Date(now).toISOString(),
+    expiresAt: new Date(now + 900_000).toISOString(),
+    ...overrides,
+  };
+}
 
 function providerWith(rate: string): RateProvider {
   const source: RateSource = { name: 'test', getKztPerToken: async () => rate };
@@ -188,5 +205,42 @@ describe('защита от неверных входов', () => {
         }),
       ).rejects.toThrow(ConfigError);
     }
+  });
+});
+
+describe('проверка целостности котировки (защита от чужой базы)', () => {
+  it('принимает валидную котировку без ошибок', () => {
+    expect(() => assertValidQuote(quoteFixture())).not.toThrow();
+  });
+
+  it('отвергает amountToken === null', () => {
+    expect(() => assertValidQuote(quoteFixture({ amountToken: null as unknown as string })))
+      .toThrow(ConfigError);
+  });
+
+  it('отвергает amountToken === undefined', () => {
+    expect(() => assertValidQuote(quoteFixture({ amountToken: undefined as unknown as string })))
+      .toThrow(ConfigError);
+  });
+
+  it('отвергает amountToken === пустая строка', () => {
+    expect(() => assertValidQuote(quoteFixture({ amountToken: '' }))).toThrow(ConfigError);
+  });
+
+  it('отвергает amountToken === "0"', () => {
+    expect(() => assertValidQuote(quoteFixture({ amountToken: '0' }))).toThrow(ConfigError);
+  });
+
+  it('отвергает amountToken === "abc"', () => {
+    expect(() => assertValidQuote(quoteFixture({ amountToken: 'abc' }))).toThrow(ConfigError);
+  });
+
+  it('отвергает отрицательный amountToken', () => {
+    expect(() => assertValidQuote(quoteFixture({ amountToken: '-5' }))).toThrow(ConfigError);
+  });
+
+  it('отвергает неизвестный token/cluster через resolveToken', () => {
+    expect(() => assertValidQuote(quoteFixture({ token: 'BTC' as never }))).toThrow(ConfigError);
+    expect(() => assertValidQuote(quoteFixture({ cluster: 'testnet' as never }))).toThrow(ConfigError);
   });
 });

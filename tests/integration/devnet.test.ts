@@ -24,7 +24,10 @@ describe('devnet', () => {
         createdAt: new Date().toISOString(),
         expiresAt: new Date(Date.now() + 900_000).toISOString(),
       },
-      recipient: '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
+      // Валидный Solana-адрес, специально НЕ совпадающий с mint USDC devnet
+      // (4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU из config.ts).
+      recipient: '11111111111111111111111111111111',
+      cluster: 'devnet',
     });
     expect(status.status).toBe('pending');
   }, 30_000);

@@ -1,6 +1,12 @@
 import type { Cluster, TokenSymbol } from '../config.js';
 import { DEFAULT_QUOTE_TTL_MS, resolveToken } from '../config.js';
-import { applyMarkup, convertKztToTokenUnits, formatUnits, parseDecimalToUnits } from '../money.js';
+import {
+  applyMarkup,
+  convertKztToTokenUnits,
+  formatUnits,
+  isValidDecimalFormat,
+  parseDecimalToUnits,
+} from '../money.js';
 import { ConfigError } from '../errors.js';
 import type { RateProvider } from '../rates/provider.js';
 import { KZT_DECIMALS } from '../money.js';
@@ -85,4 +91,42 @@ export async function createQuote(params: CreateQuoteParams): Promise<Quote> {
 /** Котировка считается просроченной начиная с момента expiresAt включительно. */
 export function isQuoteExpired(quote: Quote, now: number = Date.now()): boolean {
   return now >= Date.parse(quote.expiresAt);
+}
+
+/**
+ * Проверяет, что котировка не испорчена, прежде чем её содержимое пойдёт в
+ * платёжную ссылку или в проверку транзакции.
+ *
+ * Котировка приходит извне: продавец хранит её у себя (в своей БД) и
+ * возвращает SDK при создании платёжного запроса или проверке платежа. SDK
+ * не может доверять этим данным так же, как данным, которые сам только что
+ * создал — пустая колонка после миграции, повреждённая запись или чужой
+ * кластер не должны превращаться в «подтверждён любой платёж» или в
+ * нечитаемый QR.
+ *
+ * Вызывается в начале createPaymentRequest и checkPayment, до любых других
+ * действий (в частности, до сетевых запросов).
+ */
+export function assertValidQuote(quote: Quote): void {
+  // resolveToken бросает ConfigError на неизвестном token/cluster — это же
+  // проверяет, что котировка ссылается на реальную пару токен/кластер, а не
+  // на произвольную строку.
+  const { decimals } = resolveToken(quote.cluster, quote.token);
+
+  if (typeof quote.amountToken !== 'string' || !isValidDecimalFormat(quote.amountToken)) {
+    throw new ConfigError(
+      'Котировка испорчена: amountToken должен быть строкой в допустимом ' +
+      `десятичном формате, получено ${JSON.stringify(quote.amountToken)}. ` +
+      'Похоже, котировка была повреждена в хранилище продавца (например, ' +
+      'пустая колонка после миграции).',
+    );
+  }
+
+  const units = parseDecimalToUnits(quote.amountToken, decimals);
+  if (units <= 0n) {
+    throw new ConfigError(
+      `Котировка испорчена: amountToken должен быть строго больше нуля, ` +
+      `получено "${quote.amountToken}".`,
+    );
+  }
 }

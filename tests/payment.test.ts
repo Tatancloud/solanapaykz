@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { QuoteExpiredError } from '../src/errors.js';
+import { ConfigError, QuoteExpiredError } from '../src/errors.js';
 import { createPaymentRequest, generateReference } from '../src/payment/request.js';
 import type { Quote } from '../src/quote/quote.js';
 
-const RECIPIENT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+// Валидный Solana-адрес продавца, специально НЕ совпадающий с mint USDC
+// (EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v из config.ts) — тест должен
+// уметь отличить перепутанные местами получателя и монету.
+const RECIPIENT = '11111111111111111111111111111111';
+const USDC_MINT_MAINNET = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 
 function quoteFixture(overrides: Partial<Quote> = {}): Quote {
   const now = Date.now();
@@ -43,8 +47,11 @@ describe('создание платёжного запроса', () => {
 
     expect(request.url).toContain(`solana:${RECIPIENT}`);
     expect(request.url).toContain('amount=21.758051');
-    expect(request.url).toContain('spl-token=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
+    expect(request.url).toContain(`spl-token=${USDC_MINT_MAINNET}`);
     expect(request.url).toContain(`reference=${request.reference}`);
+    // Получатель и mint — разные адреса: тест ловит перепутанные местами
+    // получателя платежа и служебный адрес монеты.
+    expect(RECIPIENT).not.toBe(USDC_MINT_MAINNET);
   });
 
   it('для SOL не добавляет spl-token', async () => {
@@ -65,5 +72,52 @@ describe('создание платёжного запроса', () => {
     });
     await expect(createPaymentRequest(expired, { recipient: RECIPIENT }))
       .rejects.toThrow(QuoteExpiredError);
+  });
+
+  it('выбрасывает ConfigError для невалидного recipient (не голый SolanaError)', async () => {
+    // Тот же класс ошибки, что и в checkPayment для невалидного recipient —
+    // одинаковый неверный ввод должен давать одинаковый тип ошибки в обеих
+    // функциях SDK.
+    await expect(
+      createPaymentRequest(quoteFixture(), { recipient: 'не-валидный-адрес' }),
+    ).rejects.toThrow(ConfigError);
+  });
+
+  describe('проверяет котировку до любых других действий (чужая база)', () => {
+    it('отвергает amountToken === null', async () => {
+      const quote = quoteFixture({ amountToken: null as unknown as string });
+      await expect(createPaymentRequest(quote, { recipient: RECIPIENT }))
+        .rejects.toThrow(ConfigError);
+    });
+
+    it('отвергает amountToken === undefined', async () => {
+      const quote = quoteFixture({ amountToken: undefined as unknown as string });
+      await expect(createPaymentRequest(quote, { recipient: RECIPIENT }))
+        .rejects.toThrow(ConfigError);
+    });
+
+    it('отвергает amountToken === пустая строка', async () => {
+      const quote = quoteFixture({ amountToken: '' });
+      await expect(createPaymentRequest(quote, { recipient: RECIPIENT }))
+        .rejects.toThrow(ConfigError);
+    });
+
+    it('отвергает amountToken === "0"', async () => {
+      const quote = quoteFixture({ amountToken: '0' });
+      await expect(createPaymentRequest(quote, { recipient: RECIPIENT }))
+        .rejects.toThrow(ConfigError);
+    });
+
+    it('отвергает amountToken === "abc"', async () => {
+      const quote = quoteFixture({ amountToken: 'abc' });
+      await expect(createPaymentRequest(quote, { recipient: RECIPIENT }))
+        .rejects.toThrow(ConfigError);
+    });
+
+    it('отвергает отрицательный amountToken', async () => {
+      const quote = quoteFixture({ amountToken: '-5' });
+      await expect(createPaymentRequest(quote, { recipient: RECIPIENT }))
+        .rejects.toThrow(ConfigError);
+    });
   });
 });
