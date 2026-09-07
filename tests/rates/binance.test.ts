@@ -55,6 +55,54 @@ describe('BinanceRateSource', () => {
       .rejects.toThrow(RateSourceError);
   });
 
+  it('падает, когда тело ответа null', async () => {
+    mockFetch({ 'symbol=USDTKZT': { body: null } });
+    await expect(new BinanceRateSource().getKztPerToken('USDC'))
+      .rejects.toThrow(RateSourceError);
+  });
+
+  it('падает, когда тело ответа массив', async () => {
+    mockFetch({ 'symbol=USDTKZT': { body: [] } });
+    await expect(new BinanceRateSource().getKztPerToken('USDC'))
+      .rejects.toThrow(RateSourceError);
+  });
+
+  it('падает на экспоненциальной нотации price', async () => {
+    mockFetch({
+      'symbol=USDTKZT': { body: { price: '1e400' } },
+      'symbol=USDCUSDT': { body: { price: '1.00000000' } },
+    });
+    await expect(new BinanceRateSource().getKztPerToken('USDC'))
+      .rejects.toThrow(RateSourceError);
+  });
+
+  it('падает на Infinity', async () => {
+    mockFetch({
+      'symbol=USDTKZT': { body: { price: 'Infinity' } },
+      'symbol=USDCUSDT': { body: { price: '1.00000000' } },
+    });
+    await expect(new BinanceRateSource().getKztPerToken('USDC'))
+      .rejects.toThrow(RateSourceError);
+  });
+
+  it('падает на цене с пробелами', async () => {
+    mockFetch({
+      'symbol=USDTKZT': { body: { price: ' 1.5 ' } },
+      'symbol=USDCUSDT': { body: { price: '1.00000000' } },
+    });
+    await expect(new BinanceRateSource().getKztPerToken('USDC'))
+      .rejects.toThrow(RateSourceError);
+  });
+
+  it('падает, когда второй запрос падает при первом успешном', async () => {
+    mockFetch({
+      'symbol=USDTKZT': { body: { price: '459.60000000' } },
+      'symbol=USDCUSDT': { status: 502, body: { msg: 'bad gateway' } },
+    });
+    await expect(new BinanceRateSource().getKztPerToken('USDC'))
+      .rejects.toThrow(RateSourceError);
+  });
+
   it('имеет имя для аудита', () => {
     expect(new BinanceRateSource().name).toBe('binance');
   });

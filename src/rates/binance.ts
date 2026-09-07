@@ -20,15 +20,29 @@ export class BinanceRateSource implements RateSource {
   constructor(private readonly timeoutMs: number = DEFAULT_RATE_TIMEOUT_MS) {}
 
   async getKztPerToken(token: TokenSymbol): Promise<string> {
-    const kztPerUsdt = await this.fetchPrice('USDTKZT');
-    const usdtPerToken = await this.fetchPrice(token === 'USDC' ? 'USDCUSDT' : 'SOLUSDT');
+    const [kztPerUsdt, usdtPerToken] = await Promise.all([
+      this.fetchPrice('USDTKZT'),
+      this.fetchPrice(token === 'USDC' ? 'USDCUSDT' : 'SOLUSDT'),
+    ]);
     return multiplyRates(kztPerUsdt, usdtPerToken);
   }
 
   private async fetchPrice(symbol: string): Promise<string> {
     const data = await fetchJson(`${ENDPOINT}?symbol=${symbol}`, this.timeoutMs);
+    // Проверяем, что data - объект (не null, не массив, не примитив)
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+      throw new RateSourceError(`Binance ${symbol}: ответ не является объектом`);
+    }
     const price = (data as { price?: unknown }).price;
-    if (typeof price !== 'string' || !(Number(price) > 0)) {
+    if (typeof price !== 'string') {
+      throw new RateSourceError(`Binance ${symbol}: непригодная цена ${JSON.stringify(price)}`);
+    }
+    // Проверяем формат: только цифры, опциональная точка, цифры
+    if (!/^\d+(\.\d+)?$/.test(price)) {
+      throw new RateSourceError(`Binance ${symbol}: непригодная цена ${JSON.stringify(price)}`);
+    }
+    // Проверяем, что число положительное
+    if (!(Number(price) > 0)) {
       throw new RateSourceError(`Binance ${symbol}: непригодная цена ${JSON.stringify(price)}`);
     }
     return price;

@@ -15,6 +15,10 @@ export async function fetchJson(url: string, timeoutMs: number): Promise<unknown
     return await response.json();
   } catch (error) {
     if (error instanceof RateSourceError) throw error;
+    // Проверяем, был ли сигнал абортирован (таймаут)
+    if (controller.signal.aborted) {
+      throw new RateSourceError(`${url}: таймаут ${timeoutMs}мс`);
+    }
     throw new RateSourceError(`${url}: запрос не удался`, { cause: error });
   } finally {
     clearTimeout(timer);
