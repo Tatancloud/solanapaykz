@@ -24,6 +24,14 @@ export interface SolanaPayKZOptions {
   quoteTtlMs?: number;
 }
 
+/**
+ * Параметры, которые реально принимает `SolanaPayKZ.createPaymentRequest` —
+ * то же самое, что `PaymentRequestOptions`, но без `recipient`: адрес
+ * получателя уже зафиксирован в конструкторе клиента и не может быть
+ * переопределён на уровне отдельного запроса.
+ */
+export type CreatePaymentRequestOptions = Omit<PaymentRequestOptions, 'recipient'>;
+
 export class SolanaPayKZ {
   private readonly rateProvider: RateProvider;
   private readonly rpc: ReturnType<typeof createSolanaRpc>;
@@ -65,13 +73,13 @@ export class SolanaPayKZ {
 
   createPaymentRequest(
     quote: Quote,
-    options: Omit<PaymentRequestOptions, 'recipient'> = {},
+    options: CreatePaymentRequestOptions = {},
   ): Promise<PaymentRequest> {
     return createPaymentRequest(quote, { ...options, recipient: this.options.recipient });
   }
 
   checkPayment(params: { reference: string; quote: Quote }): Promise<PaymentStatus> {
-    return checkPayment(this.rpc as never, {
+    return checkPayment(this.rpc, {
       reference: params.reference,
       quote: params.quote,
       recipient: this.options.recipient,
