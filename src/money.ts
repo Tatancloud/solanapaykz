@@ -10,18 +10,38 @@ export const RATE_DECIMALS = 8;
  * Переводит десятичную строку в целые минимальные единицы.
  * Лишние знаки отбрасываются, а не округляются: округление вверх делается
  * один раз и осознанно — в convertKztToTokenUnits.
+ *
+ * Параметр allowTruncation контролирует поведение при излишней точности:
+ * - true (по умолчанию): обрезает лишние знаки, в пользу продавца
+ * - false: выбрасывает ошибку если точность выше допустимой
  */
-export function parseDecimalToUnits(value: string, decimals: number): bigint {
+export function parseDecimalToUnits(
+  value: string,
+  decimals: number,
+  options?: { allowTruncation?: boolean },
+): bigint {
   if (!/^\d+(\.\d+)?$/.test(value)) {
     throw new ConfigError(`Некорректное десятичное число: ${JSON.stringify(value)}`);
   }
   const [whole = '0', frac = ''] = value.split('.');
+  const allowTruncation = options?.allowTruncation !== false;
+
+  if (!allowTruncation && frac.length > decimals) {
+    throw new ConfigError(
+      `Сумма "${value}" имеет ${frac.length} знаков после запятой, ` +
+      `допустимо не более ${decimals} (в тиынах/минимальных единицах)`,
+    );
+  }
+
   const padded = (frac + '0'.repeat(decimals)).slice(0, decimals);
   return BigInt(whole + padded);
 }
 
 /** Обратное преобразование: целые единицы в десятичную строку. */
 export function formatUnits(units: bigint, decimals: number): string {
+  if (units < 0n) {
+    throw new ConfigError(`Сумма не может быть отрицательной: ${units}`);
+  }
   if (decimals === 0) return units.toString();
   const s = units.toString().padStart(decimals + 1, '0');
   return `${s.slice(0, -decimals)}.${s.slice(-decimals)}`;
@@ -43,14 +63,28 @@ export function multiplyRates(a: string, b: string): string {
  * Добавляет наценку продавца к сумме в тенге.
  * Наценка применяется к сумме, а не к курсу: «беру процент сверху» —
  * однозначная формулировка, поправка к курсу читается двусмысленно.
+ *
+ * Наценка должна быть в диапазоне [0, 100] процентов с точностью до 0.01 процентного пункта.
  */
 export function applyMarkup(amountKzt: string, markupPercent: number): string {
   if (!Number.isFinite(markupPercent) || markupPercent < 0) {
     throw new ConfigError(`Наценка должна быть неотрицательным числом, получено ${markupPercent}`);
   }
-  const base = parseDecimalToUnits(amountKzt, KZT_DECIMALS);
-  // Процент переводим в целые с четырьмя знаками, чтобы принимать доли процента.
+  if (markupPercent > 100) {
+    throw new ConfigError(`Наценка не может превышать 100%, получено ${markupPercent}%`);
+  }
+
+  const base = parseDecimalToUnits(amountKzt, KZT_DECIMALS, { allowTruncation: false });
+  // Переводим процент в целые четырёхзначные единицы (basis points × 10),
+  // что соответствует шагу 0.01 процентного пункта.
   const permyriad = BigInt(Math.round(markupPercent * 100));
+
+  if (markupPercent > 0 && permyriad === 0n) {
+    throw new ConfigError(
+      `Наценка ${markupPercent}% меньше минимального шага 0.01 процентного пункта`,
+    );
+  }
+
   const withMarkup = base + ceilDiv(base * permyriad, 10_000n);
   return formatUnits(withMarkup, KZT_DECIMALS);
 }
@@ -65,7 +99,7 @@ export function convertKztToTokenUnits(
   kztPerToken: string,
   tokenDecimals: number,
 ): bigint {
-  const kztUnits = parseDecimalToUnits(amountKzt, KZT_DECIMALS);
+  const kztUnits = parseDecimalToUnits(amountKzt, KZT_DECIMALS, { allowTruncation: false });
   const rateUnits = parseDecimalToUnits(kztPerToken, RATE_DECIMALS);
   if (rateUnits <= 0n) {
     throw new RateSourceError('Курс должен быть положительным');

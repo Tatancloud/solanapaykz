@@ -19,6 +19,17 @@ describe('разбор десятичных строк', () => {
     expect(parseDecimalToUnits('1.999', 2)).toBe(199n);
   });
 
+  it('обрезает лишние знаки по умолчанию, но может запретить для сумм в тенге', () => {
+    // По умолчанию обрезает
+    expect(parseDecimalToUnits('100.999', 2)).toBe(10099n);
+    // С запретом обрезания выбрасывает ошибку
+    expect(() => parseDecimalToUnits('100.999', 2, { allowTruncation: false })).toThrow(
+      ConfigError,
+    );
+    // Точная строка проходит даже с запретом
+    expect(parseDecimalToUnits('100.99', 2, { allowTruncation: false })).toBe(10099n);
+  });
+
   it('отвергает мусор', () => {
     expect(() => parseDecimalToUnits('abc', 2)).toThrow(ConfigError);
     expect(() => parseDecimalToUnits('-5', 2)).toThrow(ConfigError);
@@ -34,6 +45,11 @@ describe('форматирование единиц', () => {
 
   it('дополняет нулями суммы меньше единицы', () => {
     expect(formatUnits(2176n, 6)).toBe('0.002176');
+  });
+
+  it('отвергает отрицательные значения', () => {
+    expect(() => formatUnits(-2176n, 6)).toThrow(ConfigError);
+    expect(() => formatUnits(-1000000n, 6)).toThrow(ConfigError);
   });
 });
 
@@ -90,5 +106,16 @@ describe('наценка продавца', () => {
 
   it('отвергает отрицательную наценку', () => {
     expect(() => applyMarkup('10000', -1)).toThrow(ConfigError);
+  });
+
+  it('отвергает наценку меньше минимального шага 0.01%', () => {
+    expect(() => applyMarkup('10000', 0.004)).toThrow(ConfigError);
+    expect(() => applyMarkup('10000', 0.005)).not.toThrow();
+  });
+
+  it('отвергает наценку более 100%', () => {
+    expect(() => applyMarkup('10000', 100)).not.toThrow();
+    expect(() => applyMarkup('10000', 100.01)).toThrow(ConfigError);
+    expect(() => applyMarkup('10000', 1e21)).toThrow(ConfigError);
   });
 });
