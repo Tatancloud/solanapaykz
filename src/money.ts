@@ -7,6 +7,21 @@ export const KZT_DECIMALS = 2;
 export const RATE_DECIMALS = 8;
 
 /**
+ * Регулярное выражение для допустимого формата десятичного числа.
+ * Позволяет целые числа и числа с точкой и дробной частью.
+ */
+export const DECIMAL_FORMAT_PATTERN = /^\d+(\.\d+)?$/;
+
+/**
+ * Проверяет, является ли строка допустимым форматом десятичного числа.
+ * Проверяет только формат (цифры и опциональную точку), не значение.
+ * Отвергает пустые строки, отрицательные числа, пробелы, экспоненциальную нотацию.
+ */
+export function isValidDecimalFormat(value: string): boolean {
+  return DECIMAL_FORMAT_PATTERN.test(value);
+}
+
+/**
  * Переводит десятичную строку в целые минимальные единицы.
  * Лишние знаки отбрасываются, а не округляются: округление вверх делается
  * один раз и осознанно — в convertKztToTokenUnits.
@@ -20,7 +35,7 @@ export function parseDecimalToUnits(
   decimals: number,
   options?: { allowTruncation?: boolean },
 ): bigint {
-  if (!/^\d+(\.\d+)?$/.test(value)) {
+  if (!isValidDecimalFormat(value)) {
     throw new ConfigError(`Некорректное десятичное число: ${JSON.stringify(value)}`);
   }
   const [whole = '0', frac = ''] = value.split('.');

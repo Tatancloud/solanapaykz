@@ -5,6 +5,7 @@ import {
   ceilDiv,
   convertKztToTokenUnits,
   formatUnits,
+  isValidDecimalFormat,
   multiplyRates,
   parseDecimalToUnits,
 } from '../src/money.js';
@@ -34,6 +35,23 @@ describe('разбор десятичных строк', () => {
     expect(() => parseDecimalToUnits('abc', 2)).toThrow(ConfigError);
     expect(() => parseDecimalToUnits('-5', 2)).toThrow(ConfigError);
     expect(() => parseDecimalToUnits('', 2)).toThrow(ConfigError);
+  });
+});
+
+describe('проверка формата десятичного числа', () => {
+  it('принимает допустимые форматы', () => {
+    expect(isValidDecimalFormat('459.60')).toBe(true);
+    expect(isValidDecimalFormat('10000')).toBe(true);
+    expect(isValidDecimalFormat('0')).toBe(true);
+  });
+
+  it('отвергает недопустимые форматы', () => {
+    expect(isValidDecimalFormat('Infinity')).toBe(false);
+    expect(isValidDecimalFormat('1e400')).toBe(false);
+    expect(isValidDecimalFormat(' 1.5 ')).toBe(false);
+    expect(isValidDecimalFormat('abc')).toBe(false);
+    expect(isValidDecimalFormat('-5')).toBe(false);
+    expect(isValidDecimalFormat('')).toBe(false);
   });
 });
 
