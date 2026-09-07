@@ -58,6 +58,24 @@ describe('SyntheticRateSource', () => {
       .rejects.toThrow(RateSourceError);
   });
 
+  it('падает при null ответе от курса валют', async () => {
+    mockFetch({
+      'open.er-api.com': { body: null },
+      'coingecko': { body: { 'usd-coin': { usd: 1.0 } } },
+    });
+    await expect(new SyntheticRateSource().getKztPerToken('USDC'))
+      .rejects.toThrow(RateSourceError);
+  });
+
+  it('падает при null ответе от CoinGecko', async () => {
+    mockFetch({
+      'open.er-api.com': { body: { result: 'success', rates: { KZT: 455.296 } } },
+      'coingecko': { body: null },
+    });
+    await expect(new SyntheticRateSource().getKztPerToken('USDC'))
+      .rejects.toThrow(RateSourceError);
+  });
+
   it('имеет имя для аудита', () => {
     expect(new SyntheticRateSource().name).toBe('synthetic');
   });

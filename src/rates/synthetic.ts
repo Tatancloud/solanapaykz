@@ -32,23 +32,33 @@ export class SyntheticRateSource implements RateSource {
   }
 
   private async fetchKztPerUsd(): Promise<string> {
-    const data = await fetchJson(FX_ENDPOINT, this.timeoutMs) as {
+    const data = await fetchJson(FX_ENDPOINT, this.timeoutMs);
+    // Проверяем, что data - объект (не null, не массив, не примитив)
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+      throw new RateSourceError(`Курс валют: ответ не является объектом`);
+    }
+    const typedData = data as {
       result?: unknown;
       rates?: Record<string, unknown>;
     };
-    if (data.result !== 'success') {
-      throw new RateSourceError(`Курс валют: ответ не success (${String(data.result)})`);
+    if (typedData.result !== 'success') {
+      throw new RateSourceError(`Курс валют: ответ не success (${String(typedData.result)})`);
     }
-    return toRateString(data.rates?.['KZT'], 'Курс валют: нет KZT в ответе');
+    return toRateString(typedData.rates?.['KZT'], 'Курс валют: нет KZT в ответе');
   }
 
   private async fetchUsdPerToken(token: TokenSymbol): Promise<string> {
     const id = COINGECKO_IDS[token];
     const url = `${COINGECKO_ENDPOINT}?ids=${id}&vs_currencies=usd`;
-    const data = await fetchJson(url, this.timeoutMs) as Record<string, { usd?: unknown }>;
+    const data = await fetchJson(url, this.timeoutMs);
+    // Проверяем, что data - объект (не null, не массив, не примитив)
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+      throw new RateSourceError(`CoinGecko: ответ не является объектом`);
+    }
+    const typedData = data as Record<string, { usd?: unknown }>;
     // CoinGecko на неподдерживаемую валюту отвечает HTTP 200 и пустым объектом:
     // {"usd-coin":{}}. Это отказ источника, а не нулевая цена.
-    return toRateString(data[id]?.usd, `CoinGecko: нет цены для ${id}`);
+    return toRateString(typedData[id]?.usd, `CoinGecko: нет цены для ${id}`);
   }
 }
 
