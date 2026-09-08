@@ -137,18 +137,73 @@ final class Quote
 
         $quote_id = (string) $data['quote_id'];
 
-        if ($quote_id === '') {
-            throw new QuoteException('Идентификатор котировки пуст.');
+        // Идентификатор должен быть ровно 32 шестнадцатеричных символа
+        if (!preg_match('/^[0-9a-f]{32}$/', $quote_id)) {
+            throw new QuoteException(sprintf(
+                'Идентификатор котировки имеет неправильный формат: %s.',
+                var_export($quote_id, true)
+            ));
+        }
+
+        // Проверяем исходную и заряженную суммы в тенге
+        self::require_valid_decimal((string) $data['amount_kzt'], Money::KZT_DECIMALS, 'Исходная сумма в тенге');
+        self::require_valid_decimal((string) $data['amount_kzt_charged'], Money::KZT_DECIMALS, 'Сумма в тенге после наценки');
+
+        // Проверяем имя источника курса
+        $rate_source = (string) $data['rate_source'];
+        if ($rate_source === '') {
+            throw new QuoteException('Имя источника курса не может быть пустым.');
         }
 
         self::require_positive_amount((string) $data['amount_token'], $decimals, 'Сумма к оплате');
         self::require_positive_amount((string) $data['rate'], Money::RATE_DECIMALS, 'Курс');
+
+        // Проверяем, что временные метки приводятся к int из числовых значений, а не из строк типа "abc"
+        self::require_numeric_timestamp($data['created_at'], 'Время создания котировки');
+        self::require_numeric_timestamp($data['expires_at'], 'Время истечения котировки');
 
         $created_at = (int) $data['created_at'];
         $expires_at = (int) $data['expires_at'];
 
         if ($expires_at <= $created_at) {
             throw new QuoteException('Срок истечения котировки не позже момента её создания.');
+        }
+
+        // Срок жизни котировки не должен превышать сутки (86400 секунд).
+        // Обоснование: котировка замораживает курс, и риск его сдвига несёт продавец.
+        // Сутки — разумный максимум для этого риска.
+        $ttl = $expires_at - $created_at;
+        if ($ttl > 86400) {
+            throw new QuoteException(sprintf(
+                'Срок жизни котировки превышает сутки: %d секунд.',
+                $ttl
+            ));
+        }
+
+        // Проверяем согласованность суммы токена: пересчитываем её из суммы в тенге и курса
+        // и сравниваем с записанным значением. Это закрывает целый класс порчи записи вместо
+        // перечисления отдельных видов.
+        try {
+            $recalculated_units = Money::convert_kzt_to_token_units(
+                (string) $data['amount_kzt_charged'],
+                (string) $data['rate'],
+                $decimals
+            );
+            $recalculated_token = Money::format_units($recalculated_units, $decimals);
+        } catch (Throwable $error) {
+            throw new QuoteException(sprintf(
+                'Не удалось пересчитать сумму токена при восстановлении: %s',
+                $error->getMessage()
+            ), 0, $error);
+        }
+
+        if ($recalculated_token !== (string) $data['amount_token']) {
+            throw new QuoteException(sprintf(
+                'Сумма токена в записи не совпадает с пересчётом из суммы в тенге и курса: '
+                . 'запись содержит %s, а должно быть %s.',
+                var_export((string) $data['amount_token'], true),
+                var_export($recalculated_token, true)
+            ));
         }
 
         return new self(
@@ -159,7 +214,7 @@ final class Quote
             (string) $data['cluster'],
             (string) $data['amount_token'],
             (string) $data['rate'],
-            (string) $data['rate_source'],
+            $rate_source,
             $created_at,
             $expires_at
         );
@@ -172,6 +227,45 @@ final class Quote
         if (!Money::is_valid_decimal($value) || bccomp($value, '0', $decimals) <= 0) {
             throw new QuoteException(sprintf(
                 '%s в записи котировки непригодна: %s.',
+                $label,
+                var_export($value, true)
+            ));
+        }
+    }
+
+    private static function require_valid_decimal(string $value, int $decimals, string $label): void
+    {
+        // Проверяем, что значение имеет правильный формат десятичного числа
+        if (!Money::is_valid_decimal($value)) {
+            throw new QuoteException(sprintf(
+                '%s имеет неправильный формат: %s.',
+                $label,
+                var_export($value, true)
+            ));
+        }
+
+        // Проверяем, что точность не превышает допустимую
+        $parts = explode('.', $value, 2);
+        $frac = $parts[1] ?? '';
+
+        if (strlen($frac) > $decimals) {
+            throw new QuoteException(sprintf(
+                '%s имеет %d знаков после запятой, допустимо не более %d: %s.',
+                $label,
+                strlen($frac),
+                $decimals,
+                var_export($value, true)
+            ));
+        }
+    }
+
+    private static function require_numeric_timestamp(mixed $value, string $label): void
+    {
+        // Проверяем, что значение числовое до приведения к int.
+        // Строка "abc" молча превращается в 0, "100abc" — в 100. Это ошибка.
+        if (!is_int($value) && !is_numeric($value)) {
+            throw new QuoteException(sprintf(
+                '%s должна быть числовой, получено: %s.',
                 $label,
                 var_export($value, true)
             ));

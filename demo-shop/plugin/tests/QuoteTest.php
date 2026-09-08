@@ -168,4 +168,87 @@ final class QuoteTest extends TestCase
         $this->expectException(QuoteException::class);
         Quote::from_array($valid);
     }
+
+    public function test_восстановление_проверяет_согласованность_суммы_токена(): void
+    {
+        // Сумма токена занижена: не совпадает с пересчётом из amount_kzt_charged и rate
+        $valid = Quote::create($this->rates(), '10000', 'USDC', 'mainnet')->to_array();
+        $valid['amount_token'] = '0.544125'; // неправильно занижено
+
+        $this->expectException(QuoteException::class);
+        Quote::from_array($valid);
+    }
+
+    public function test_восстановление_отвергает_пустое_имя_источника(): void
+    {
+        $valid = Quote::create($this->rates(), '10000', 'USDC', 'mainnet')->to_array();
+        $valid['rate_source'] = '';
+
+        $this->expectException(QuoteException::class);
+        Quote::from_array($valid);
+    }
+
+    public function test_восстановление_отвергает_срок_жизни_свыше_максимума(): void
+    {
+        $valid = Quote::create($this->rates(), '10000', 'USDC', 'mainnet')->to_array();
+        // Срок отодвинут на год вперёд: 365 дней * 86400 сек/день
+        $valid['expires_at'] = $valid['created_at'] + (365 * 86400);
+
+        $this->expectException(QuoteException::class);
+        Quote::from_array($valid);
+    }
+
+    public function test_восстановление_отвергает_нечисловой_created_at(): void
+    {
+        $valid = Quote::create($this->rates(), '10000', 'USDC', 'mainnet')->to_array();
+        $valid['created_at'] = 'abc';
+
+        $this->expectException(QuoteException::class);
+        Quote::from_array($valid);
+    }
+
+    public function test_восстановление_отвергает_нечисловой_expires_at(): void
+    {
+        $valid = Quote::create($this->rates(), '10000', 'USDC', 'mainnet')->to_array();
+        $valid['expires_at'] = '100abc';
+
+        $this->expectException(QuoteException::class);
+        Quote::from_array($valid);
+    }
+
+    public function test_восстановление_отвергает_невалидный_amount_kzt(): void
+    {
+        $valid = Quote::create($this->rates(), '10000', 'USDC', 'mainnet')->to_array();
+        $valid['amount_kzt'] = '100.999'; // избыточная точность
+
+        $this->expectException(QuoteException::class);
+        Quote::from_array($valid);
+    }
+
+    public function test_восстановление_отвергает_невалидный_amount_kzt_charged(): void
+    {
+        $valid = Quote::create($this->rates(), '10000', 'USDC', 'mainnet')->to_array();
+        $valid['amount_kzt_charged'] = 'не-число';
+
+        $this->expectException(QuoteException::class);
+        Quote::from_array($valid);
+    }
+
+    public function test_восстановление_отвергает_идентификатор_неправильного_формата(): void
+    {
+        $valid = Quote::create($this->rates(), '10000', 'USDC', 'mainnet')->to_array();
+        $valid['quote_id'] = 'not-hex-32';
+
+        $this->expectException(QuoteException::class);
+        Quote::from_array($valid);
+    }
+
+    public function test_восстановление_отвергает_идентификатор_неправильной_длины(): void
+    {
+        $valid = Quote::create($this->rates(), '10000', 'USDC', 'mainnet')->to_array();
+        $valid['quote_id'] = 'a'.str_repeat('0', 30); // 31 символ вместо 32
+
+        $this->expectException(QuoteException::class);
+        Quote::from_array($valid);
+    }
 }
