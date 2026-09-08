@@ -341,4 +341,74 @@ final class RatesTest extends TestCase
             }
         };
     }
+
+    public function test_провайдер_отвергает_пустую_строку_от_источника(): void
+    {
+        $broken = new class implements RateSource {
+            public function get_name(): string { return 'broken'; }
+            public function get_kzt_per_token(string $token): string { return ''; }
+        };
+
+        $provider = new RateProvider([$broken, $this->source('synthetic', '455.00000000')], new ArrayCache(), 60);
+
+        self::assertSame('synthetic', $provider->get_kzt_per_token('USDC')['source']);
+    }
+
+    public function test_провайдер_отвергает_нулевой_курс_от_источника(): void
+    {
+        $broken = new class implements RateSource {
+            public function get_name(): string { return 'broken'; }
+            public function get_kzt_per_token(string $token): string { return '0'; }
+        };
+
+        $provider = new RateProvider([$broken, $this->source('synthetic', '455.00000000')], new ArrayCache(), 60);
+
+        self::assertSame('synthetic', $provider->get_kzt_per_token('USDC')['source']);
+    }
+
+    public function test_провайдер_отвергает_отрицательный_курс_от_источника(): void
+    {
+        $broken = new class implements RateSource {
+            public function get_name(): string { return 'broken'; }
+            public function get_kzt_per_token(string $token): string { return '-5'; }
+        };
+
+        $provider = new RateProvider([$broken, $this->source('synthetic', '455.00000000')], new ArrayCache(), 60);
+
+        self::assertSame('synthetic', $provider->get_kzt_per_token('USDC')['source']);
+    }
+
+    public function test_провайдер_отвергает_невалидный_формат_от_источника(): void
+    {
+        $broken = new class implements RateSource {
+            public function get_name(): string { return 'broken'; }
+            public function get_kzt_per_token(string $token): string { return 'не-число'; }
+        };
+
+        $provider = new RateProvider([$broken, $this->source('synthetic', '455.00000000')], new ArrayCache(), 60);
+
+        self::assertSame('synthetic', $provider->get_kzt_per_token('USDC')['source']);
+    }
+
+    public function test_провайдер_отвергает_курс_с_пробелами_от_источника(): void
+    {
+        $broken = new class implements RateSource {
+            public function get_name(): string { return 'broken'; }
+            public function get_kzt_per_token(string $token): string { return ' 459.6 '; }
+        };
+
+        $provider = new RateProvider([$broken, $this->source('synthetic', '455.00000000')], new ArrayCache(), 60);
+
+        self::assertSame('synthetic', $provider->get_kzt_per_token('USDC')['source']);
+    }
+
+    public function test_провайдер_отвергает_повреждённую_запись_кеша_без_источника(): void
+    {
+        $cache = new ArrayCache();
+        $cache->set('rate_USDC', '459.6|', 60);
+
+        $provider = new RateProvider([$this->source('synthetic', '455.00000000')], $cache, 60);
+
+        self::assertSame('synthetic', $provider->get_kzt_per_token('USDC')['source']);
+    }
 }

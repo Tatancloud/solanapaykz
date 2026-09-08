@@ -73,7 +73,7 @@ final class SyntheticRateSource implements RateSource
 
         return $this->to_rate(
             is_array($entry) ? ($entry['usd'] ?? null) : null,
-            sprintf('CoinGecko: нет цены для %s', $id)
+            sprintf('CoinGecko: нет цены для %s.', $id)
         );
     }
 

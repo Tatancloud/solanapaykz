@@ -37,9 +37,18 @@ final class RateProvider
         if ($cached !== null) {
             $parts = explode('|', $cached, 2);
 
-            if (count($parts) === 2 && Money::is_valid_decimal($parts[0])) {
+            if (count($parts) === 2 && $parts[1] !== '' && Money::is_valid_decimal($parts[0])
+                && bccomp($parts[0], '0', Money::RATE_DECIMALS) > 0
+            ) {
                 return ['rate' => $parts[0], 'source' => $parts[1]];
             }
+
+            // Запись кеша повреждена, логируем это.
+            error_log(sprintf(
+                'SolanaPay-KZ: Повреждённая запись кеша для %s: %s',
+                $key,
+                var_export($cached, true)
+            ));
         }
 
         $failures = [];
@@ -51,6 +60,13 @@ final class RateProvider
                 // Ловим любую ошибку, а не только свою: контракт источников
                 // держится на дисциплине, и его нарушение не должно ронять заказ.
                 $failures[] = $source->get_name() . ': ' . $error->getMessage();
+                continue;
+            }
+
+            // Проверяем полученный курс, как внутри источников.
+            // Это единственный рубеж между источником и заказом.
+            if (!Money::is_valid_decimal($rate) || bccomp($rate, '0', Money::RATE_DECIMALS) <= 0) {
+                $failures[] = $source->get_name() . ': непригодный курс ' . var_export($rate, true);
                 continue;
             }
 
