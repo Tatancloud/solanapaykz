@@ -16,6 +16,16 @@ final class Ajax
 {
     public const ACTION = 'solanapaykz_check';
 
+    /**
+     * Заказы в терминальном статусе (уже оплачен, отменён дольше окна
+     * поздних платежей и т. п.) отдают один и тот же ответ на любое число
+     * запросов подряд — RPC-узел за это время ничего не подтвердит и не
+     * опровергнет заново. Несколько секунд кеша убирают повторный поход в
+     * платный узел на каждый запрос без изменения поведения для покупателя:
+     * опрос из браузера всё равно раз в 5 секунд.
+     */
+    private const POLL_CACHE_TTL_SECONDS = 3;
+
     public static function register(): void
     {
         add_action('wp_ajax_' . self::ACTION, [self::class, 'handle']);
@@ -42,6 +52,33 @@ final class Ajax
             wp_send_json_error(['message' => 'Заказ оплачивается другим способом.'], 400);
         }
 
+        // Ссылка на страницу «спасибо» содержит ключ заказа прямо в адресе
+        // и легко попадает не только к покупателю (пересылка, скриншот).
+        // За пределами pending/cancelled решение всегда 'wait' независимо
+        // от ответа блокчейна (см. PaymentDecision — там же и настоящая
+        // причина: только эти два статуса вообще меняют заказ) — значит,
+        // поход в платный RPC-узел продавца тут ничего не решает и его
+        // можно не делать. Без этой проверки цикл параллельных запросов на
+        // уже оплаченный заказ жёг бы чужую квоту без остановки, пока не
+        // закроется вкладка.
+        $order_status = $order->get_status();
+
+        if (!in_array($order_status, ['pending', 'cancelled'], true)) {
+            wp_send_json_success(CustomerMessage::for_order_status($order_status));
+        }
+
+        $cache = new TransientCache();
+        $cache_key = 'poll_' . $order->get_id();
+        $cached = $cache->get($cache_key);
+
+        if ($cached !== null) {
+            $decoded = json_decode($cached, true);
+
+            if (is_array($decoded)) {
+                wp_send_json_success($decoded);
+            }
+        }
+
         $gateways = WC()->payment_gateways()->payment_gateways();
         $gateway = $gateways['solanapaykz'] ?? null;
 
@@ -59,6 +96,8 @@ final class Ajax
         // для браузера: наружу нужны только status и message. Безвредно
         // оставлять как есть, но незачем и передавать лишнее наружу.
         unset($result['mutated']);
+
+        $cache->set($cache_key, (string) wp_json_encode($result), self::POLL_CACHE_TTL_SECONDS);
 
         wp_send_json_success($result);
     }
