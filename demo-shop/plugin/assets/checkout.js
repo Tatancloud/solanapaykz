@@ -13,6 +13,7 @@
     var timerBox = document.getElementById('solanapaykz-timer');
     var timer = null;
     var poller = null;
+    var stopped = false;
 
     // До finalized проходит около 15 секунд. Покупатель, отправивший
     // платёж за несколько секунд до истечения цены, не должен увидеть
@@ -57,6 +58,7 @@
     }
 
     function stop() {
+        stopped = true;
         if (poller) { window.clearTimeout(poller); poller = null; }
         if (timer) { window.clearInterval(timer); timer = null; }
     }
@@ -73,7 +75,16 @@
     // запросов — лишняя нагрузка на PHP-воркеры и участник гонки за
     // завершение заказа (см. OrderLock), даже если сам лок её и не даст
     // довести до дела.
+    //
+    // stop() гасит только запланированный setTimeout — уже отправленный
+    // fetch продолжает жить в своих .then()/.catch() и без этой проверки
+    // безусловно вызвал бы scheduleCheck() заново, воскрешая опрос. Флаг
+    // stopped — единственное, что реально останавливает опрос навсегда.
     function scheduleCheck(delay) {
+        if (stopped) {
+            return;
+        }
+
         poller = window.setTimeout(check, delay);
     }
 
