@@ -110,10 +110,23 @@ final class Scheduler
         }
     }
 
-    /** @param array{status: string, message: string} $result */
+    /**
+     * Признак «мы что-то поменяли в базе» берётся из OrderChecker напрямую
+     * (тот, в свою очередь, — из PaymentDecision::is_mutating()), а не
+     * угадывается по тексту для покупателя: например, «wait» на уже
+     * отменённом заказе отдаёт покупателю тот же статус 'expired', что и
+     * решение 'cancel' — тексты одинаковы, а изменение в базе было только
+     * во втором случае. Отменённые заказы попадают в выборку каждый
+     * проход, пока не вышло окно поздних платежей, и без этого различия
+     * одного такого заказа хватило бы, чтобы счётчик изменений никогда не
+     * обнулялся, а предупреждение о зависшей подстраховке не сработало ни
+     * разу.
+     *
+     * @param array{status: string, message: string, mutated: bool} $result
+     */
     private static function mutated(array $result): bool
     {
-        return in_array($result['status'], ['paid', 'expired', 'mismatch', 'late'], true);
+        return $result['mutated'];
     }
 
     /** @return list<WC_Order> */

@@ -227,4 +227,16 @@ final class PaymentDecisionTest extends TestCase
 
         self::assertSame('wait', $decision['action']);
     }
+
+    public function test_is_mutating_различает_wait_от_остальных_действий(): void
+    {
+        self::assertFalse(PaymentDecision::is_mutating('wait'));
+
+        foreach (['complete', 'cancel', 'hold', 'late'] as $action) {
+            self::assertTrue(
+                PaymentDecision::is_mutating($action),
+                "Действие «{$action}» должно считаться изменением заказа."
+            );
+        }
+    }
 }
