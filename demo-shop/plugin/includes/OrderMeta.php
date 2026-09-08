@@ -9,7 +9,6 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-use Throwable;
 use WC_Order;
 
 /**
@@ -66,7 +65,23 @@ final class OrderMeta
 
         try {
             return Quote::from_array($data);
-        } catch (Throwable $error) {
+        } catch (QuoteException $error) {
+            if ($error->getCode() === Quote::ERROR_UNKNOWN_FORMAT_VERSION) {
+                // Не порча данных: заказ выпущен более новой версией
+                // плагина, чем установлена сейчас. Это отдельная запись в
+                // журнале — не «котировка непригодна», а «эту версию
+                // плагина стоит обновить», сообщается тем же способом,
+                // но другим текстом, чтобы продавец не спутал одно с
+                // другим при разборе error_log.
+                error_log(sprintf(
+                    'SolanaPay-KZ: заказ %d — формат котировки новее, чем понимает эта версия плагина: %s',
+                    $order->get_id(),
+                    $error->getMessage()
+                ));
+
+                return null;
+            }
+
             error_log(sprintf(
                 'SolanaPay-KZ: заказ %d — котировка непригодна: %s',
                 $order->get_id(),
