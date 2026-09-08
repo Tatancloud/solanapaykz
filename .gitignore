@@ -9,3 +9,7 @@ dist/
 
 # Токены npm — никогда не в репозиторий
 .npmrc
+
+demo-shop/.env
+demo-shop/.admin-pass
+demo-shop/plugin/vendor/

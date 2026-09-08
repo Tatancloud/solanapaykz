@@ -1,0 +1,53 @@
+# Демо-магазин SolanaPay-KZ: WordPress с WooCommerce.
+# Служит и стендом для разработки плагина, и публичной демонстрацией решения.
+# Наружу выставлен только WordPress на 127.0.0.1:8080 — снаружи его закрывает nginx.
+
+services:
+  db:
+    image: mariadb:11
+    container_name: solanapaykz_shop_db
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE: wordpress
+      MARIADB_USER: wordpress
+      MARIADB_PASSWORD: ${MARIADB_PASSWORD}
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD}
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  wordpress:
+    image: wordpress:6-php8.3-apache
+    container_name: solanapaykz_shop
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    # Только localhost: доступ снаружи идёт через nginx, который держит TLS.
+    ports:
+      - "127.0.0.1:8080:80"
+    environment:
+      WORDPRESS_DB_HOST: db
+      WORDPRESS_DB_NAME: wordpress
+      WORDPRESS_DB_USER: wordpress
+      WORDPRESS_DB_PASSWORD: ${MARIADB_PASSWORD}
+      # Сайт живёт за обратным прокси с TLS — без этого WordPress будет
+      # строить ссылки на http и ломать редиректы в админке.
+      WORDPRESS_CONFIG_EXTRA: |
+        define('WP_HOME', 'https://shop.pagafox.kz');
+        define('WP_SITEURL', 'https://shop.pagafox.kz');
+        if (isset($$_SERVER['HTTP_X_FORWARDED_PROTO']) && $$_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') {
+            $$_SERVER['HTTPS'] = 'on';
+        }
+    volumes:
+      - wp_data:/var/www/html
+      # Плагин разрабатывается прямо здесь: правки видны без пересборки образа.
+      - ./plugin:/var/www/html/wp-content/plugins/solanapaykz
+
+volumes:
+  db_data:
+  wp_data:
