@@ -102,4 +102,24 @@ add_action('plugins_loaded', static function (): void {
 
         return $gateways;
     });
+
+    require_once __DIR__ . '/includes/PaymentDecision.php';
+    require_once __DIR__ . '/includes/CustomerMessage.php';
+    require_once __DIR__ . '/includes/OrderLock.php';
+    require_once __DIR__ . '/includes/OrderChecker.php';
+    require_once __DIR__ . '/includes/Ajax.php';
+    require_once __DIR__ . '/includes/Scheduler.php';
+
+    Ajax::register();
+    Scheduler::register();
+});
+
+/**
+ * Снимаем расписание при выключении плагина: иначе задача продолжит
+ * пытаться выполниться на классах, которых уже нет в автозагрузке.
+ */
+register_deactivation_hook(__FILE__, static function (): void {
+    if (class_exists(Scheduler::class)) {
+        Scheduler::unregister();
+    }
 });

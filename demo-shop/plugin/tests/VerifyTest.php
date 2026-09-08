@@ -303,4 +303,109 @@ final class VerifyTest extends TestCase
         $verify = new Verify($this->chain_returning([['подпись_нет' => 'x']], null));
         $verify->check('Метка', 'Продавец', self::USDC, '1');
     }
+
+    // --- Нативный SOL: mint === null, поступление считается по разнице
+    // preBalances/postBalances на индексе получателя, а не по token-балансам. ---
+
+    public function test_нативный_перевод_нужной_суммы_засчитан(): void
+    {
+        $tx = $this->fixture('tx-successful-sol');
+        $reference = $tx['transaction']['message']['accountKeys'][2];
+        $recipient = $tx['transaction']['message']['accountKeys'][1];
+
+        $verify = new Verify($this->chain_returning([['signature' => 'подпись']], $tx));
+        $result = $verify->check($reference, $recipient, null, '100000000');
+
+        self::assertSame('confirmed', $result['status']);
+        self::assertSame('100000000', $result['received_units']);
+    }
+
+    public function test_нативный_перевод_переплата_принимается(): void
+    {
+        $tx = $this->fixture('tx-successful-sol');
+        $reference = $tx['transaction']['message']['accountKeys'][2];
+        $recipient = $tx['transaction']['message']['accountKeys'][1];
+
+        $verify = new Verify($this->chain_returning([['signature' => 'подпись']], $tx));
+        $result = $verify->check($reference, $recipient, null, '50000000');
+
+        self::assertSame('confirmed', $result['status']);
+    }
+
+    public function test_нативный_перевод_меньше_нужного_отвергается(): void
+    {
+        $tx = $this->fixture('tx-successful-sol');
+        $reference = $tx['transaction']['message']['accountKeys'][2];
+        $recipient = $tx['transaction']['message']['accountKeys'][1];
+
+        $verify = new Verify($this->chain_returning([['signature' => 'подпись']], $tx));
+        $result = $verify->check($reference, $recipient, null, '999999999999');
+
+        self::assertSame('mismatch', $result['status']);
+        self::assertStringContainsString('сумм', mb_strtolower((string) $result['reason']));
+    }
+
+    public function test_нативный_перевод_получателя_нет_среди_ключей_отвергается(): void
+    {
+        $tx = [
+            'meta' => [
+                'err' => null,
+                'preBalances' => [1000000000, 2000000000],
+                'postBalances' => [900000000, 2100000000],
+            ],
+            'transaction' => [
+                'message' => ['accountKeys' => ['Метка', 'КтоТоЕщё']],
+                'signatures' => ['подпись'],
+            ],
+        ];
+
+        $verify = new Verify($this->chain_returning([['signature' => 'подпись']], $tx));
+        $result = $verify->check('Метка', 'Продавец', null, '1');
+
+        self::assertSame('mismatch', $result['status']);
+    }
+
+    public function test_нативный_перевод_без_preBalances_отвергается(): void
+    {
+        // Аномальный ответ узла: err === null (транзакция успешна), но
+        // массивов балансов нет вовсе. Считать это неполучением платежа
+        // молча нельзя, но и подтвердить нечем — mismatch, не ноль.
+        $tx = [
+            'meta' => ['err' => null],
+            'transaction' => [
+                'message' => ['accountKeys' => ['Метка', 'Продавец']],
+                'signatures' => ['подпись'],
+            ],
+        ];
+
+        $verify = new Verify($this->chain_returning([['signature' => 'подпись']], $tx));
+        $result = $verify->check('Метка', 'Продавец', null, '1');
+
+        self::assertSame('mismatch', $result['status']);
+    }
+
+    public function test_нативный_перевод_метка_в_loadedAddresses_подтверждается(): void
+    {
+        $tx = [
+            'meta' => [
+                'err' => null,
+                'loadedAddresses' => [
+                    'writable' => ['Метка'],
+                    'readonly' => [],
+                ],
+                'preBalances' => [1000000000, 2000000000],
+                'postBalances' => [1000000000, 2100000000],
+            ],
+            'transaction' => [
+                'message' => ['accountKeys' => ['НеМетка', 'Продавец']],
+                'signatures' => ['подпись'],
+            ],
+        ];
+
+        $verify = new Verify($this->chain_returning([['signature' => 'подпись']], $tx));
+        $result = $verify->check('Метка', 'Продавец', null, '100000000');
+
+        self::assertSame('confirmed', $result['status']);
+        self::assertSame('100000000', $result['received_units']);
+    }
 }

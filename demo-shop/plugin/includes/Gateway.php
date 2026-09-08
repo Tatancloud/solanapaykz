@@ -191,12 +191,44 @@ final class Gateway extends WC_Payment_Gateway
             return;
         }
 
+        // Хук woocommerce_thankyou_{method} срабатывает при любом статусе
+        // заказа, кроме failed, — не только при pending. Без этой проверки
+        // уже оплаченный заказ показал бы тот же QR повторно (checkout.js
+        // перезагружает страницу сразу после оплаты), а по QR отменённого
+        // заказа можно было бы всё равно отправить деньги — тот самый
+        // случай поздних платежей, который потом разбирают вручную.
+        if (!CustomerMessage::should_show_qr($order->get_status())) {
+            printf('<p>%s</p>', esc_html(CustomerMessage::for_order_status($order->get_status())['message']));
+
+            return;
+        }
+
         $quote = OrderMeta::read_quote($order);
         $reference = OrderMeta::read_reference($order);
         $recipient = OrderMeta::read_recipient($order);
 
         if ($quote === null || $reference === null || $recipient === null) {
             echo '<p>Не удалось загрузить данные оплаты. Свяжитесь с магазином.</p>';
+
+            return;
+        }
+
+        // Котировка истекла к моменту показа страницы — обычное дело, если
+        // покупатель вернулся по ссылке позже. Проверяется отдельно, до
+        // вызова PaymentRequest::create(): та бросает QuoteException не
+        // только на истёкшей котировке, но и на невалидном адресе
+        // получателя, и на совпадении адреса получателя с адресом монеты,
+        // и на неизвестной паре сеть/монета — единый catch(Throwable) ниже
+        // объявлял бы любую из этих причин истечением срока, и покупателю
+        // предлагали бы оформить заказ заново, что не помогло бы никогда
+        // (например, если продавец по ошибке вписал в поле получателя
+        // адрес самого USDC-минта).
+        if ($quote->is_expired()) {
+            printf(
+                '<p>Срок оплаты этого заказа истёк (цена действовала до %s). '
+                . 'Оформите заказ заново.</p>',
+                esc_html(wp_date('d.m.Y H:i', $quote->expires_at))
+            );
 
             return;
         }
@@ -212,28 +244,87 @@ final class Gateway extends WC_Payment_Gateway
                 'message' => sprintf('Заказ №%s', $order->get_order_number()),
             ]);
         } catch (Throwable $error) {
+            // Котировка не истекла (проверено выше) — значит, дело в
+            // настройках (адрес получателя, сеть/монета), а не во времени.
+            // Продавцу это видно в журнале; покупателю — нейтральный текст,
+            // а не совет переоформить заказ, который тут не поможет.
             error_log(sprintf(
                 'SolanaPay-KZ: заказ %d — не удалось построить платёжную ссылку: %s',
                 $order->get_id(),
                 $error->getMessage()
             ));
-            echo '<p>Не удалось загрузить данные оплаты. Свяжитесь с магазином.</p>';
+            echo '<p>Оплата временно недоступна, свяжитесь с продавцом.</p>';
 
             return;
         }
 
-        // Разметка и опрос статуса — задача 9. Пока выводим сумму и ссылку,
-        // чтобы страницу можно было проверить вручную.
-        printf(
-            '<section class="solanapaykz-payment"><h2>Оплата криптовалютой</h2>'
-            . '<p>К оплате: <strong>%s %s</strong> (%s ₸ по курсу %s)</p>'
-            . '<p><a href="%s">Открыть в кошельке</a></p></section>',
-            esc_html($quote->amount_token),
-            esc_html($quote->token),
-            esc_html($quote->amount_kzt_charged),
-            esc_html($quote->rate),
-            esc_url($request->url)
+        wp_enqueue_style(
+            'solanapaykz-checkout',
+            plugins_url('assets/checkout.css', PLUGIN_FILE),
+            [],
+            '0.1.0'
         );
+
+        wp_enqueue_script(
+            'solanapaykz-qrcode',
+            plugins_url('assets/qrcode.js', PLUGIN_FILE),
+            [],
+            '0.1.0',
+            true
+        );
+
+        wp_enqueue_script(
+            'solanapaykz-checkout',
+            plugins_url('assets/checkout.js', PLUGIN_FILE),
+            ['solanapaykz-qrcode'],
+            '0.1.0',
+            true
+        );
+
+        // wp_localize_script() приводит все значения к строкам — expiresAt
+        // и intervalMs в JS оказывались строками, и арифметика таймера
+        // держалась на неявном приведении типов. wp_add_inline_script() с
+        // wp_json_encode() отдаёт настоящие числа.
+        wp_add_inline_script(
+            'solanapaykz-checkout',
+            'var solanapaykzData = ' . wp_json_encode([
+                'url' => $request->url,
+                'ajaxUrl' => admin_url('admin-ajax.php'),
+                'action' => Ajax::ACTION,
+                'orderId' => $order->get_id(),
+                'orderKey' => $order->get_order_key(),
+                'expiresAt' => $quote->expires_at,
+                'intervalMs' => 5000,
+            ]) . ';',
+            'before'
+        );
+
+        ?>
+        <section class="solanapaykz" id="solanapaykz">
+            <h2>Оплата криптовалютой</h2>
+
+            <p class="solanapaykz__amount">
+                К оплате: <strong><?php echo esc_html($quote->amount_token); ?>
+                <?php echo esc_html($quote->token); ?></strong>
+                <span class="solanapaykz__kzt">(<?php echo esc_html($quote->amount_kzt_charged); ?> ₸
+                по курсу <?php echo esc_html($quote->rate); ?>)</span>
+            </p>
+
+            <div class="solanapaykz__qr" id="solanapaykz-qr"></div>
+
+            <p class="solanapaykz__hint">
+                Отсканируйте код кошельком Solana. Деньги придут продавцу напрямую.
+            </p>
+
+            <p class="solanapaykz__timer" id="solanapaykz-timer"></p>
+
+            <p class="solanapaykz__status" id="solanapaykz-status">Ожидаем оплату…</p>
+
+            <p class="solanapaykz__link">
+                <a href="<?php echo esc_url($request->url, ['solana']); ?>">Открыть в кошельке на этом устройстве</a>
+            </p>
+        </section>
+        <?php
     }
 
     private function build_rate_provider(): RateProvider
