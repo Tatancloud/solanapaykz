@@ -9,6 +9,8 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
+use Throwable;
+
 /**
  * Что делать с заказом по результату проверки платежа.
  *
@@ -34,16 +36,14 @@ final class PaymentDecision
 
         // Список разрешённых статусов, а не запрещённых: платёж может
         // всерьёз изменить только заказ, ожидающий оплаты, и недавно
-        // отменённый (окно поздних платежей). Раньше здесь был список
-        // «не трогать» (processing/completed/refunded/failed/on-hold) —
-        // любой не предусмотренный статус (кастомный статус другого
-        // плагина, новый статус самого WooCommerce, «checkout-draft»)
-        // проваливался в общую логику и мог быть отменён по таймауту или
-        // завершён повторно. Список «действовать только на» безопасен по
-        // умолчанию: неизвестный статус всегда получает «wait».
+        // отменённый (окно поздних платежей). Любой другой статус —
+        // кастомный статус стороннего плагина, новый статус самого
+        // WooCommerce, «checkout-draft» — безопасно получает «wait» по
+        // умолчанию, а не проваливается в общую логику отмены по таймауту
+        // или повторного завершения.
         if ($order_status === 'cancelled') {
             if ($status === 'confirmed') {
-                return self::late_payment($quote, $signature, $late_window_seconds, $now);
+                return self::late_payment($quote, $result, $late_window_seconds, $now);
             }
 
             return self::wait();
@@ -57,9 +57,11 @@ final class PaymentDecision
             return [
                 'action' => 'complete',
                 'note' => sprintf(
-                    'Платёж получен. Транзакция: %s. Сумма: %s %s.',
+                    'Платёж получен. Транзакция: %s. Ожидалось: %s %s. Получено: %s %s.',
                     $signature,
                     $quote->amount_token,
+                    $quote->token,
+                    self::received_amount($quote, $result),
                     $quote->token
                 ),
             ];
@@ -79,7 +81,11 @@ final class PaymentDecision
             ];
         }
 
-        if ($status === 'pending' && $quote->is_expired($now)) {
+        // signature непустая на статусе pending означает «подпись уже видна
+        // в истории, тела транзакции ещё нет» (см. Verify::check) — это не
+        // повод отменять заказ: платёж может обнаружиться на следующем
+        // опросе. Отменяем только настоящее отсутствие подписей.
+        if ($status === 'pending' && $signature === '' && $quote->is_expired($now)) {
             return [
                 'action' => 'cancel',
                 'note' => sprintf(
@@ -99,9 +105,10 @@ final class PaymentDecision
      * раньше и заплатить позже. Транзакцию не вернуть, поэтому продавцу
      * нужно сказать — решение принимает он.
      *
+     * @param array{status: string, signature?: ?string, reason?: ?string, received_units?: ?string} $result
      * @return array{action: string, note: string}
      */
-    private static function late_payment(Quote $quote, string $signature, int $window, int $now): array
+    private static function late_payment(Quote $quote, array $result, int $window, int $now): array
     {
         if ($window <= 0 || $now > $quote->created_at + $window) {
             return self::wait();
@@ -110,13 +117,43 @@ final class PaymentDecision
         return [
             'action' => 'late',
             'note' => sprintf(
-                'Внимание: на отменённый заказ пришёл платёж. Транзакция: %s. Сумма: %s %s. '
-                . 'Решите, восстановить заказ или вернуть деньги покупателю.',
-                $signature,
+                'Внимание: на отменённый заказ пришёл платёж. Транзакция: %s. Ожидалось: %s %s. '
+                . 'Получено: %s %s. Решите, восстановить заказ или вернуть деньги покупателю.',
+                (string) ($result['signature'] ?? ''),
                 $quote->amount_token,
+                $quote->token,
+                self::received_amount($quote, $result),
                 $quote->token
             ),
         ];
+    }
+
+    /**
+     * Фактически полученная сумма — той же строкой, что и ожидаемая в
+     * котировке, чтобы продавец в заметке заказа видел оба числа рядом.
+     * Переплата принимается как оплата (см. Verify::validate), но заметка
+     * не должна называть пришедшую сумму ожидаемой — это разные величины,
+     * и обе уже посчитаны на момент решения.
+     *
+     * @param array{status: string, signature?: ?string, reason?: ?string, received_units?: ?string} $result
+     */
+    private static function received_amount(Quote $quote, array $result): string
+    {
+        $received_units = $result['received_units'] ?? null;
+
+        if (!is_string($received_units) || $received_units === '') {
+            return $quote->amount_token;
+        }
+
+        try {
+            $decimals = Tokens::resolve($quote->cluster, $quote->token)['decimals'];
+
+            return Money::format_units($received_units, $decimals);
+        } catch (Throwable) {
+            // Аномальное значение из Verify — не повод ронять формирование
+            // заметки заказа: показываем ожидаемую сумму вместо необъяснимой ошибки.
+            return $quote->amount_token;
+        }
     }
 
     /** @return array{action: string, note: string} */

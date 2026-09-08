@@ -73,6 +73,9 @@ final class VerifyTest extends TestCase
         $result = $verify->check($reference, $recipient, self::USDC, '10000000');
 
         self::assertSame('confirmed', $result['status']);
+        // Подмена фактически полученной суммы на ожидаемую прошла бы и эту
+        // проверку: нужна сама величина, а не только статус.
+        self::assertSame('10960904', $result['received_units']);
     }
 
     public function test_заниженная_сумма_отвергается(): void
@@ -330,6 +333,9 @@ final class VerifyTest extends TestCase
         $result = $verify->check($reference, $recipient, null, '50000000');
 
         self::assertSame('confirmed', $result['status']);
+        // Подмена фактически полученной суммы на ожидаемую прошла бы и эту
+        // проверку: нужна сама величина, а не только статус.
+        self::assertSame('100000000', $result['received_units']);
     }
 
     public function test_нативный_перевод_меньше_нужного_отвергается(): void
@@ -407,5 +413,76 @@ final class VerifyTest extends TestCase
 
         self::assertSame('confirmed', $result['status']);
         self::assertSame('100000000', $result['received_units']);
+    }
+
+    // --- A2: провалившаяся первая попытка не должна маскировать состоявшийся платёж. ---
+
+    public function test_старая_транзакция_провалена_новая_успешна_платёж_засчитан(): void
+    {
+        // Кошелёк повторяет отправку при протухшем blockhash или нехватке
+        // лампортов на комиссию: провалившаяся попытка ложится в историю
+        // раньше состоявшегося платежа. «Самая ранняя» не обязана быть
+        // искомой оплатой — перебор обязан дойти до успешной транзакции.
+        $failed = $this->fixture('tx-failed-usdc');
+        $successful = $this->fixture('tx-successful-usdc');
+        $reference = $successful['transaction']['message']['accountKeys'][0];
+        $recipient = '7uTT8Xi5RWXzy7h9XL244GRgEycDYDhLjr3ZyNdXi8pZ';
+
+        $chain = $this->createMock(SolanaChain::class);
+        $chain->method('get_signatures_for_address')->willReturn([
+            ['signature' => 'новая'],
+            ['signature' => 'старая'],
+        ]);
+        $chain->method('get_transaction')->willReturnMap([
+            ['новая', $successful],
+            ['старая', $failed],
+        ]);
+
+        $verify = new Verify($chain);
+        $result = $verify->check($reference, $recipient, self::USDC, '10960904');
+
+        self::assertSame('confirmed', $result['status']);
+        self::assertSame('новая', $result['signature']);
+    }
+
+    public function test_подписей_ровно_на_лимит_распознаётся_как_усечённая_выборка(): void
+    {
+        // Пришло ровно столько подписей, сколько мы запросили, — значит
+        // история по метке может быть длиннее одной страницы, и делать вид,
+        // что видна вся история, нельзя.
+        $signatures = array_fill(0, Verify::SIGNATURE_LIMIT, ['signature' => 'подпись']);
+
+        $chain = $this->createMock(SolanaChain::class);
+        $chain->method('get_signatures_for_address')->willReturn($signatures);
+        $chain->method('get_transaction')->willReturn(null);
+
+        $verify = new Verify($chain);
+        $result = $verify->check('Метка', 'Продавец', self::USDC, '1');
+
+        self::assertTrue($result['truncated']);
+    }
+
+    public function test_выборка_меньше_лимита_не_считается_усечённой(): void
+    {
+        $verify = new Verify($this->chain_returning([['signature' => 'подпись']], null));
+        $result = $verify->check('Метка', 'Продавец', self::USDC, '1');
+
+        self::assertFalse($result['truncated']);
+    }
+
+    // --- A3: «подпись есть, тела ещё нет» отличается от «подписей нет вовсе». ---
+
+    public function test_подпись_есть_но_тело_транзакции_ещё_недоступно(): void
+    {
+        // Узел уже отдаёт подпись, но тело транзакции за тем же уровнем
+        // подтверждения ещё не отвечает — обычное дело, когда за адресом
+        // провайдера стоит несколько узлов. Это не то же самое, что полное
+        // отсутствие подписей: непустая signature в ответе — то, на чём
+        // PaymentDecision отличает «ждём» от «отменяем по истечении срока».
+        $verify = new Verify($this->chain_returning([['signature' => 'подпись']], null));
+        $result = $verify->check('Метка', 'Продавец', self::USDC, '1');
+
+        self::assertSame('pending', $result['status']);
+        self::assertSame('подпись', $result['signature']);
     }
 }

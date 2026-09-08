@@ -18,6 +18,18 @@ if (!defined('ABSPATH')) {
  */
 final class Verify
 {
+    /**
+     * Solana JSON-RPC ограничивает getSignaturesForAddress максимум 1000
+     * записей за один запрос — это и есть предел, который мы просим.
+     * Значение по умолчанию интерфейса (10) годится только для мгновенной
+     * проверки в тестах: на практике кошелёк повторяет отправку при
+     * протухшем blockhash или нехватке лампортов на комиссию, и
+     * провалившаяся попытка ложится в историю раньше состоявшегося
+     * платежа, а посторонний может добавлять к адресу-метке собственные
+     * дешёвые транзакции, вытесняя из окна настоящий платёж.
+     */
+    public const SIGNATURE_LIMIT = 1000;
+
     public function __construct(private SolanaChain $chain)
     {
     }
@@ -28,7 +40,9 @@ final class Verify
      *     пустой строкой: пустая строка не встречается ни в одном токен-
      *     балансе, поэтому такая подмена превращала бы любой нативный
      *     перевод в вечный mismatch.
-     * @return array{status: string, signature: ?string, reason: ?string, received_units: ?string}
+     * @return array{status: string, signature: ?string, reason: ?string, received_units: ?string, truncated: bool}
+     *     truncated — пришло ровно SIGNATURE_LIMIT подписей: история по
+     *     метке может быть длиннее того, что мы видим за один запрос.
      */
     public function check(
         string $reference,
@@ -36,41 +50,73 @@ final class Verify
         ?string $mint,
         string $expected_units
     ): array {
-        $signatures = $this->chain->get_signatures_for_address($reference);
+        $signatures = $this->chain->get_signatures_for_address($reference, self::SIGNATURE_LIMIT);
+        $truncated = count($signatures) === self::SIGNATURE_LIMIT;
+
+        if ($truncated) {
+            error_log(sprintf(
+                'SolanaPay-KZ: по метке %s пришло ровно %d подписей — это предел одного запроса,'
+                . ' видна не вся история по этому адресу.',
+                $reference,
+                self::SIGNATURE_LIMIT
+            ));
+        }
 
         if ($signatures === []) {
-            return $this->result('pending');
+            return $this->result('pending') + ['truncated' => $truncated];
         }
 
         // По спецификации Solana Pay метка уникальна на платёж, поэтому
-        // берём самую раннюю транзакцию — она и есть искомая оплата. Узел
-        // отдаёт подписи от новых к старым, значит нужна последняя запись
-        // массива; если бы мы брали первую (самую новую), злоумышленник
-        // мог бы перебить чужой платёж по той же метке своей транзакцией.
-        //
-        // Поиск идёт с лимитом по умолчанию (get_signatures_for_address
-        // без явного $limit — это 10 в интерфейсе SolanaChain), то есть
-        // «самая ранняя» здесь — самая ранняя среди последних десяти
-        // транзакций по метке. Для одноразового адреса-метки, на который
-        // приходит ровно один платёж, этого достаточно.
-        $last = $signatures[count($signatures) - 1];
-        $signature = $last['signature'] ?? null;
+        // искомая оплата — самая ранняя состоявшаяся транзакция с верной
+        // суммой, а не первый попавшийся кандидат: кошелёк мог отправить
+        // несколько провалившихся попыток раньше настоящего платежа. Узел
+        // отдаёт подписи от новых к старым — переворачиваем, чтобы
+        // перебирать кандидатов в хронологическом порядке, и не
+        // останавливаемся, пока не найдём состоявшийся платёж или не
+        // переберём всё.
+        $earliest_mismatch = null;
+        $earliest_pending_signature = null;
 
-        if (!is_string($signature) || $signature === '') {
-            // Запись без подписи — не «платежа ещё нет», а аномальный
-            // ответ узла: молча трактовать его как отсутствие оплаты
-            // нельзя, иначе сбой узла замаскируется под неуплату.
-            throw new RpcException('Узел блокчейна вернул запись без поля signature.');
+        foreach (array_reverse($signatures) as $entry) {
+            $signature = $entry['signature'] ?? null;
+
+            if (!is_string($signature) || $signature === '') {
+                // Запись без подписи — не «платежа ещё нет», а аномальный
+                // ответ узла: молча трактовать его как отсутствие оплаты
+                // нельзя, иначе сбой узла замаскируется под неуплату.
+                throw new RpcException('Узел блокчейна вернул запись без поля signature.');
+            }
+
+            $transaction = $this->chain->get_transaction($signature);
+
+            if ($transaction === null) {
+                // Подпись уже в истории, а тело транзакции для нужного
+                // уровня подтверждения ещё не отдаётся — узел не догнал.
+                // Запоминаем самую раннюю такую подпись и продолжаем: более
+                // новый кандидат ещё может оказаться состоявшимся платежом.
+                $earliest_pending_signature ??= $signature;
+
+                continue;
+            }
+
+            $outcome = $this->validate($transaction, $signature, $reference, $recipient, $mint, $expected_units);
+
+            if ($outcome['status'] === 'confirmed') {
+                return $outcome + ['truncated' => $truncated];
+            }
+
+            $earliest_mismatch ??= $outcome;
         }
 
-        $transaction = $this->chain->get_transaction($signature);
-
-        if ($transaction === null) {
-            // Подпись есть, а транзакции ещё нет: узел не догнал.
-            return $this->result('pending');
+        if ($earliest_pending_signature !== null) {
+            // Платёж мог быть отправлен и ещё не проиндексирован. Это не
+            // «подписей нет вовсе» — signature непустая различает эти два
+            // случая для PaymentDecision: на истёкшей котировке первое не
+            // повод отменять заказ, а второе — повод.
+            return $this->result('pending', $earliest_pending_signature) + ['truncated' => $truncated];
         }
 
-        return $this->validate($transaction, $signature, $reference, $recipient, $mint, $expected_units);
+        return ($earliest_mismatch ?? $this->result('pending')) + ['truncated' => $truncated];
     }
 
     /**
