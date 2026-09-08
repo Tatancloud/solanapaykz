@@ -10,6 +10,7 @@ if (!defined('ABSPATH')) {
 }
 
 use Throwable;
+use WC_Data_Store;
 use WC_Order;
 
 /**
@@ -157,11 +158,21 @@ final class OrderChecker
                 return ['status' => 'unknown', 'message' => self::UNAVAILABLE_MESSAGE, 'mutated' => false];
             }
 
-            // Перечитываем заказ перед мутацией: за время RPC-запроса (до 10 секунд)
-            // статус мог смениться другим процессом — лок не единственная защита.
-            // clean_post_cache() сбрасывает кеш поста; на HPOS это не нужно и не сработает.
+            // Перечитываем заказ перед мутацией — статус мог смениться другим
+            // процессом за время RPC-запроса. clean_post_cache() чистит кеш
+            // старого хранилища (посты) и на HPOS не делает ничего.
             if (function_exists('clean_post_cache')) {
                 clean_post_cache($order_id);
+            }
+
+            // На HPOS заказ хранится не в постах — нужен сброс кеша самого
+            // хранилища заказов через штатный WC_Data_Store, а не WordPress-
+            // кеш постов. Честно: это сбрасывает кеш объектов WooCommerce
+            // ('orders'), а не любой возможный уровень кеширования на
+            // хостинге, — но это единственный публичный способ, который
+            // WooCommerce сам предоставляет плагинам для этой цели.
+            if (class_exists(WC_Data_Store::class)) {
+                WC_Data_Store::load('order')->clear_cached_data([$order_id]);
             }
 
             $fresh_order = wc_get_order($order_id);
