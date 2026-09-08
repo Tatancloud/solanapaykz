@@ -1,12 +1,12 @@
 <?php
 /**
  * Plugin Name: SolanaPay-KZ для WooCommerce
- * Description: Приём оплаты в USDC на Solana с конвертацией из тенге. Деньги идут напрямую на кошелёк продавца.
+ * Description: Приём оплаты в USDC и SOL на Solana с конвертацией из тенге. Деньги идут напрямую на кошелёк продавца.
  * Version: 0.1.0
  * Requires at least: 7.0
  * Requires PHP: 8.1
  * Requires Plugins: woocommerce
- * WC requires at least: 7.1
+ * WC requires at least: 9.0
  * WC tested up to: 11.1
  * Author: Tatancloud
  * License: MIT
