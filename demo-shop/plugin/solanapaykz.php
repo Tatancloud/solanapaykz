@@ -5,8 +5,12 @@
  * Version: 0.1.0
  * Requires at least: 7.0
  * Requires PHP: 8.1
+ * Requires Plugins: woocommerce
+ * WC requires at least: 7.1
+ * WC tested up to: 11.1
  * Author: Tatancloud
  * License: MIT
+ * Update URI: false
  * Text Domain: solanapaykz
  */
 
