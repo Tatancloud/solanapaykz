@@ -4149,14 +4149,984 @@ git push -u origin feat/wc-gateway
 
 ---
 
-## Задача 9
+### Задача 9: Страница оплаты и жизненный цикл заказа
 
-Расписывается после ревью задачи 8.
+**Файлы:**
+- Создать: `demo-shop/plugin/includes/PaymentDecision.php`, `includes/OrderChecker.php`,
+  `includes/Ajax.php`, `includes/Scheduler.php`
+- Создать: `demo-shop/plugin/assets/checkout.js`, `assets/checkout.css`
+- Уже на месте: `demo-shop/plugin/assets/qrcode.js` — библиотека рисования QR
+  (MIT, Kazuhiko Arase, положена в репозиторий заранее)
+- Изменить: `includes/Gateway.php` (страница оплаты), `solanapaykz.php` (подключение)
+- Тест: `demo-shop/plugin/tests/PaymentDecisionTest.php`
 
-- **Задача 9. Страница оплаты и жизненный цикл заказа.** QR-код в браузере
-  покупателя, опрос статуса каждые 5 секунд через AJAX, проверка по расписанию
-  каждые 5 минут, отмена через срок жизни котировки, проверка отменённых
-  заказов в течение настроенного окна, уведомление продавцу о позднем платеже.
+**Интерфейсы:**
+- Потребляет: `Quote`, `Verify`, `Rpc`, `OrderMeta`, `Tokens`, `PaymentRequest`.
+- Отдаёт: `PaymentDecision::decide(array $result, Quote $quote, string $order_status, int $late_window_seconds, int $now): array{action: string, note: string}`
+  где action — одно из `wait`, `complete`, `cancel`, `hold`, `late`;
+  класс `OrderChecker` с методом `check(WC_Order $order): array` — применяет решение
+  к заказу; `Ajax::register()`; `Scheduler::register()`.
+
+**Почему решение вынесено отдельно.** Что делать с заказом — это логика, которую
+можно ошибиться в шести местах сразу. Она собрана в один класс без единого вызова
+WordPress и покрыта тестами. Классы, применяющие решение, остаются тонкими.
+
+- [ ] **Шаг 1: Создать ветку**
+
+```bash
+git checkout main && git pull
+git checkout -b feat/wc-payment-page
+```
+
+- [ ] **Шаг 2: Написать падающий тест решений**
+
+```php
+<?php
+// demo-shop/plugin/tests/PaymentDecisionTest.php
+
+declare(strict_types=1);
+
+use PHPUnit\Framework\TestCase;
+use SolanaPayKZ\Cache;
+use SolanaPayKZ\PaymentDecision;
+use SolanaPayKZ\Quote;
+use SolanaPayKZ\RateProvider;
+use SolanaPayKZ\RateSource;
+
+final class PaymentDecisionTest extends TestCase
+{
+    private const DAY = 86400;
+
+    private function quote(): Quote
+    {
+        $source = new class implements RateSource {
+            public function get_name(): string { return 'binance'; }
+            public function get_kzt_per_token(string $token): string { return '459.60000000'; }
+        };
+
+        $cache = new class implements Cache {
+            public function get(string $key): ?string { return null; }
+            public function set(string $key, string $value, int $ttl_seconds): void {}
+        };
+
+        return Quote::create(new RateProvider([$source], $cache, 0), '10000', 'USDC', 'mainnet');
+    }
+
+    public function test_платежа_нет_котировка_жива_ждём(): void
+    {
+        $quote = $this->quote();
+        $decision = PaymentDecision::decide(
+            ['status' => 'pending'],
+            $quote,
+            'pending',
+            self::DAY,
+            $quote->created_at + 60
+        );
+
+        self::assertSame('wait', $decision['action']);
+    }
+
+    public function test_платежа_нет_срок_вышел_отменяем(): void
+    {
+        $quote = $this->quote();
+        $decision = PaymentDecision::decide(
+            ['status' => 'pending'],
+            $quote,
+            'pending',
+            self::DAY,
+            $quote->expires_at + 1
+        );
+
+        self::assertSame('cancel', $decision['action']);
+        self::assertStringContainsString('срок', mb_strtolower($decision['note']));
+    }
+
+    public function test_платёж_подтверждён_завершаем_заказ(): void
+    {
+        $quote = $this->quote();
+        $decision = PaymentDecision::decide(
+            ['status' => 'confirmed', 'signature' => 'подпись123', 'received_units' => '21758051'],
+            $quote,
+            'pending',
+            self::DAY,
+            $quote->created_at + 60
+        );
+
+        self::assertSame('complete', $decision['action']);
+        self::assertStringContainsString('подпись123', $decision['note']);
+    }
+
+    public function test_платёж_после_истечения_срока_всё_равно_засчитывается(): void
+    {
+        // Транзакция в блокчейне необратима: отменить её плагин не может.
+        // Деньги пришли — значит заказ оплачен, решение о судьбе принимает продавец.
+        $quote = $this->quote();
+        $decision = PaymentDecision::decide(
+            ['status' => 'confirmed', 'signature' => 'подпись', 'received_units' => '21758051'],
+            $quote,
+            'pending',
+            self::DAY,
+            $quote->expires_at + 600
+        );
+
+        self::assertSame('complete', $decision['action']);
+    }
+
+    public function test_платёж_на_отменённый_заказ_в_окне_уведомляем_продавца(): void
+    {
+        $quote = $this->quote();
+        $decision = PaymentDecision::decide(
+            ['status' => 'confirmed', 'signature' => 'поздняя', 'received_units' => '21758051'],
+            $quote,
+            'cancelled',
+            self::DAY,
+            $quote->expires_at + 3600
+        );
+
+        self::assertSame('late', $decision['action']);
+        self::assertStringContainsString('отменённ', mb_strtolower($decision['note']));
+        self::assertStringContainsString('поздняя', $decision['note']);
+    }
+
+    public function test_платёж_на_отменённый_заказ_вне_окна_не_трогаем(): void
+    {
+        $quote = $this->quote();
+        $decision = PaymentDecision::decide(
+            ['status' => 'confirmed', 'signature' => 'очень поздняя', 'received_units' => '21758051'],
+            $quote,
+            'cancelled',
+            self::DAY,
+            $quote->created_at + self::DAY * 3
+        );
+
+        self::assertSame('wait', $decision['action']);
+    }
+
+    public function test_окно_ноль_отключает_проверку_отменённых(): void
+    {
+        $quote = $this->quote();
+        $decision = PaymentDecision::decide(
+            ['status' => 'confirmed', 'signature' => 'поздняя', 'received_units' => '21758051'],
+            $quote,
+            'cancelled',
+            0,
+            $quote->expires_at + 60
+        );
+
+        self::assertSame('wait', $decision['action']);
+    }
+
+    public function test_несовпадение_платежа_переводим_на_удержание(): void
+    {
+        $quote = $this->quote();
+        $decision = PaymentDecision::decide(
+            ['status' => 'mismatch', 'signature' => 'подозрительная', 'reason' => 'Сумма меньше ожидаемой.'],
+            $quote,
+            'pending',
+            self::DAY,
+            $quote->created_at + 60
+        );
+
+        self::assertSame('hold', $decision['action']);
+        self::assertStringContainsString('Сумма меньше ожидаемой', $decision['note']);
+        self::assertStringContainsString('подозрительная', $decision['note']);
+    }
+
+    public function test_уже_оплаченный_заказ_не_трогаем(): void
+    {
+        // Повторный опрос не должен переоформлять заказ, который уже
+        // переведён в обработку: продавец мог начать его собирать.
+        $quote = $this->quote();
+
+        foreach (['processing', 'completed', 'refunded'] as $status) {
+            $decision = PaymentDecision::decide(
+                ['status' => 'confirmed', 'signature' => 'подпись', 'received_units' => '21758051'],
+                $quote,
+                $status,
+                self::DAY,
+                $quote->created_at + 60
+            );
+
+            self::assertSame('wait', $decision['action'], "Статус «{$status}» трогать нельзя.");
+        }
+    }
+
+    public function test_заказ_на_удержании_повторно_не_переводим(): void
+    {
+        $quote = $this->quote();
+        $decision = PaymentDecision::decide(
+            ['status' => 'mismatch', 'signature' => 'подпись', 'reason' => 'что-то не так'],
+            $quote,
+            'on-hold',
+            self::DAY,
+            $quote->created_at + 60
+        );
+
+        self::assertSame('wait', $decision['action']);
+    }
+
+    public function test_неизвестный_статус_проверки_не_меняет_заказ(): void
+    {
+        $quote = $this->quote();
+        $decision = PaymentDecision::decide(
+            ['status' => 'что-то новое'],
+            $quote,
+            'pending',
+            self::DAY,
+            $quote->created_at + 60
+        );
+
+        self::assertSame('wait', $decision['action']);
+    }
+}
+```
+
+- [ ] **Шаг 3: Запустить и убедиться, что падает**
+
+Запустить: `docker exec -w /var/www/html/wp-content/plugins/solanapaykz solanapaykz_shop php vendor/bin/phpunit --filter PaymentDecisionTest`
+Ожидается: FAIL — класса нет.
+
+- [ ] **Шаг 4: Реализовать решения**
+
+```php
+<?php
+// demo-shop/plugin/includes/PaymentDecision.php
+
+declare(strict_types=1);
+
+namespace SolanaPayKZ;
+
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+/**
+ * Что делать с заказом по результату проверки платежа.
+ *
+ * Вынесено в отдельный класс без единого вызова WordPress: здесь легко
+ * ошибиться сразу в нескольких случаях, а проверить их поведением в живом
+ * магазине почти невозможно — пришлось бы подгадывать сроки и состояния.
+ */
+final class PaymentDecision
+{
+    /** Заказы в этих состояниях плагин больше не трогает. */
+    private const FINAL_STATUSES = ['processing', 'completed', 'refunded', 'failed', 'on-hold'];
+
+    /**
+     * @param array{status: string, signature?: ?string, reason?: ?string, received_units?: ?string} $result
+     * @return array{action: string, note: string}
+     */
+    public static function decide(
+        array $result,
+        Quote $quote,
+        string $order_status,
+        int $late_window_seconds,
+        int $now
+    ): array {
+        $status = $result['status'] ?? '';
+        $signature = (string) ($result['signature'] ?? '');
+
+        // Заказ уже в конечном состоянии: продавец мог начать его собирать
+        // или вернуть деньги. Повторный опрос ничего не переоформляет.
+        if (in_array($order_status, self::FINAL_STATUSES, true)) {
+            return self::wait();
+        }
+
+        if ($status === 'confirmed') {
+            if ($order_status === 'cancelled') {
+                return self::late_payment($quote, $signature, $late_window_seconds, $now);
+            }
+
+            return [
+                'action' => 'complete',
+                'note' => sprintf(
+                    'Платёж получен. Транзакция: %s. Сумма: %s %s.',
+                    $signature,
+                    $quote->amount_token,
+                    $quote->token
+                ),
+            ];
+        }
+
+        if ($status === 'mismatch') {
+            // Не отменяем и не подтверждаем: транзакция есть, но не сходится.
+            // Такое разбирают руками, глядя на саму транзакцию.
+            return [
+                'action' => 'hold',
+                'note' => sprintf(
+                    'Найдена транзакция %s, но она не прошла проверку: %s '
+                    . 'Проверьте её вручную, прежде чем отгружать заказ.',
+                    $signature,
+                    (string) ($result['reason'] ?? 'причина не указана.')
+                ),
+            ];
+        }
+
+        if ($status === 'pending' && $quote->is_expired($now)) {
+            return [
+                'action' => 'cancel',
+                'note' => sprintf(
+                    'Срок оплаты истёк: цена была зафиксирована до %s.',
+                    gmdate('d.m.Y H:i', $quote->expires_at) . ' UTC'
+                ),
+            ];
+        }
+
+        return self::wait();
+    }
+
+    /**
+     * Платёж пришёл на отменённый заказ.
+     *
+     * Отмена заказа не отменяет QR-код: покупатель мог отсканировать его
+     * раньше и заплатить позже. Транзакцию не вернуть, поэтому продавцу
+     * нужно сказать — решение принимает он.
+     *
+     * @return array{action: string, note: string}
+     */
+    private static function late_payment(Quote $quote, string $signature, int $window, int $now): array
+    {
+        if ($window <= 0 || $now > $quote->created_at + $window) {
+            return self::wait();
+        }
+
+        return [
+            'action' => 'late',
+            'note' => sprintf(
+                'Внимание: на отменённый заказ пришёл платёж. Транзакция: %s. Сумма: %s %s. '
+                . 'Решите, восстановить заказ или вернуть деньги покупателю.',
+                $signature,
+                $quote->amount_token,
+                $quote->token
+            ),
+        ];
+    }
+
+    /** @return array{action: string, note: string} */
+    private static function wait(): array
+    {
+        return ['action' => 'wait', 'note' => ''];
+    }
+}
+```
+
+- [ ] **Шаг 5: Запустить тесты решений**
+
+Запустить: `docker exec -w /var/www/html/wp-content/plugins/solanapaykz solanapaykz_shop php vendor/bin/phpunit --filter PaymentDecisionTest`
+Ожидается: PASS, 11 тестов.
+
+- [ ] **Шаг 6: Реализовать применение решения к заказу**
+
+```php
+<?php
+// demo-shop/plugin/includes/OrderChecker.php
+
+declare(strict_types=1);
+
+namespace SolanaPayKZ;
+
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+use Throwable;
+use WC_Order;
+
+/**
+ * Проверяет платёж по заказу и применяет решение.
+ *
+ * Тонкая обвязка: вся логика решения — в PaymentDecision, вся проверка
+ * блокчейна — в Verify. Здесь только связывание с заказом WooCommerce.
+ */
+final class OrderChecker
+{
+    /**
+     * @return array{status: string, message: string} Для показа покупателю.
+     */
+    public function check(WC_Order $order, array $settings): array
+    {
+        $quote = OrderMeta::read_quote($order);
+        $reference = OrderMeta::read_reference($order);
+        $recipient = OrderMeta::read_recipient($order);
+
+        if ($quote === null || $reference === null || $recipient === null) {
+            return ['status' => 'error', 'message' => 'Данные оплаты не найдены.'];
+        }
+
+        try {
+            $verify = new Verify(new Rpc((string) $settings['rpc_url']));
+            $result = $verify->check(
+                $reference,
+                $recipient,
+                (string) (Tokens::resolve($quote->cluster, $quote->token)['mint'] ?? ''),
+                Money::parse_decimal_to_units(
+                    $quote->amount_token,
+                    Tokens::resolve($quote->cluster, $quote->token)['decimals']
+                )
+            );
+        } catch (Throwable $error) {
+            // Сбой связи с узлом — не ответ о платеже. Заказ не трогаем,
+            // покупателю говорим, что проверка временно недоступна.
+            error_log('SolanaPay-KZ: ' . $error->getMessage());
+
+            return ['status' => 'unknown', 'message' => 'Не удалось проверить оплату. Пробуем ещё раз.'];
+        }
+
+        $decision = PaymentDecision::decide(
+            $result,
+            $quote,
+            $order->get_status(),
+            (int) $settings['late_window'],
+            time()
+        );
+
+        return $this->apply($order, $decision, $result);
+    }
+
+    /**
+     * @param array{action: string, note: string} $decision
+     * @return array{status: string, message: string}
+     */
+    private function apply(WC_Order $order, array $decision, array $result): array
+    {
+        $signature = (string) ($result['signature'] ?? '');
+
+        switch ($decision['action']) {
+            case 'complete':
+                OrderMeta::save_signature($order, $signature);
+                $order->payment_complete($signature);
+                $order->add_order_note($decision['note']);
+
+                return ['status' => 'paid', 'message' => 'Оплата получена. Спасибо!'];
+
+            case 'cancel':
+                $order->update_status('cancelled', $decision['note']);
+
+                return ['status' => 'expired', 'message' => 'Срок оплаты истёк. Оформите заказ заново.'];
+
+            case 'hold':
+                OrderMeta::save_signature($order, $signature);
+                $order->update_status('on-hold', $decision['note']);
+
+                return [
+                    'status' => 'mismatch',
+                    'message' => 'Платёж найден, но не сошёлся с суммой заказа. Магазин свяжется с вами.',
+                ];
+
+            case 'late':
+                OrderMeta::mark_late_payment($order, $signature);
+                $order->update_status('on-hold', $decision['note']);
+
+                return [
+                    'status' => 'late',
+                    'message' => 'Платёж получен после отмены заказа. Магазин свяжется с вами.',
+                ];
+
+            default:
+                return ['status' => 'pending', 'message' => 'Ожидаем оплату.'];
+        }
+    }
+}
+```
+
+- [ ] **Шаг 7: Добавить чтение адреса получателя в данные заказа**
+
+В `includes/OrderMeta.php` добавить метод рядом с `read_reference`:
+
+```php
+    public static function read_recipient(WC_Order $order): ?string
+    {
+        $recipient = $order->get_meta(self::RECIPIENT);
+
+        return is_string($recipient) && $recipient !== '' ? $recipient : null;
+    }
+```
+
+Если метод уже есть — пропустить шаг.
+
+- [ ] **Шаг 8: Реализовать эндпоинт опроса**
+
+```php
+<?php
+// demo-shop/plugin/includes/Ajax.php
+
+declare(strict_types=1);
+
+namespace SolanaPayKZ;
+
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+use WC_Order;
+
+/** Опрос состояния оплаты со страницы «Спасибо за заказ». */
+final class Ajax
+{
+    public const ACTION = 'solanapaykz_check';
+
+    public static function register(): void
+    {
+        add_action('wp_ajax_' . self::ACTION, [self::class, 'handle']);
+        add_action('wp_ajax_nopriv_' . self::ACTION, [self::class, 'handle']);
+    }
+
+    public static function handle(): void
+    {
+        $order_id = isset($_GET['order_id']) ? absint($_GET['order_id']) : 0;
+        $key = isset($_GET['key']) ? sanitize_text_field(wp_unslash($_GET['key'])) : '';
+
+        $order = $order_id > 0 ? wc_get_order($order_id) : null;
+
+        // Ключ заказа знает только тот, кому WooCommerce его выдал. Без
+        // этой проверки любой смог бы перебирать номера заказов и узнавать
+        // их состояние.
+        if (!$order instanceof WC_Order || $order->get_order_key() !== $key) {
+            wp_send_json_error(['message' => 'Заказ не найден.'], 404);
+        }
+
+        if ($order->get_payment_method() !== 'solanapaykz') {
+            wp_send_json_error(['message' => 'Заказ оплачивается другим способом.'], 400);
+        }
+
+        $gateways = WC()->payment_gateways()->payment_gateways();
+        $gateway = $gateways['solanapaykz'] ?? null;
+
+        if ($gateway === null) {
+            wp_send_json_error(['message' => 'Способ оплаты недоступен.'], 503);
+        }
+
+        $result = (new OrderChecker())->check($order, [
+            'rpc_url' => $gateway->get_option('rpc_url', ''),
+            'late_window' => $gateway->get_option('late_window', '86400'),
+        ]);
+
+        wp_send_json_success($result);
+    }
+}
+```
+
+- [ ] **Шаг 9: Реализовать проверку по расписанию**
+
+```php
+<?php
+// demo-shop/plugin/includes/Scheduler.php
+
+declare(strict_types=1);
+
+namespace SolanaPayKZ;
+
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+use WC_Order;
+
+/**
+ * Проверка заказов по расписанию.
+ *
+ * Нужна потому, что покупатель может закрыть вкладку сразу после оплаты:
+ * опрос из браузера прекратится, а платёж останется незамеченным.
+ *
+ * Встроенный планировщик WordPress срабатывает при заходе на сайт, поэтому
+ * на малопосещаемом магазине задачи выполняются реже, чем задано. Для
+ * подстраховки и существует опрос из браузера.
+ */
+final class Scheduler
+{
+    public const HOOK = 'solanapaykz_check_orders';
+
+    public static function register(): void
+    {
+        add_filter('cron_schedules', static function (array $schedules): array {
+            $schedules['solanapaykz_five_minutes'] = [
+                'interval' => 300,
+                'display' => 'Каждые 5 минут (SolanaPay-KZ)',
+            ];
+
+            return $schedules;
+        });
+
+        add_action(self::HOOK, [self::class, 'run']);
+
+        if (wp_next_scheduled(self::HOOK) === false) {
+            wp_schedule_event(time() + 300, 'solanapaykz_five_minutes', self::HOOK);
+        }
+    }
+
+    public static function unregister(): void
+    {
+        $timestamp = wp_next_scheduled(self::HOOK);
+
+        if ($timestamp !== false) {
+            wp_unschedule_event($timestamp, self::HOOK);
+        }
+    }
+
+    public static function run(): void
+    {
+        $gateways = WC()->payment_gateways()->payment_gateways();
+        $gateway = $gateways['solanapaykz'] ?? null;
+
+        if ($gateway === null) {
+            return;
+        }
+
+        $late_window = (int) $gateway->get_option('late_window', '86400');
+
+        $settings = [
+            'rpc_url' => $gateway->get_option('rpc_url', ''),
+            'late_window' => $late_window,
+        ];
+
+        $checker = new OrderChecker();
+
+        // Ожидающие оплаты — основной случай.
+        foreach (self::orders_to_check('pending', 30) as $order) {
+            $checker->check($order, $settings);
+        }
+
+        // Отменённые проверяются, пока не вышло окно: покупатель мог
+        // заплатить по QR уже после отмены.
+        if ($late_window > 0) {
+            foreach (self::orders_to_check('cancelled', 30, $late_window) as $order) {
+                $checker->check($order, $settings);
+            }
+        }
+    }
+
+    /** @return list<WC_Order> */
+    private static function orders_to_check(string $status, int $limit, ?int $max_age = null): array
+    {
+        $args = [
+            'status' => $status,
+            'payment_method' => 'solanapaykz',
+            'limit' => $limit,
+            'orderby' => 'date',
+            'order' => 'ASC',
+        ];
+
+        if ($max_age !== null) {
+            $args['date_created'] = '>' . (time() - $max_age);
+        }
+
+        $orders = wc_get_orders($args);
+
+        return is_array($orders) ? $orders : [];
+    }
+}
+```
+
+- [ ] **Шаг 10: Написать страницу оплаты**
+
+Заменить тело `Gateway::render_payment_page` на вывод разметки с QR и
+подключение скриптов:
+
+```php
+    public function render_payment_page(int $order_id): void
+    {
+        $order = wc_get_order($order_id);
+
+        if (!$order instanceof WC_Order || $order->get_payment_method() !== $this->id) {
+            return;
+        }
+
+        $quote = OrderMeta::read_quote($order);
+        $reference = OrderMeta::read_reference($order);
+        $recipient = OrderMeta::read_recipient($order);
+
+        if ($quote === null || $reference === null || $recipient === null) {
+            echo '<p>Не удалось загрузить данные оплаты. Свяжитесь с магазином.</p>';
+
+            return;
+        }
+
+        try {
+            $request = PaymentRequest::create($quote, $recipient, [
+                'reference' => $reference,
+                'label' => (string) get_bloginfo('name'),
+                'message' => sprintf('Заказ №%s', $order->get_order_number()),
+            ]);
+        } catch (Throwable $error) {
+            // Котировка истекла к моменту показа страницы — обычное дело,
+            // если покупатель вернулся по ссылке позже.
+            printf(
+                '<p>Срок оплаты этого заказа истёк (цена действовала до %s). '
+                . 'Оформите заказ заново.</p>',
+                esc_html(wp_date('d.m.Y H:i', $quote->expires_at))
+            );
+
+            return;
+        }
+
+        wp_enqueue_style(
+            'solanapaykz-checkout',
+            plugins_url('assets/checkout.css', PLUGIN_FILE),
+            [],
+            '0.1.0'
+        );
+
+        wp_enqueue_script(
+            'solanapaykz-qrcode',
+            plugins_url('assets/qrcode.js', PLUGIN_FILE),
+            [],
+            '0.1.0',
+            true
+        );
+
+        wp_enqueue_script(
+            'solanapaykz-checkout',
+            plugins_url('assets/checkout.js', PLUGIN_FILE),
+            ['solanapaykz-qrcode'],
+            '0.1.0',
+            true
+        );
+
+        wp_localize_script('solanapaykz-checkout', 'solanapaykzData', [
+            'url' => $request->url,
+            'ajaxUrl' => admin_url('admin-ajax.php'),
+            'action' => Ajax::ACTION,
+            'orderId' => $order->get_id(),
+            'orderKey' => $order->get_order_key(),
+            'expiresAt' => $quote->expires_at,
+            'intervalMs' => 5000,
+        ]);
+
+        ?>
+        <section class="solanapaykz" id="solanapaykz">
+            <h2>Оплата криптовалютой</h2>
+
+            <p class="solanapaykz__amount">
+                К оплате: <strong><?php echo esc_html($quote->amount_token); ?>
+                <?php echo esc_html($quote->token); ?></strong>
+                <span class="solanapaykz__kzt">(<?php echo esc_html($quote->amount_kzt_charged); ?> ₸
+                по курсу <?php echo esc_html($quote->rate); ?>)</span>
+            </p>
+
+            <div class="solanapaykz__qr" id="solanapaykz-qr"></div>
+
+            <p class="solanapaykz__hint">
+                Отсканируйте код кошельком Solana. Деньги придут продавцу напрямую.
+            </p>
+
+            <p class="solanapaykz__timer" id="solanapaykz-timer"></p>
+
+            <p class="solanapaykz__status" id="solanapaykz-status">Ожидаем оплату…</p>
+
+            <p class="solanapaykz__link">
+                <a href="<?php echo esc_url($request->url); ?>">Открыть в кошельке на этом устройстве</a>
+            </p>
+        </section>
+        <?php
+    }
+```
+
+- [ ] **Шаг 11: Написать скрипт страницы**
+
+```javascript
+// demo-shop/plugin/assets/checkout.js
+(function () {
+    'use strict';
+
+    var data = window.solanapaykzData;
+
+    if (!data || !window.qrcode) {
+        return;
+    }
+
+    var qrBox = document.getElementById('solanapaykz-qr');
+    var statusBox = document.getElementById('solanapaykz-status');
+    var timerBox = document.getElementById('solanapaykz-timer');
+    var timer = null;
+    var poller = null;
+
+    // Уровень коррекции M: ссылка Solana Pay длинная, а код должен
+    // читаться с экрана телефона под углом и при бликах.
+    function drawQr() {
+        var qr = window.qrcode(0, 'M');
+        qr.addData(data.url);
+        qr.make();
+        qrBox.innerHTML = qr.createSvgTag({ cellSize: 5, margin: 2, scalable: true });
+    }
+
+    function pad(value) {
+        return value < 10 ? '0' + value : String(value);
+    }
+
+    function updateTimer() {
+        var left = data.expiresAt - Math.floor(Date.now() / 1000);
+
+        if (left <= 0) {
+            timerBox.textContent = 'Срок оплаты истёк.';
+            stop();
+            return;
+        }
+
+        timerBox.textContent = 'Цена действует ещё ' + pad(Math.floor(left / 60)) + ':' + pad(left % 60);
+    }
+
+    function stop() {
+        if (poller) { window.clearInterval(poller); poller = null; }
+        if (timer) { window.clearInterval(timer); timer = null; }
+    }
+
+    function show(state, message) {
+        statusBox.textContent = message;
+        statusBox.className = 'solanapaykz__status solanapaykz__status--' + state;
+    }
+
+    function check() {
+        var url = data.ajaxUrl + '?action=' + encodeURIComponent(data.action)
+            + '&order_id=' + encodeURIComponent(data.orderId)
+            + '&key=' + encodeURIComponent(data.orderKey);
+
+        window.fetch(url, { credentials: 'same-origin' })
+            .then(function (response) { return response.json(); })
+            .then(function (body) {
+                if (!body || !body.success || !body.data) {
+                    return;
+                }
+
+                show(body.data.status, body.data.message);
+
+                // Останавливаем опрос, только когда состояние окончательное.
+                // При сбое связи продолжаем: временная ошибка сети — не ответ.
+                if (['paid', 'expired', 'mismatch', 'late'].indexOf(body.data.status) !== -1) {
+                    stop();
+
+                    if (body.data.status === 'paid') {
+                        window.setTimeout(function () { window.location.reload(); }, 2000);
+                    }
+                }
+            })
+            .catch(function () {
+                // Молчим: следующая попытка через несколько секунд.
+            });
+    }
+
+    drawQr();
+    updateTimer();
+    timer = window.setInterval(updateTimer, 1000);
+    poller = window.setInterval(check, data.intervalMs);
+    check();
+}());
+```
+
+- [ ] **Шаг 12: Написать оформление**
+
+```css
+/* demo-shop/plugin/assets/checkout.css */
+.solanapaykz {
+    margin: 2em 0;
+    padding: 1.5em;
+    border: 1px solid #d9d9d9;
+    border-radius: 8px;
+    max-width: 420px;
+}
+
+.solanapaykz__amount {
+    font-size: 1.1em;
+    margin-bottom: 0.25em;
+}
+
+.solanapaykz__kzt {
+    color: #666;
+    font-size: 0.85em;
+    display: block;
+    margin-top: 0.25em;
+}
+
+.solanapaykz__qr {
+    margin: 1em 0;
+    max-width: 280px;
+}
+
+.solanapaykz__qr svg {
+    width: 100%;
+    height: auto;
+    display: block;
+}
+
+.solanapaykz__hint,
+.solanapaykz__timer {
+    color: #555;
+    font-size: 0.9em;
+    margin: 0.5em 0;
+}
+
+.solanapaykz__status {
+    font-weight: 600;
+    padding: 0.6em 0.8em;
+    border-radius: 6px;
+    background: #f5f5f5;
+}
+
+.solanapaykz__status--paid {
+    background: #e6f4ea;
+    color: #1e7e34;
+}
+
+.solanapaykz__status--expired,
+.solanapaykz__status--mismatch,
+.solanapaykz__status--late {
+    background: #fdeaea;
+    color: #a12622;
+}
+```
+
+- [ ] **Шаг 13: Подключить всё в точке входа**
+
+Внутри проверки на наличие WooCommerce, после регистрации шлюза:
+
+```php
+    require_once __DIR__ . '/includes/PaymentDecision.php';
+    require_once __DIR__ . '/includes/OrderChecker.php';
+    require_once __DIR__ . '/includes/Ajax.php';
+    require_once __DIR__ . '/includes/Scheduler.php';
+
+    Ajax::register();
+    Scheduler::register();
+```
+
+И снять расписание при выключении плагина, рядом с хуком активации:
+
+```php
+register_deactivation_hook(__FILE__, static function (): void {
+    if (class_exists(Scheduler::class)) {
+        Scheduler::unregister();
+    }
+});
+```
+
+- [ ] **Шаг 14: Запустить весь набор**
+
+Запустить: `docker exec -w /var/www/html/wp-content/plugins/solanapaykz solanapaykz_shop php vendor/bin/phpunit`
+Ожидается: PASS, 153 прежних теста плюс новые.
+
+- [ ] **Шаг 15: Проверить вживую на демо-магазине**
+
+Это последняя задача, и её главную часть нельзя проверить автотестами.
+Порядок проверки:
+
+1. Включить шлюз на тестовой сети через WP-CLI, задав валидный адрес.
+2. Создать тестовый товар и заказ через WP-CLI.
+3. Открыть страницу «Спасибо за заказ» и убедиться, что QR-код нарисован,
+   сумма показана, таймер идёт.
+4. Дёрнуть эндпоинт опроса напрямую и увидеть ответ со статусом `pending`.
+5. Проверить, что чужой ключ заказа даёт отказ.
+6. Проверить, что расписание зарегистрировано (`wp cron event list`).
+7. Выключить шлюз обратно — демо-магазин публичный.
+
+Все команды и их вывод вписать в отчёт дословно.
+
+- [ ] **Шаг 16: Коммит и пуш**
+
+```bash
+cd /var/www/solanapaykz
+git add -A
+git commit -m "feat: страница оплаты с QR и отслеживание платежа"
+git push -u origin feat/wc-payment-page
+```
 
 ## Самопроверка плана
 
