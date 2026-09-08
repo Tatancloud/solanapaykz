@@ -44,7 +44,16 @@
         var qr = window.qrcode(0, 'M');
         qr.addData(data.url);
         qr.make();
-        qrBox.innerHTML = qr.createSvgTag({ cellSize: 5, margin: 2, scalable: true });
+        // alt задаёт доступное имя: без него SVG для незрячего покупателя —
+        // безымянная картинка, хотя рядом есть текстовая ссылка «открыть в
+        // кошельке» с тем же смыслом. Библиотека сама добавляет role="img"
+        // и aria-labelledby, когда получает alt или title.
+        qrBox.innerHTML = qr.createSvgTag({
+            cellSize: 5,
+            margin: 2,
+            scalable: true,
+            alt: 'QR-код для оплаты через кошелёк Solana'
+        });
     }
 
     function pad(value) {

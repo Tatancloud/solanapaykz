@@ -360,13 +360,24 @@ final class Gateway extends WC_Payment_Gateway
                 Отсканируйте код кошельком Solana. Деньги придут продавцу напрямую.
             </p>
 
-            <p class="solanapaykz__timer" id="solanapaykz-timer"></p>
+            <p class="solanapaykz__timer" id="solanapaykz-timer" aria-live="polite"></p>
 
-            <p class="solanapaykz__status" id="solanapaykz-status">Ожидаем оплату…</p>
+            <p class="solanapaykz__status" id="solanapaykz-status" role="status" aria-live="polite">
+                Ожидаем оплату…
+            </p>
 
             <p class="solanapaykz__link">
                 <a href="<?php echo esc_url($request->url, ['solana']); ?>">Открыть в кошельке на этом устройстве</a>
             </p>
+
+            <noscript>
+                <p class="solanapaykz__hint">
+                    В браузере отключён JavaScript: код QR и статус оплаты не отобразятся, а
+                    страница не обновится сама после оплаты. Платёж всё равно можно отправить
+                    по ссылке «Открыть в кошельке» выше — после оплаты обновите эту страницу
+                    вручную, чтобы увидеть её текущий статус.
+                </p>
+            </noscript>
         </section>
         <?php
     }
