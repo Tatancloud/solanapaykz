@@ -82,7 +82,7 @@ final class PaymentRequest
         return new self(
             $quote,
             $reference,
-            'solana:' . $recipient . '?' . http_build_query($params)
+            'solana:' . $recipient . '?' . http_build_query($params, '', '&')
         );
     }
 
@@ -103,12 +103,21 @@ final class PaymentRequest
     private static function require_valid_address(string $address, string $label): void
     {
         if ($address === '') {
-            throw new QuoteException(sprintf('%s не указан.', $label));
+            throw new QuoteException(sprintf('%s: значение не указано.', $label));
         }
 
         if (preg_match(self::ADDRESS_PATTERN, $address) !== 1) {
             throw new QuoteException(sprintf(
-                '%s не похож на адрес Solana: %s.',
+                '%s: не похож на адрес Solana: %s.',
+                $label,
+                $address
+            ));
+        }
+
+        // Адрес должен декодироваться ровно в 32 байта.
+        if (Base58::decode($address) === null) {
+            throw new QuoteException(sprintf(
+                '%s: не похож на адрес Solana: %s.',
                 $label,
                 $address
             ));

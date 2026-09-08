@@ -152,4 +152,20 @@ final class PaymentRequestTest extends TestCase
         $this->expectException(QuoteException::class);
         PaymentRequest::create($this->quote(), self::USDC_MINT);
     }
+
+    public function test_отвергает_адрес_из_тридцати_трёх_байт(): void
+    {
+        // 44 буквы z декодируются в 33 байта — не адрес.
+        // Кошельки будут отклонять такую ссылку.
+        $this->expectException(QuoteException::class);
+        PaymentRequest::create($this->quote(), str_repeat('z', 44));
+    }
+
+    public function test_отвергает_адрес_из_тридцати_четырёх_байт(): void
+    {
+        // 43 единицы и одна z декодируются в 34 байта — не адрес.
+        // Кошельки будут отклонять такую ссылку.
+        $this->expectException(QuoteException::class);
+        PaymentRequest::create($this->quote(), str_repeat('1', 43) . 'z');
+    }
 }

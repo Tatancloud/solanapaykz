@@ -48,4 +48,51 @@ final class Base58
 
         return $encoded;
     }
+
+    /**
+     * Декодирование из base58 в байты.
+     * Адрес Solana всегда декодируется ровно в 32 байта. Строки, которые
+     * не попадают в это ограничение, — не адреса, даже если выглядят
+     * правильно по алфавиту и длине.
+     *
+     * @return string|null Декодированные байты, или null если строка содержит
+     *                     недопустимые символы либо декодируется не в 32 байта.
+     */
+    public static function decode(string $encoded): ?string
+    {
+        if ($encoded === '') {
+            return null;
+        }
+
+        // Проверка, что все символы в алфавите.
+        if (strspn($encoded, self::ALPHABET) !== strlen($encoded)) {
+            return null;
+        }
+
+        $number = '0';
+
+        for ($i = 0, $length = strlen($encoded); $i < $length; $i++) {
+            $pos = strpos(self::ALPHABET, $encoded[$i]);
+            $number = bcadd(bcmul($number, '58'), (string) $pos);
+        }
+
+        $decoded = '';
+
+        while (bccomp($number, '0') > 0) {
+            $decoded = chr((int) bcmod($number, '256')) . $decoded;
+            $number = bcdiv($number, '256', 0);
+        }
+
+        // Ведущие единицы (которые кодировали нулевые байты) переводятся обратно.
+        for ($i = 0, $length = strlen($encoded); $i < $length && $encoded[$i] === self::ALPHABET[0]; $i++) {
+            $decoded = "\x00" . $decoded;
+        }
+
+        // Адрес должен декодироваться ровно в 32 байта.
+        if (strlen($decoded) !== 32) {
+            return null;
+        }
+
+        return $decoded;
+    }
 }
