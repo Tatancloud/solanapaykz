@@ -179,11 +179,48 @@ final class GatewaySettingsTest extends TestCase
 
     public function test_описание_полей_содержит_все_настройки(): void
     {
-        $fields = GatewaySettings::fields();
+        $fields = GatewaySettings::fields(self::CURRENCY);
 
         foreach (['enabled', 'title', 'description', 'recipient', 'cluster',
                   'rpc_url', 'token', 'markup_percent', 'quote_ttl', 'late_window'] as $key) {
             self::assertArrayHasKey($key, $fields);
         }
+    }
+
+    public function test_при_валюте_тенге_блок_информации_говорит_что_плагин_работает(): void
+    {
+        $fields = GatewaySettings::fields('KZT');
+
+        // Первое поле должно быть информационный блок типа 'title'
+        $keys = array_keys($fields);
+        self::assertSame('currency_notice', $keys[0]);
+        self::assertSame('title', $fields['currency_notice']['type']);
+
+        // Текст должен содержать "работает" и указание валюты
+        self::assertStringContainsString('работает', mb_strtolower($fields['currency_notice']['description']));
+        self::assertStringContainsString('kzt', mb_strtolower($fields['currency_notice']['description']));
+    }
+
+    public function test_при_валюте_не_тенге_блок_информации_говорит_что_плагин_отключён(): void
+    {
+        $fields = GatewaySettings::fields('USD');
+
+        // Первое поле должно быть информационный блок типа 'title'
+        $keys = array_keys($fields);
+        self::assertSame('currency_notice', $keys[0]);
+        self::assertSame('title', $fields['currency_notice']['type']);
+
+        // Текст должен содержать "отключён" и название валюты
+        $description = mb_strtolower($fields['currency_notice']['description']);
+        self::assertStringContainsString('отключён', $description);
+        self::assertStringContainsString('usd', $description);
+    }
+
+    public function test_при_валюте_евро_блок_информации_указывает_евро(): void
+    {
+        $fields = GatewaySettings::fields('EUR');
+
+        $description = mb_strtolower($fields['currency_notice']['description']);
+        self::assertStringContainsString('eur', $description);
     }
 }
