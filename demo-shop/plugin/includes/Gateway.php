@@ -43,7 +43,7 @@ final class Gateway extends WC_Payment_Gateway
 
     public function init_form_fields(): void
     {
-        $this->form_fields = GatewaySettings::fields();
+        $this->form_fields = GatewaySettings::fields(get_woocommerce_currency());
     }
 
     /**
