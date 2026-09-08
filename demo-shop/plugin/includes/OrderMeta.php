@@ -25,7 +25,6 @@ final class OrderMeta
     public const RECIPIENT = '_solanapaykz_recipient';
     public const SIGNATURE = '_solanapaykz_signature';
     public const LATE_PAYMENT = '_solanapaykz_late_payment';
-    public const UNPROCESSABLE = '_solanapaykz_unprocessable';
 
     /**
      * Адрес получателя сохраняется вместе с котировкой и меткой платежа:
@@ -102,23 +101,5 @@ final class OrderMeta
     {
         $order->update_meta_data(self::LATE_PAYMENT, $signature);
         $order->save();
-    }
-
-    /**
-     * Заказ, у которого не удалось прочитать данные оплаты (испорченная
-     * или отсутствующая котировка). Помечается один раз, чтобы фоновая
-     * проверка могла исключить его из выборки — иначе такие заказы
-     * навсегда занимают всё окно выборки (по умолчанию 30 штук), и новые
-     * заказы фоновым проходом больше не проверяются.
-     */
-    public static function mark_unprocessable(WC_Order $order): void
-    {
-        $order->update_meta_data(self::UNPROCESSABLE, '1');
-        $order->save();
-    }
-
-    public static function is_unprocessable(WC_Order $order): bool
-    {
-        return $order->get_meta(self::UNPROCESSABLE) === '1';
     }
 }
