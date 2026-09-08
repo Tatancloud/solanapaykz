@@ -321,7 +321,7 @@ final class Gateway extends WC_Payment_Gateway
             <p class="solanapaykz__status" id="solanapaykz-status">Ожидаем оплату…</p>
 
             <p class="solanapaykz__link">
-                <a href="<?php echo esc_url($request->url); ?>">Открыть в кошельке на этом устройстве</a>
+                <a href="<?php echo esc_url($request->url, ['solana']); ?>">Открыть в кошельке на этом устройстве</a>
             </p>
         </section>
         <?php
