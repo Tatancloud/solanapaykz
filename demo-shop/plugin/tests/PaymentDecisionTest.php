@@ -195,4 +195,36 @@ final class PaymentDecisionTest extends TestCase
 
         self::assertSame('wait', $decision['action']);
     }
+
+    public function test_неизвестный_статус_заказа_не_завершается_подтверждённым_платежом(): void
+    {
+        // Список «действовать только на pending/cancelled», а не «не трогать
+        // processing/completed/...»: кастомный статус другого плагина или
+        // новый статус самого WooCommerce не должен провалиться в общую
+        // логику завершения заказа.
+        $quote = $this->quote();
+        $decision = PaymentDecision::decide(
+            ['status' => 'confirmed', 'signature' => 'подпись', 'received_units' => '21758051'],
+            $quote,
+            'checkout-draft',
+            self::DAY,
+            $quote->created_at + 60
+        );
+
+        self::assertSame('wait', $decision['action']);
+    }
+
+    public function test_неизвестный_статус_заказа_не_отменяется_по_истечении_срока(): void
+    {
+        $quote = $this->quote();
+        $decision = PaymentDecision::decide(
+            ['status' => 'pending'],
+            $quote,
+            'checkout-draft',
+            self::DAY,
+            $quote->expires_at + 1
+        );
+
+        self::assertSame('wait', $decision['action']);
+    }
 }

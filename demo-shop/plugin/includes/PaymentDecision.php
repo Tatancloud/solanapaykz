@@ -18,9 +18,6 @@ if (!defined('ABSPATH')) {
  */
 final class PaymentDecision
 {
-    /** Заказы в этих состояниях плагин больше не трогает. */
-    private const FINAL_STATUSES = ['processing', 'completed', 'refunded', 'failed', 'on-hold'];
-
     /**
      * @param array{status: string, signature?: ?string, reason?: ?string, received_units?: ?string} $result
      * @return array{action: string, note: string}
@@ -35,17 +32,28 @@ final class PaymentDecision
         $status = $result['status'] ?? '';
         $signature = (string) ($result['signature'] ?? '');
 
-        // Заказ уже в конечном состоянии: продавец мог начать его собирать
-        // или вернуть деньги. Повторный опрос ничего не переоформляет.
-        if (in_array($order_status, self::FINAL_STATUSES, true)) {
+        // Список разрешённых статусов, а не запрещённых: платёж может
+        // всерьёз изменить только заказ, ожидающий оплаты, и недавно
+        // отменённый (окно поздних платежей). Раньше здесь был список
+        // «не трогать» (processing/completed/refunded/failed/on-hold) —
+        // любой не предусмотренный статус (кастомный статус другого
+        // плагина, новый статус самого WooCommerce, «checkout-draft»)
+        // проваливался в общую логику и мог быть отменён по таймауту или
+        // завершён повторно. Список «действовать только на» безопасен по
+        // умолчанию: неизвестный статус всегда получает «wait».
+        if ($order_status === 'cancelled') {
+            if ($status === 'confirmed') {
+                return self::late_payment($quote, $signature, $late_window_seconds, $now);
+            }
+
+            return self::wait();
+        }
+
+        if ($order_status !== 'pending') {
             return self::wait();
         }
 
         if ($status === 'confirmed') {
-            if ($order_status === 'cancelled') {
-                return self::late_payment($quote, $signature, $late_window_seconds, $now);
-            }
-
             return [
                 'action' => 'complete',
                 'note' => sprintf(
