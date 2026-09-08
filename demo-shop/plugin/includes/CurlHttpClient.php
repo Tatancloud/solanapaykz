@@ -14,7 +14,7 @@ use JsonException;
 final class CurlHttpClient implements HttpClient
 {
     /** Представляемся: сервер вправе знать, кто к нему обращается. */
-    private const USER_AGENT = 'SolanaPayKZ-WooCommerce/0.1 (+https://github.com/Tatancloud/solanapaykz)';
+    private const USER_AGENT = 'SolanaPayKZ-WooCommerce/' . VERSION . ' (+https://github.com/Tatancloud/solanapaykz)';
 
     public function post_json(string $url, array $payload, int $timeout_seconds): array
     {
@@ -37,7 +37,11 @@ final class CurlHttpClient implements HttpClient
         try {
             $json_payload = $payload !== null ? json_encode($payload, JSON_THROW_ON_ERROR) : null;
         } catch (JsonException $e) {
-            throw new RpcException(sprintf('%s: не удалось закодировать параметры запроса (%s).', $url, $e->getMessage()));
+            throw new RpcException(sprintf(
+                '%s: не удалось закодировать параметры запроса (%s).',
+                self::safe_host($url),
+                $e->getMessage()
+            ));
         }
 
         $options = [
@@ -62,19 +66,40 @@ final class CurlHttpClient implements HttpClient
         curl_close($handle);
 
         if ($errno !== 0 || !is_string($body)) {
-            throw new RpcException(sprintf('%s: запрос не удался (%s).', $url, $error));
+            throw new RpcException(sprintf('%s: запрос не удался (%s).', self::safe_host($url), $error));
         }
 
         if ($status < 200 || $status >= 300) {
-            throw new RpcException(sprintf('%s: HTTP %d.', $url, $status));
+            throw new RpcException(sprintf('%s: HTTP %d.', self::safe_host($url), $status));
         }
 
         $decoded = json_decode($body, true);
 
         if (!is_array($decoded)) {
-            throw new RpcException(sprintf('%s: ответ не является объектом JSON.', $url));
+            throw new RpcException(sprintf('%s: ответ не является объектом JSON.', self::safe_host($url)));
         }
 
         return $decoded;
+    }
+
+    /**
+     * Схема и хост адреса узла, без пути, запроса и учётных данных.
+     *
+     * Продавцы вписывают в настройки платные RPC вида
+     * `https://mainnet.helius-rpc.com/?api-key=...` — ключ провайдера лежит
+     * прямо в строке адреса. Полный адрес в тексте исключения рано или
+     * поздно оказывается в error_log или в журнале хостинга, который на
+     * шаред-хостинге нередко отдаётся по HTTP кому угодно: чужой человек
+     * получает платный ключ продавца.
+     */
+    private static function safe_host(string $url): string
+    {
+        $parts = parse_url($url);
+
+        if (!is_array($parts) || !isset($parts['scheme'], $parts['host'])) {
+            return 'адрес узла';
+        }
+
+        return $parts['scheme'] . '://' . $parts['host'];
     }
 }

@@ -124,43 +124,68 @@ final class Gateway extends WC_Payment_Gateway
             return ['result' => 'failure'];
         }
 
-        try {
-            $quote = Quote::create(
-                $this->build_rate_provider(),
-                (string) $order->get_total(),
-                (string) $this->get_option('token', 'USDC'),
-                (string) $this->get_option('cluster', 'devnet'),
-                (float) $this->get_option('markup_percent', '0'),
-                (int) $this->get_option('quote_ttl', '900')
-            );
-        } catch (RateUnavailableException $error) {
-            // Курс недоступен — заказ не создаём: продать по выдуманному курсу
-            // хуже, чем не продать.
-            error_log('SolanaPay-KZ: ' . $error->getMessage());
-            wc_add_notice(
-                'Оплата криптовалютой сейчас недоступна: не удалось получить курс. '
-                . 'Выберите другой способ оплаты.',
-                'error'
-            );
+        // Покупатель мог уже отсканировать QR по этому заказу раньше и уйти,
+        // не дождавшись подтверждения (finalized занимает до 15 секунд, при
+        // перегрузке сети — дольше), а вернуться оплатить его повторно
+        // штатным путём WooCommerce — по ссылке «Оплатить» из письма или из
+        // «Мой аккаунт → Заказы». Новая котировка означает новую метку
+        // платежа: проверка станет искать транзакции по ней, а деньги
+        // ушли со старой меткой — платёж не найдётся никогда. Пока прежняя
+        // котировка ещё не истекла, переиспользуем её и метку вместо того,
+        // чтобы выпускать новые. Требуем, чтобы метка и адрес получателя
+        // тоже сохранились: без них старую котировку показать нечем, и
+        // это тот же случай, что и полное отсутствие данных оплаты —
+        // выпускаем всё заново.
+        $existing_quote = OrderMeta::read_quote($order);
+        $existing_reference = OrderMeta::read_reference($order);
+        $existing_recipient = OrderMeta::read_recipient($order);
 
-            return ['result' => 'failure'];
-        } catch (Throwable $error) {
-            error_log('SolanaPay-KZ: ' . $error->getMessage());
-            wc_add_notice('Не удалось подготовить оплату криптовалютой. Выберите другой способ.', 'error');
+        $reuse = $existing_quote instanceof Quote
+            && !$existing_quote->is_expired()
+            && $existing_reference !== null
+            && $existing_recipient !== null;
 
-            return ['result' => 'failure'];
+        if ($reuse) {
+            $quote = $existing_quote;
+        } else {
+            try {
+                $quote = Quote::create(
+                    $this->build_rate_provider(),
+                    (string) $order->get_total(),
+                    (string) $this->get_option('token', 'USDC'),
+                    (string) $this->get_option('cluster', 'devnet'),
+                    (float) $this->get_option('markup_percent', '0'),
+                    (int) $this->get_option('quote_ttl', '900')
+                );
+            } catch (RateUnavailableException $error) {
+                // Курс недоступен — заказ не создаём: продать по выдуманному курсу
+                // хуже, чем не продать.
+                error_log('SolanaPay-KZ: ' . $error->getMessage());
+                wc_add_notice(
+                    'Оплата криптовалютой сейчас недоступна: не удалось получить курс. '
+                    . 'Выберите другой способ оплаты.',
+                    'error'
+                );
+
+                return ['result' => 'failure'];
+            } catch (Throwable $error) {
+                error_log('SolanaPay-KZ: ' . $error->getMessage());
+                wc_add_notice('Не удалось подготовить оплату криптовалютой. Выберите другой способ.', 'error');
+
+                return ['result' => 'failure'];
+            }
+
+            // Адрес получателя замораживаем на момент создания заказа: продавец
+            // может сменить кошелёк в настройках позже, а показ страницы и
+            // будущая проверка платежа должны сверяться с тем, что покупатель
+            // реально увидел в QR-коде, а не с текущими настройками.
+            OrderMeta::save_quote(
+                $order,
+                $quote,
+                PaymentRequest::generate_reference(),
+                (string) $this->get_option('recipient', '')
+            );
         }
-
-        // Адрес получателя замораживаем на момент создания заказа: продавец
-        // может сменить кошелёк в настройках позже, а показ страницы и
-        // будущая проверка платежа должны сверяться с тем, что покупатель
-        // реально увидел в QR-коде, а не с текущими настройками.
-        OrderMeta::save_quote(
-            $order,
-            $quote,
-            PaymentRequest::generate_reference(),
-            (string) $this->get_option('recipient', '')
-        );
 
         $order->update_status(
             'pending',
@@ -262,14 +287,14 @@ final class Gateway extends WC_Payment_Gateway
             'solanapaykz-checkout',
             plugins_url('assets/checkout.css', PLUGIN_FILE),
             [],
-            '0.1.0'
+            VERSION
         );
 
         wp_enqueue_script(
             'solanapaykz-qrcode',
             plugins_url('assets/qrcode.js', PLUGIN_FILE),
             [],
-            '0.1.0',
+            VERSION,
             true
         );
 
@@ -277,25 +302,44 @@ final class Gateway extends WC_Payment_Gateway
             'solanapaykz-checkout',
             plugins_url('assets/checkout.js', PLUGIN_FILE),
             ['solanapaykz-qrcode'],
-            '0.1.0',
+            VERSION,
             true
         );
 
-        // wp_localize_script() приводит все значения к строкам — expiresAt
-        // и intervalMs в JS оказывались строками, и арифметика таймера
-        // держалась на неявном приведении типов. wp_add_inline_script() с
-        // wp_json_encode() отдаёт настоящие числа.
+        // Значения идут через wp_add_inline_script() с wp_json_encode(), а
+        // не через wp_localize_script(): тот приводит все значения к
+        // строкам, и арифметике таймера в JS пришлось бы полагаться на
+        // неявное приведение типов.
+        //
+        // Браузер получает оставшиеся секунды, а не абсолютный expires_at:
+        // отсчёт по часам покупателя от абсолютного времени истечения на
+        // сбитых часах (частый случай на телефоне — часовой пояс, севшая
+        // батарейка) сразу показывал бы «срок истёк» на живой ещё котировке
+        // или наоборот. Секунды, отсчитываемые локально от момента загрузки
+        // страницы (см. checkout.js), от показаний часов уже не зависят.
+        // Путь без схемы и хоста: admin_url() отдаёт их из настроек сайта
+        // (FORCE_SSL_ADMIN, отдельный домен админки), и на сайте, где они
+        // расходятся с фронтендом, запрос со страницы оплаты упёрся бы в
+        // CORS — обработчик ошибки в checkout.js молча перепланирует опрос,
+        // и покупатель до конца грейса видит «ожидаем оплату» даже на уже
+        // оплаченном заказе. Относительный путь резолвится браузером от
+        // текущего origin и этой проблемы не знает.
+        $ajax_path = (string) wp_parse_url(admin_url('admin-ajax.php'), PHP_URL_PATH);
+
         wp_add_inline_script(
             'solanapaykz-checkout',
+            // JSON_HEX_TAG: результат вставляется внутрь тега <script> —
+            // сейчас безопасно (значения не несут пользовательской разметки
+            // с «</script»), но флаг стоит копейки и на будущее не помешает.
             'var solanapaykzData = ' . wp_json_encode([
                 'url' => $request->url,
-                'ajaxUrl' => admin_url('admin-ajax.php'),
+                'ajaxUrl' => $ajax_path,
                 'action' => Ajax::ACTION,
                 'orderId' => $order->get_id(),
                 'orderKey' => $order->get_order_key(),
-                'expiresAt' => $quote->expires_at,
+                'secondsLeft' => max(0, $quote->expires_at - time()),
                 'intervalMs' => 5000,
-            ]) . ';',
+            ], JSON_HEX_TAG) . ';',
             'before'
         );
 
@@ -316,13 +360,24 @@ final class Gateway extends WC_Payment_Gateway
                 Отсканируйте код кошельком Solana. Деньги придут продавцу напрямую.
             </p>
 
-            <p class="solanapaykz__timer" id="solanapaykz-timer"></p>
+            <p class="solanapaykz__timer" id="solanapaykz-timer" aria-live="polite"></p>
 
-            <p class="solanapaykz__status" id="solanapaykz-status">Ожидаем оплату…</p>
+            <p class="solanapaykz__status" id="solanapaykz-status" role="status" aria-live="polite">
+                Ожидаем оплату…
+            </p>
 
             <p class="solanapaykz__link">
                 <a href="<?php echo esc_url($request->url, ['solana']); ?>">Открыть в кошельке на этом устройстве</a>
             </p>
+
+            <noscript>
+                <p class="solanapaykz__hint">
+                    В браузере отключён JavaScript: код QR и статус оплаты не отобразятся, а
+                    страница не обновится сама после оплаты. Платёж всё равно можно отправить
+                    по ссылке «Открыть в кошельке» выше — после оплаты обновите эту страницу
+                    вручную, чтобы увидеть её текущий статус.
+                </p>
+            </noscript>
         </section>
         <?php
     }

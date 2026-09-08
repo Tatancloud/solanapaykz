@@ -21,13 +21,39 @@
     // опрос продолжается ещё некоторое время после истечения таймера.
     var GRACE_SECONDS = 180;
 
+    // Сервер присылает не момент истечения, а сколько секунд оставалось
+    // на момент рендера страницы — дальше отсчитываем сами, от момента
+    // загрузки этой же страницы. Если бы таймер сравнивал абсолютное время
+    // истечения с Date.now() на каждом тике, сбитые часы покупателя (частый
+    // случай на телефоне: часовой пояс, севшая батарейка) сразу показали бы
+    // «срок истёк» на ещё живой котировке, или наоборот. А разница между
+    // двумя Date.now() на одном и том же устройстве от абсолютного
+    // показания часов не зависит вовсе — важен только ход часов, а не их
+    // выставленное значение.
+    var loadedAtMs = Date.now();
+    var secondsLeftAtLoad = data.secondsLeft;
+
+    function remainingSeconds() {
+        var elapsedSeconds = Math.floor((Date.now() - loadedAtMs) / 1000);
+        return secondsLeftAtLoad - elapsedSeconds;
+    }
+
     // Уровень коррекции M: ссылка Solana Pay длинная, а код должен
     // читаться с экрана телефона под углом и при бликах.
     function drawQr() {
         var qr = window.qrcode(0, 'M');
         qr.addData(data.url);
         qr.make();
-        qrBox.innerHTML = qr.createSvgTag({ cellSize: 5, margin: 2, scalable: true });
+        // alt задаёт доступное имя: без него SVG для незрячего покупателя —
+        // безымянная картинка, хотя рядом есть текстовая ссылка «открыть в
+        // кошельке» с тем же смыслом. Библиотека сама добавляет role="img"
+        // и aria-labelledby, когда получает alt или title.
+        qrBox.innerHTML = qr.createSvgTag({
+            cellSize: 5,
+            margin: 2,
+            scalable: true,
+            alt: 'QR-код для оплаты через кошелёк Solana'
+        });
     }
 
     function pad(value) {
@@ -35,7 +61,7 @@
     }
 
     function updateTimer() {
-        var left = data.expiresAt - Math.floor(Date.now() / 1000);
+        var left = remainingSeconds();
 
         if (left > 0) {
             timerBox.textContent = 'Цена действует ещё ' + pad(Math.floor(left / 60)) + ':' + pad(left % 60);

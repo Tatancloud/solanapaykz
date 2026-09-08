@@ -32,7 +32,10 @@ final class Money
     /** Курсы бирж приходят с восемью знаками. */
     public const RATE_DECIMALS = 8;
 
-    private const DECIMAL_PATTERN = '/^\d+(\.\d+)?$/';
+    // \z, а не $: в PHP (PCRE без флага D) $ совпадает и перед завершающим
+    // \n, поэтому "459.60\n" проходил бы эту проверку, а bccomp на такой
+    // строке бросает ValueError. \z — это буквально конец строки, без исключений.
+    private const DECIMAL_PATTERN = '/^\d+(\.\d+)?\z/';
 
     public static function is_valid_decimal(string $value): bool
     {

@@ -1,0 +1,22 @@
+# Что НЕ попадает в архив поставки — противоположность .gitignore.
+# См. build.sh.
+#
+# Требование проекта: никаких зависимостей composer в поставке. vendor/
+# нужен только для PHPUnit; composer.json/composer.lock и phpunit.xml —
+# только для разработки и CI, продавцу они не нужны и на боевом сайте
+# добавляют смысла ноль, а поверхность раскрытия — ненулевую (см. B5:
+# на демо-магазине composer.lock, vendor/composer/installed.json и
+# tests/fixtures/*.json отдавались по HTTP кодом 200).
+.git
+.gitignore
+.distignore
+.phpunit.cache
+build
+build.sh
+composer.json
+composer.lock
+phpunit.xml
+vendor
+tests
+*.log
+.DS_Store

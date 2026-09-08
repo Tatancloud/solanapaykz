@@ -25,6 +25,23 @@ final class Quote
     /** Пятнадцать минут. Обоснование срока — в спецификации, раздел 7. */
     public const DEFAULT_TTL_SECONDS = 900;
 
+    /**
+     * Версия формата записи котировки в мете заказа. Без неё будущая смена
+     * формата означала бы, что чтение старой ли, новой ли записи одинаково
+     * возвращает null, и заказы уезжают в провал пачкой без возможности
+     * отличить испорченные данные от просто более новых.
+     */
+    public const FORMAT_VERSION = 1;
+
+    /**
+     * Код исключения, которым from_array() помечает именно неизвестную
+     * (более новую) версию формата — в отличие от обычной порчи данных.
+     * Позволяет вызывающему коду отличить эти два случая по
+     * getCode(), не вводя отдельный класс исключения (QuoteException
+     * объявлен final).
+     */
+    public const ERROR_UNKNOWN_FORMAT_VERSION = 1;
+
     private function __construct(
         public readonly string $quote_id,
         public readonly string $amount_kzt,
@@ -101,6 +118,7 @@ final class Quote
     public function to_array(): array
     {
         return [
+            'format_version'     => self::FORMAT_VERSION,
             'quote_id'           => $this->quote_id,
             'amount_kzt'         => $this->amount_kzt,
             'amount_kzt_charged' => $this->amount_kzt_charged,
@@ -126,6 +144,37 @@ final class Quote
      */
     public static function from_array(array $data): self
     {
+        // Поля до этой правки не несли версии вовсе — отсутствие поля
+        // читаем как версию 1, а не как повод отказать записи, иначе все
+        // котировки, выпущенные до обновления плагина, обесценились бы
+        // разом. А вот версия новее той, что понимает этот код, — это не
+        // порча данных, а сигнал «здесь ставили более новую версию
+        // плагина»: такую запись помечаем отдельным кодом исключения,
+        // чтобы вызывающий код мог не проваливать заказ, а оставить как
+        // есть и записать в журнал.
+        $format_version = $data['format_version'] ?? 1;
+
+        if (!is_int($format_version) && !is_numeric($format_version)) {
+            throw new QuoteException(sprintf(
+                'Версия формата котировки должна быть числовой, получено: %s.',
+                var_export($format_version, true)
+            ));
+        }
+
+        $format_version = (int) $format_version;
+
+        if ($format_version > self::FORMAT_VERSION) {
+            throw new QuoteException(sprintf(
+                'Формат котировки новее, чем понимает этот код (версия записи %d, поддерживается до %d).',
+                $format_version,
+                self::FORMAT_VERSION
+            ), self::ERROR_UNKNOWN_FORMAT_VERSION);
+        }
+
+        if ($format_version < 1) {
+            throw new QuoteException(sprintf('Версия формата котировки неверна: %d.', $format_version));
+        }
+
         foreach (['quote_id', 'amount_kzt', 'amount_kzt_charged', 'token', 'cluster',
                   'amount_token', 'rate', 'rate_source', 'created_at', 'expires_at'] as $field) {
             if (!array_key_exists($field, $data)) {

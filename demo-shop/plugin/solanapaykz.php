@@ -5,9 +5,12 @@
  * Version: 0.1.0
  * Requires at least: 7.0
  * Requires PHP: 8.1
+ * Requires Plugins: woocommerce
+ * WC requires at least: 7.1
+ * WC tested up to: 11.1
  * Author: Tatancloud
  * License: MIT
- * Text Domain: solanapaykz
+ * Update URI: false
  */
 
 declare(strict_types=1);
@@ -19,7 +22,33 @@ if (!defined('ABSPATH')) {
 }
 
 const PLUGIN_FILE = __FILE__;
-const PLUGIN_DIR  = __DIR__;
+
+/**
+ * Версия плагина в одном месте. Читается Gateway.php при подключении
+ * стилей и скриптов (иначе браузер продолжит отдавать старую разметку
+ * покупателям, открывавшим страницу оплаты раньше) и CurlHttpClient.php
+ * в строке User-Agent. Число в шапке файла выше — для WordPress: это
+ * поле парсится как обычный текст комментария, PHP-константой быть не
+ * может, и его придётся менять тем же значением при следующем бампе.
+ */
+const VERSION = '0.1.0';
+
+/**
+ * Объявляем совместимость с новым хранилием заказов (HPOS) явно: без
+ * этого продавец с включённым HPOS не получит ни разрешения, ни
+ * запрета — просто тишину в списке совместимости WooCommerce. Код и так
+ * работает на обоих хранилищах: wc_get_orders() с payment_method и
+ * date_created поддерживается обоими, мета читается через методы
+ * заказа, своих запросов к таблицам заказов плагин не делает.
+ */
+add_action('before_woocommerce_init', static function (): void {
+    if (class_exists(\Automattic\WooCommerce\Utilities\FeaturesUtil::class)) {
+        \Automattic\WooCommerce\Utilities\FeaturesUtil::declare_compatibility(
+            'custom_order_tables',
+            PLUGIN_FILE
+        );
+    }
+});
 
 require_once __DIR__ . '/includes/Environment.php';
 require_once __DIR__ . '/includes/Money.php';
@@ -50,7 +79,7 @@ const REQUIREMENTS = [
 
 /**
  * Не даём включить плагин на непригодной среде: молчаливый неверный
- * расчёт суммы хуже honest отказа при активации.
+ * расчёт суммы хуже честного отказа при активации.
  */
 register_activation_hook(__FILE__, static function (): void {
     $missing = Environment::check(REQUIREMENTS);
@@ -115,11 +144,35 @@ add_action('plugins_loaded', static function (): void {
 });
 
 /**
- * Снимаем расписание при выключении плагина: иначе задача продолжит
- * пытаться выполниться на классах, которых уже нет в автозагрузке.
+ * Снимаем расписание при выключении плагина по литеральному имени
+ * события, без обращения к классу Scheduler: файл планировщика
+ * подключается только когда среда пригодна и WooCommerce активен
+ * (см. выше), а деактивация плагина случается и без этих условий —
+ * продавец выключил WooCommerce (обновление, переезд) или хостер
+ * выкатил PHP без bcmath. Если бы хук проверял class_exists(Scheduler),
+ * он в этих случаях отработал бы вхолостую, и задача осталась бы в
+ * расписании навсегда. Дубли снятие через unschedule_event() (как
+ * делал Scheduler::unregister()) не убирало бы — wp_clear_scheduled_hook()
+ * снимает все совпадающие записи разом.
+ *
+ * На сетевую деактивацию (network_wide) WordPress передаёт признак
+ * вторым аргументом хука deactivate_<plugin>: на каждом сайте сети своя
+ * запись расписания, и её тоже нужно снять — иначе после сетевой
+ * деактивации на всех сайтах, кроме текущего, задача продолжит
+ * висеть в расписании.
  */
-register_deactivation_hook(__FILE__, static function (): void {
-    if (class_exists(Scheduler::class)) {
-        Scheduler::unregister();
+register_deactivation_hook(__FILE__, static function (bool $network_deactivating): void {
+    if (is_multisite() && $network_deactivating) {
+        $site_ids = get_sites(['fields' => 'ids']);
+
+        foreach ($site_ids as $site_id) {
+            switch_to_blog((int) $site_id);
+            wp_clear_scheduled_hook('solanapaykz_check_orders');
+            restore_current_blog();
+        }
+
+        return;
     }
+
+    wp_clear_scheduled_hook('solanapaykz_check_orders');
 });

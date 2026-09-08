@@ -71,6 +71,26 @@ final class PaymentDecisionTest extends TestCase
 
         self::assertSame('complete', $decision['action']);
         self::assertStringContainsString('подпись123', $decision['note']);
+        self::assertStringContainsString('21.758051', $decision['note']);
+    }
+
+    public function test_подпись_есть_но_тела_ещё_нет_не_отменяем_даже_после_срока(): void
+    {
+        // Verify::check возвращает status=pending с непустой signature, если
+        // подпись уже видна в истории, а тело транзакции для нужного уровня
+        // подтверждения ещё не отвечает (узел не догнал). Это не «платежа
+        // нет вовсе» — отменять заказ по истечении срока в этом случае
+        // нельзя: платёж может обнаружиться на следующем опросе.
+        $quote = $this->quote();
+        $decision = PaymentDecision::decide(
+            ['status' => 'pending', 'signature' => 'подпись-без-тела'],
+            $quote,
+            'pending',
+            self::DAY,
+            $quote->expires_at + 1
+        );
+
+        self::assertSame('wait', $decision['action']);
     }
 
     public function test_платёж_после_истечения_срока_всё_равно_засчитывается(): void
@@ -103,6 +123,7 @@ final class PaymentDecisionTest extends TestCase
         self::assertSame('late', $decision['action']);
         self::assertStringContainsString('отменённ', mb_strtolower($decision['note']));
         self::assertStringContainsString('поздняя', $decision['note']);
+        self::assertStringContainsString('21.758051', $decision['note']);
     }
 
     public function test_платёж_на_отменённый_заказ_вне_окна_не_трогаем(): void
