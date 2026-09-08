@@ -22,13 +22,22 @@ final class OrderMeta
 {
     public const QUOTE = '_solanapaykz_quote';
     public const REFERENCE = '_solanapaykz_reference';
+    public const RECIPIENT = '_solanapaykz_recipient';
     public const SIGNATURE = '_solanapaykz_signature';
     public const LATE_PAYMENT = '_solanapaykz_late_payment';
 
-    public static function save_quote(WC_Order $order, Quote $quote, string $reference): void
+    /**
+     * Адрес получателя сохраняется вместе с котировкой и меткой платежа:
+     * это то, что покупатель реально увидел в QR-коде. Продавец может
+     * сменить кошелёк в настройках позже — платёж уже создан по старому
+     * адресу, и показ страницы, и последующая проверка платежа должны
+     * сверяться с ним, а не с текущими настройками.
+     */
+    public static function save_quote(WC_Order $order, Quote $quote, string $reference, string $recipient): void
     {
         $order->update_meta_data(self::QUOTE, wp_json_encode($quote->to_array()));
         $order->update_meta_data(self::REFERENCE, $reference);
+        $order->update_meta_data(self::RECIPIENT, $recipient);
         $order->save();
     }
 
@@ -73,6 +82,13 @@ final class OrderMeta
         $reference = $order->get_meta(self::REFERENCE);
 
         return is_string($reference) && $reference !== '' ? $reference : null;
+    }
+
+    public static function read_recipient(WC_Order $order): ?string
+    {
+        $recipient = $order->get_meta(self::RECIPIENT);
+
+        return is_string($recipient) && $recipient !== '' ? $recipient : null;
     }
 
     public static function save_signature(WC_Order $order, string $signature): void

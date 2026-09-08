@@ -58,15 +58,7 @@ final class Gateway extends WC_Payment_Gateway
             return $saved;
         }
 
-        $errors = GatewaySettings::validate([
-            'recipient' => $this->get_option('recipient', ''),
-            'cluster' => $this->get_option('cluster', ''),
-            'rpc_url' => $this->get_option('rpc_url', ''),
-            'token' => $this->get_option('token', ''),
-            'markup_percent' => $this->get_option('markup_percent', '0'),
-            'quote_ttl' => $this->get_option('quote_ttl', '900'),
-            'late_window' => $this->get_option('late_window', '86400'),
-        ]);
+        $errors = GatewaySettings::validate($this->settings_for_validation(), get_woocommerce_currency());
 
         foreach ($errors as $error) {
             \WC_Admin_Settings::add_error('SolanaPay-KZ: ' . $error);
@@ -89,15 +81,30 @@ final class Gateway extends WC_Payment_Gateway
             return false;
         }
 
-        return GatewaySettings::validate([
+        return GatewaySettings::validate($this->settings_for_validation(), get_woocommerce_currency()) === [];
+    }
+
+    /**
+     * Собирает текущие настройки в формате, который принимает
+     * GatewaySettings::validate(). Единственное место, где перечислены
+     * имена полей и их значения по умолчанию (те же, что в описании полей
+     * GatewaySettings::fields()): и process_admin_options(), и is_available()
+     * берут их отсюда, чтобы новое поле не пришлось добавлять в двух местах
+     * с риском разойтись.
+     *
+     * @return array<string, string>
+     */
+    private function settings_for_validation(): array
+    {
+        return [
             'recipient' => $this->get_option('recipient', ''),
-            'cluster' => $this->get_option('cluster', ''),
+            'cluster' => $this->get_option('cluster', 'devnet'),
             'rpc_url' => $this->get_option('rpc_url', ''),
-            'token' => $this->get_option('token', ''),
+            'token' => $this->get_option('token', 'USDC'),
             'markup_percent' => $this->get_option('markup_percent', '0'),
             'quote_ttl' => $this->get_option('quote_ttl', '900'),
             'late_window' => $this->get_option('late_window', '86400'),
-        ]) === [];
+        ];
     }
 
     /**
@@ -109,6 +116,11 @@ final class Gateway extends WC_Payment_Gateway
         $order = wc_get_order($order_id);
 
         if (!$order instanceof WC_Order) {
+            // Без сообщения покупатель просто вернётся на форму оформления
+            // без единого слова о причине: WooCommerce в этом случае никуда
+            // не перенаправляет.
+            wc_add_notice('Не удалось найти заказ для оплаты. Попробуйте оформить заказ заново.', 'error');
+
             return ['result' => 'failure'];
         }
 
@@ -121,11 +133,6 @@ final class Gateway extends WC_Payment_Gateway
                 (float) $this->get_option('markup_percent', '0'),
                 (int) $this->get_option('quote_ttl', '900')
             );
-
-            $request = PaymentRequest::create($quote, (string) $this->get_option('recipient', ''), [
-                'label' => (string) get_bloginfo('name'),
-                'message' => sprintf('Заказ №%s', $order->get_order_number()),
-            ]);
         } catch (RateUnavailableException $error) {
             // Курс недоступен — заказ не создаём: продать по выдуманному курсу
             // хуже, чем не продать.
@@ -144,7 +151,16 @@ final class Gateway extends WC_Payment_Gateway
             return ['result' => 'failure'];
         }
 
-        OrderMeta::save_quote($order, $quote, $request->reference);
+        // Адрес получателя замораживаем на момент создания заказа: продавец
+        // может сменить кошелёк в настройках позже, а показ страницы и
+        // будущая проверка платежа должны сверяться с тем, что покупатель
+        // реально увидел в QR-коде, а не с текущими настройками.
+        OrderMeta::save_quote(
+            $order,
+            $quote,
+            PaymentRequest::generate_reference(),
+            (string) $this->get_option('recipient', '')
+        );
 
         $order->update_status(
             'pending',
@@ -152,8 +168,11 @@ final class Gateway extends WC_Payment_Gateway
                 $quote->amount_token, $quote->token, $quote->rate, $quote->rate_source)
         );
 
-        // Корзину очищаем: заказ уже создан, возвращаться к ней незачем.
-        if (function_exists('WC') && WC()->cart !== null) {
+        // Корзину очищаем только если она ещё соответствует этому заказу:
+        // иначе покупатель, оплачивающий старый заказ по ссылке «оплатить»,
+        // потерял бы содержимое новой корзины. Так же поступают встроенные
+        // шлюзы WooCommerce (BACS, Cheque, COD).
+        if (WC()->cart && $order->has_cart_hash(WC()->cart->get_cart_hash())) {
             WC()->cart->empty_cart();
         }
 
@@ -174,8 +193,30 @@ final class Gateway extends WC_Payment_Gateway
 
         $quote = OrderMeta::read_quote($order);
         $reference = OrderMeta::read_reference($order);
+        $recipient = OrderMeta::read_recipient($order);
 
-        if ($quote === null || $reference === null) {
+        if ($quote === null || $reference === null || $recipient === null) {
+            echo '<p>Не удалось загрузить данные оплаты. Свяжитесь с магазином.</p>';
+
+            return;
+        }
+
+        // Ссылка строится здесь же, а не при создании платежа: метка
+        // магазина и номер заказа нужны только для показа, и здесь же (а не
+        // в двух разных местах порознь) собираются вместе с адресом и меткой
+        // платежа, сохранёнными в заказе.
+        try {
+            $request = PaymentRequest::create($quote, $recipient, [
+                'reference' => $reference,
+                'label' => (string) get_bloginfo('name'),
+                'message' => sprintf('Заказ №%s', $order->get_order_number()),
+            ]);
+        } catch (Throwable $error) {
+            error_log(sprintf(
+                'SolanaPay-KZ: заказ %d — не удалось построить платёжную ссылку: %s',
+                $order->get_id(),
+                $error->getMessage()
+            ));
             echo '<p>Не удалось загрузить данные оплаты. Свяжитесь с магазином.</p>';
 
             return;
@@ -191,9 +232,7 @@ final class Gateway extends WC_Payment_Gateway
             esc_html($quote->token),
             esc_html($quote->amount_kzt_charged),
             esc_html($quote->rate),
-            esc_url(PaymentRequest::create($quote, (string) $this->get_option('recipient', ''), [
-                'reference' => $reference,
-            ])->url)
+            esc_url($request->url)
         );
     }
 

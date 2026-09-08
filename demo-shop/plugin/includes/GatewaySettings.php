@@ -28,13 +28,33 @@ final class GatewaySettings
     /** Верхняя граница окна проверки отменённых заказов — неделя. */
     private const MAX_LATE_WINDOW = 604800;
 
+    /** Единственная валюта, для которой верен расчёт: курс берётся к тенге. */
+    private const REQUIRED_CURRENCY = 'KZT';
+
     /**
+     * Валюта магазина передаётся аргументом, а не читается внутри через
+     * get_woocommerce_currency(): эта функция WordPress недоступна в
+     * тестовом окружении, а проверка настроек должна оставаться чистой
+     * логикой без него.
+     *
      * @param array<string, mixed> $values
      * @return list<string> Сообщения об ошибках на русском.
      */
-    public static function validate(array $values): array
+    public static function validate(array $values, string $currency): array
     {
         $errors = [];
+
+        if ($currency !== self::REQUIRED_CURRENCY) {
+            // Молчаливая, но дорогая ошибка: единственный источник курса даёт
+            // тенге за токен, и при другой валюте магазина сумма заказа
+            // считается так, будто она уже в тенге — продавец недополучит
+            // деньги в разы, и заметит это не раньше, чем сверит выручку.
+            $errors[] = sprintf(
+                'Плагин рассчитан на магазины с ценами в тенге, потому что курс берётся к тенге. '
+                . 'Валюта вашего магазина сейчас — «%s».',
+                $currency
+            );
+        }
 
         $cluster = (string) ($values['cluster'] ?? '');
         $token = (string) ($values['token'] ?? '');
