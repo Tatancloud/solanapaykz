@@ -35,6 +35,23 @@ const PLUGIN_DIR  = __DIR__;
  */
 const VERSION = '0.1.0';
 
+/**
+ * Объявляем совместимость с новым хранилием заказов (HPOS) явно: без
+ * этого продавец с включённым HPOS не получит ни разрешения, ни
+ * запрета — просто тишину в списке совместимости WooCommerce. Код и так
+ * работает на обоих хранилищах: wc_get_orders() с payment_method и
+ * date_created поддерживается обоими, мета читается через методы
+ * заказа, своих запросов к таблицам заказов плагин не делает.
+ */
+add_action('before_woocommerce_init', static function (): void {
+    if (class_exists(\Automattic\WooCommerce\Utilities\FeaturesUtil::class)) {
+        \Automattic\WooCommerce\Utilities\FeaturesUtil::declare_compatibility(
+            'custom_order_tables',
+            PLUGIN_FILE
+        );
+    }
+});
+
 require_once __DIR__ . '/includes/Environment.php';
 require_once __DIR__ . '/includes/Money.php';
 require_once __DIR__ . '/includes/RpcException.php';
