@@ -57,13 +57,24 @@
     }
 
     function stop() {
-        if (poller) { window.clearInterval(poller); poller = null; }
+        if (poller) { window.clearTimeout(poller); poller = null; }
         if (timer) { window.clearInterval(timer); timer = null; }
     }
 
     function show(state, message) {
         statusBox.textContent = message;
         statusBox.className = 'solanapaykz__status solanapaykz__status--' + state;
+    }
+
+    // Опрос перепланируется через setTimeout после каждого ответа, а не
+    // через setInterval с фиксированным шагом: таймаут RPC на сервере — 10
+    // секунд, а интервал опроса — 5, и setInterval запускал бы следующий
+    // запрос, пока предыдущий ещё висит на сервере. Наложение таких
+    // запросов — лишняя нагрузка на PHP-воркеры и участник гонки за
+    // завершение заказа (см. OrderLock), даже если сам лок её и не даст
+    // довести до дела.
+    function scheduleCheck(delay) {
+        poller = window.setTimeout(check, delay);
     }
 
     function check() {
@@ -75,6 +86,7 @@
             .then(function (response) { return response.json(); })
             .then(function (body) {
                 if (!body || !body.success || !body.data) {
+                    scheduleCheck(data.intervalMs);
                     return;
                 }
 
@@ -88,16 +100,20 @@
                     if (body.data.status === 'paid') {
                         window.setTimeout(function () { window.location.reload(); }, 2000);
                     }
+
+                    return;
                 }
+
+                scheduleCheck(data.intervalMs);
             })
             .catch(function () {
                 // Молчим: следующая попытка через несколько секунд.
+                scheduleCheck(data.intervalMs);
             });
     }
 
     drawQr();
     updateTimer();
     timer = window.setInterval(updateTimer, 1000);
-    poller = window.setInterval(check, data.intervalMs);
     check();
 }());
