@@ -191,6 +191,18 @@ final class Gateway extends WC_Payment_Gateway
             return;
         }
 
+        // Хук woocommerce_thankyou_{method} срабатывает при любом статусе
+        // заказа, кроме failed, — не только при pending. Без этой проверки
+        // уже оплаченный заказ показал бы тот же QR повторно (checkout.js
+        // перезагружает страницу сразу после оплаты), а по QR отменённого
+        // заказа можно было бы всё равно отправить деньги — тот самый
+        // случай поздних платежей, который потом разбирают вручную.
+        if (!CustomerMessage::should_show_qr($order->get_status())) {
+            printf('<p>%s</p>', esc_html(CustomerMessage::for_order_status($order->get_status())['message']));
+
+            return;
+        }
+
         $quote = OrderMeta::read_quote($order);
         $reference = OrderMeta::read_reference($order);
         $recipient = OrderMeta::read_recipient($order);
