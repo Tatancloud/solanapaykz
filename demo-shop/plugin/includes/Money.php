@@ -85,6 +85,12 @@ final class Money
             );
         }
 
+        if (!preg_match('/^-?\d+$/', $units)) {
+            throw new InvalidArgumentException(
+                sprintf('Единицы должны быть целым числом, получено «%s».', $units)
+            );
+        }
+
         if (bccomp($units, '0') < 0) {
             throw new InvalidArgumentException(
                 sprintf('Сумма не может быть отрицательной: %s.', $units)

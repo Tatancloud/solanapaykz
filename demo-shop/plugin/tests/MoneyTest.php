@@ -44,6 +44,12 @@ final class MoneyTest extends TestCase
         Money::format_units('-2176', 6);
     }
 
+    public function test_отвергает_мусор_при_форматировании(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        Money::format_units('abc', 6);
+    }
+
     public function test_делит_с_округлением_вверх(): void
     {
         self::assertSame('4', Money::ceil_div('10', '3'));
