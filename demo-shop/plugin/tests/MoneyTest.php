@@ -109,4 +109,38 @@ final class MoneyTest extends TestCase
         $this->expectException(InvalidArgumentException::class);
         Money::apply_markup('10000', 101);
     }
+
+    public function test_ceil_div_отвергает_дробный_делитель(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        Money::ceil_div('10', '3.5');
+    }
+
+    public function test_ceil_div_отвергает_делитель_между_нулём_и_единицей(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        Money::ceil_div('10', '0.5');
+    }
+
+    public function test_format_units_отвергает_нецелочисленные_единицы(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        Money::format_units('2176.5', 6);
+    }
+
+    public function test_parse_decimal_to_units_преобразует_ноль_с_точкой(): void
+    {
+        self::assertSame('0', Money::parse_decimal_to_units('0.00', 2));
+    }
+
+    public function test_parse_decimal_to_units_преобразует_целый_ноль(): void
+    {
+        self::assertSame('0', Money::parse_decimal_to_units('0', 2));
+    }
+
+    public function test_parse_decimal_to_units_отвергает_пустую_строку(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        Money::parse_decimal_to_units('', 2);
+    }
 }

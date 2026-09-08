@@ -3,6 +3,10 @@ declare(strict_types=1);
 
 namespace SolanaPayKZ;
 
+if (!defined('ABSPATH')) {
+    exit;
+}
+
 /**
  * Проверяет, пригодна ли среда для работы плагина.
  *

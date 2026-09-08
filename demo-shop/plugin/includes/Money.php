@@ -5,6 +5,10 @@ declare(strict_types=1);
 
 namespace SolanaPayKZ;
 
+if (!defined('ABSPATH')) {
+    exit;
+}
+
 use InvalidArgumentException;
 use RuntimeException;
 
@@ -75,6 +79,12 @@ final class Money
     /** Обратное преобразование: целые единицы в десятичную строку. */
     public static function format_units(string $units, int $decimals): string
     {
+        if (strpos($units, '.') !== false) {
+            throw new InvalidArgumentException(
+                sprintf('Единицы должны быть целым числом, получено «%s».', $units)
+            );
+        }
+
         if (bccomp($units, '0') < 0) {
             throw new InvalidArgumentException(
                 sprintf('Сумма не может быть отрицательной: %s.', $units)
@@ -93,6 +103,18 @@ final class Money
     /** Целочисленное деление с округлением вверх. */
     public static function ceil_div(string $a, string $b): string
     {
+        if (strpos($a, '.') !== false) {
+            throw new InvalidArgumentException(
+                sprintf('Делимое должно быть целым числом, получено «%s».', $a)
+            );
+        }
+
+        if (strpos($b, '.') !== false) {
+            throw new InvalidArgumentException(
+                sprintf('Делитель должен быть целым числом, получено «%s».', $b)
+            );
+        }
+
         if (bccomp($b, '0') <= 0) {
             throw new InvalidArgumentException('Делитель должен быть положительным.');
         }
