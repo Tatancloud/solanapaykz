@@ -77,4 +77,35 @@ final class CustomerMessage
                 ];
         }
     }
+
+    /**
+     * Ответ AJAX-опроса по решению PaymentDecision.
+     *
+     * Действия complete/cancel/hold/late однозначны — их текст не зависит
+     * от прежнего статуса заказа. А «wait» раньше всегда отвечал «ожидаем
+     * оплату», даже если заказ на самом деле уже processing (крон опередил
+     * вкладку покупателя), cancelled или on-hold — покупатель с открытой
+     * вкладкой узнавал об этом только через 2 секунды после перезагрузки
+     * страницы, а до неё видел «ждём» на уже решённом заказе. Поэтому
+     * «wait» смотрит на фактический статус заказа, а не на факт «нового
+     * решения не было».
+     *
+     * @return array{status: string, message: string}
+     */
+    public static function for_decision(string $action, string $order_status): array
+    {
+        return match ($action) {
+            'complete' => ['status' => 'paid', 'message' => 'Оплата получена. Спасибо!'],
+            'cancel' => ['status' => 'expired', 'message' => 'Срок оплаты истёк. Оформите заказ заново.'],
+            'hold' => [
+                'status' => 'mismatch',
+                'message' => 'Платёж найден, но не сошёлся с суммой заказа. Магазин свяжется с вами.',
+            ],
+            'late' => [
+                'status' => 'late',
+                'message' => 'Платёж получен после отмены заказа. Магазин свяжется с вами.',
+            ],
+            default => self::for_order_status($order_status),
+        };
+    }
 }

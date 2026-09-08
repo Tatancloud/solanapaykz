@@ -63,4 +63,47 @@ final class CustomerMessageTest extends TestCase
         self::assertNotSame('pending', $view['status']);
         self::assertNotSame('', $view['message']);
     }
+
+    // --- for_decision(): ответ AJAX-опроса. Действие «wait» не должно
+    // выглядеть одинаково для оплаченного, отменённого и удерживаемого
+    // заказа — иначе покупатель с открытой вкладкой не узнает, что заказ
+    // сменил статус, пока он ждал. ---
+
+    public function test_решение_complete_сообщает_об_оплате_независимо_от_статуса_заказа(): void
+    {
+        $view = CustomerMessage::for_decision('complete', 'pending');
+
+        self::assertSame('paid', $view['status']);
+    }
+
+    public function test_решение_wait_на_обработанном_заказе_сообщает_об_оплате(): void
+    {
+        // Заказ уже переведён в processing (например, крон опередил вкладку
+        // покупателя), а текущая проверка ничего нового не решила («wait»).
+        // Ответ должен отражать то, что есть сейчас, а не молчать об этом.
+        $view = CustomerMessage::for_decision('wait', 'processing');
+
+        self::assertSame('paid', $view['status']);
+    }
+
+    public function test_решение_wait_на_отменённом_заказе_сообщает_об_отмене(): void
+    {
+        $view = CustomerMessage::for_decision('wait', 'cancelled');
+
+        self::assertSame('expired', $view['status']);
+    }
+
+    public function test_решение_wait_на_удержании_сообщает_о_ручной_проверке(): void
+    {
+        $view = CustomerMessage::for_decision('wait', 'on-hold');
+
+        self::assertSame('mismatch', $view['status']);
+    }
+
+    public function test_решение_wait_на_pending_заказе_ждём(): void
+    {
+        $view = CustomerMessage::for_decision('wait', 'pending');
+
+        self::assertSame('pending', $view['status']);
+    }
 }

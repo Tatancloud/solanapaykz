@@ -79,33 +79,30 @@ final class OrderChecker
                 $order->payment_complete($signature);
                 $order->add_order_note($decision['note']);
 
-                return ['status' => 'paid', 'message' => 'Оплата получена. Спасибо!'];
+                break;
 
             case 'cancel':
                 $order->update_status('cancelled', $decision['note']);
 
-                return ['status' => 'expired', 'message' => 'Срок оплаты истёк. Оформите заказ заново.'];
+                break;
 
             case 'hold':
                 OrderMeta::save_signature($order, $signature);
                 $order->update_status('on-hold', $decision['note']);
 
-                return [
-                    'status' => 'mismatch',
-                    'message' => 'Платёж найден, но не сошёлся с суммой заказа. Магазин свяжется с вами.',
-                ];
+                break;
 
             case 'late':
                 OrderMeta::mark_late_payment($order, $signature);
                 $order->update_status('on-hold', $decision['note']);
 
-                return [
-                    'status' => 'late',
-                    'message' => 'Платёж получен после отмены заказа. Магазин свяжется с вами.',
-                ];
-
-            default:
-                return ['status' => 'pending', 'message' => 'Ожидаем оплату.'];
+                break;
         }
+
+        // Текст для покупателя строится по фактическому статусу заказа на
+        // случай «wait», а не по одному лишь факту «новое решение — ждать»:
+        // за то время, что вкладка покупателя не опрашивала сервер, крон
+        // мог перевести заказ в processing, cancelled или on-hold.
+        return CustomerMessage::for_decision($decision['action'], $order->get_status());
     }
 }
