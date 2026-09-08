@@ -22,6 +22,7 @@ const PLUGIN_FILE = __FILE__;
 const PLUGIN_DIR  = __DIR__;
 
 require_once __DIR__ . '/includes/Environment.php';
+require_once __DIR__ . '/includes/Money.php';
 
 const REQUIREMENTS = [
     'php' => '8.1',
