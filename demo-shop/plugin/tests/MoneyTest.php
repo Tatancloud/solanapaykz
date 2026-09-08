@@ -31,6 +31,22 @@ final class MoneyTest extends TestCase
         Money::parse_decimal_to_units('abc', 2);
     }
 
+    public function test_завершающий_перевод_строки_отвергается(): void
+    {
+        // $ в PHP (без флага D) совпадает и перед финальным \n — источник
+        // курса, вернувший число с переводом строки (JSON это позволяет),
+        // иначе прошёл бы этот предикат, а bccomp на такой строке бросает
+        // ValueError.
+        self::assertFalse(Money::is_valid_decimal("459.60\n"));
+        self::assertFalse(Money::is_valid_decimal("459\n"));
+    }
+
+    public function test_обычные_числа_проходят_проверку_формата(): void
+    {
+        self::assertTrue(Money::is_valid_decimal('459.60'));
+        self::assertTrue(Money::is_valid_decimal('0'));
+    }
+
     public function test_форматирует_единицы(): void
     {
         self::assertSame('21.758051', Money::format_units('21758051', 6));
