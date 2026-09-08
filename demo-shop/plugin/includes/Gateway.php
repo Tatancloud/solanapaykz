@@ -287,14 +287,14 @@ final class Gateway extends WC_Payment_Gateway
             'solanapaykz-checkout',
             plugins_url('assets/checkout.css', PLUGIN_FILE),
             [],
-            '0.1.0'
+            VERSION
         );
 
         wp_enqueue_script(
             'solanapaykz-qrcode',
             plugins_url('assets/qrcode.js', PLUGIN_FILE),
             [],
-            '0.1.0',
+            VERSION,
             true
         );
 
@@ -302,7 +302,7 @@ final class Gateway extends WC_Payment_Gateway
             'solanapaykz-checkout',
             plugins_url('assets/checkout.js', PLUGIN_FILE),
             ['solanapaykz-qrcode'],
-            '0.1.0',
+            VERSION,
             true
         );
 

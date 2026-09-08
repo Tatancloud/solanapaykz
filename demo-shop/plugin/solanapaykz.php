@@ -25,6 +25,16 @@ if (!defined('ABSPATH')) {
 const PLUGIN_FILE = __FILE__;
 const PLUGIN_DIR  = __DIR__;
 
+/**
+ * Версия плагина в одном месте. Читается Gateway.php при подключении
+ * стилей и скриптов (иначе браузер продолжит отдавать старую разметку
+ * покупателям, открывавшим страницу оплаты раньше) и CurlHttpClient.php
+ * в строке User-Agent. Число в шапке файла выше — для WordPress: это
+ * поле парсится как обычный текст комментария, PHP-константой быть не
+ * может, и его придётся менять тем же значением при следующем бампе.
+ */
+const VERSION = '0.1.0';
+
 require_once __DIR__ . '/includes/Environment.php';
 require_once __DIR__ . '/includes/Money.php';
 require_once __DIR__ . '/includes/RpcException.php';

@@ -14,7 +14,7 @@ use JsonException;
 final class CurlHttpClient implements HttpClient
 {
     /** Представляемся: сервер вправе знать, кто к нему обращается. */
-    private const USER_AGENT = 'SolanaPayKZ-WooCommerce/0.1 (+https://github.com/Tatancloud/solanapaykz)';
+    private const USER_AGENT = 'SolanaPayKZ-WooCommerce/' . VERSION . ' (+https://github.com/Tatancloud/solanapaykz)';
 
     public function post_json(string $url, array $payload, int $timeout_seconds): array
     {
