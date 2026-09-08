@@ -32,6 +32,19 @@ final class OrderChecker
         $recipient = OrderMeta::read_recipient($order);
 
         if ($quote === null || $reference === null || $recipient === null) {
+            // Помечаем один раз, а не логируем на каждый проход: заказ,
+            // у которого котировку прочитать не удалось, никогда не
+            // станет читаемым сам по себе, и без метки такие заказы
+            // навсегда занимают всё окно выборки фоновой проверки —
+            // новые заказы фоновым проходом просто перестают проверяться.
+            if (!OrderMeta::is_unprocessable($order)) {
+                OrderMeta::mark_unprocessable($order);
+                error_log(sprintf(
+                    'SolanaPay-KZ: заказ %d исключён из фоновой проверки — данные оплаты не найдены.',
+                    $order_id
+                ));
+            }
+
             return ['status' => 'error', 'message' => 'Данные оплаты не найдены.'];
         }
 

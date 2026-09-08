@@ -69,19 +69,49 @@ final class Scheduler
         ];
 
         $checker = new OrderChecker();
+        $checked = 0;
+        $changed = 0;
 
         // Ожидающие оплаты — основной случай.
         foreach (self::orders_to_check('pending', 30) as $order) {
-            $checker->check($order, $settings);
+            $checked++;
+
+            if (self::mutated($checker->check($order, $settings))) {
+                $changed++;
+            }
         }
 
         // Отменённые проверяются, пока не вышло окно: покупатель мог
         // заплатить по QR уже после отмены.
         if ($late_window > 0) {
             foreach (self::orders_to_check('cancelled', 30, $late_window) as $order) {
-                $checker->check($order, $settings);
+                $checked++;
+
+                if (self::mutated($checker->check($order, $settings))) {
+                    $changed++;
+                }
             }
         }
+
+        // Заказ, который никогда не сдвигается с места (испорченная мета
+        // котировки, постоянно недоступный узел), сам по себе не страшен —
+        // но если весь проход из непустой выборки не изменил ни одного
+        // заказа, это не единичный сбойный заказ, а признак, что
+        // подстраховка перестала работать вовсе (например, RPC-узел лежит
+        // уже давно). Заказы с испорченной котировкой в эту статистику не
+        // попадают: OrderChecker исключает их из выборки отдельно.
+        if ($checked > 0 && $changed === 0) {
+            error_log(sprintf(
+                'SolanaPay-KZ: фоновая проверка отработала %d заказ(ов), ни один не изменил статус.',
+                $checked
+            ));
+        }
+    }
+
+    /** @param array{status: string, message: string} $result */
+    private static function mutated(array $result): bool
+    {
+        return in_array($result['status'], ['paid', 'expired', 'mismatch', 'late'], true);
     }
 
     /** @return list<WC_Order> */
@@ -93,6 +123,16 @@ final class Scheduler
             'limit' => $limit,
             'orderby' => 'date',
             'order' => 'ASC',
+            // Заказы с испорченной или отсутствующей котировкой никогда не
+            // станут читаемыми сами по себе: без исключения они навсегда
+            // занимают всё окно выборки, и новые заказы фоновым проходом
+            // просто перестают проверяться.
+            'meta_query' => [
+                [
+                    'key' => OrderMeta::UNPROCESSABLE,
+                    'compare' => 'NOT EXISTS',
+                ],
+            ],
         ];
 
         if ($max_age !== null) {
