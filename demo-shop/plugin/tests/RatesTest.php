@@ -478,6 +478,23 @@ final class RatesTest extends TestCase
         self::assertSame('synthetic', $provider->get_kzt_per_token('USDC')['source']);
     }
 
+    public function test_провайдер_отвергает_большое_падение_курса(): void
+    {
+        // Отклонение считается по модулю: падение больше чем на 20% так же
+        // подозрительно, как и рост — сверка не должна замечать только рост.
+        $cache = new ArrayCache();
+        $provider = new RateProvider([$this->source('binance', '459.60000000')], $cache, 60);
+        $provider->get_kzt_per_token('USDC');
+
+        $cache->now += 120;
+
+        $dropped = $this->source('binance', '367.00000000'); // -20.1% от 459.6
+        $fallback = $this->source('synthetic', '460.00000000');
+        $provider = new RateProvider([$dropped, $fallback], $cache, 60);
+
+        self::assertSame('synthetic', $provider->get_kzt_per_token('USDC')['source']);
+    }
+
     public function test_провайдер_принимает_рост_курса_в_пределах_допустимого(): void
     {
         $cache = new ArrayCache();
