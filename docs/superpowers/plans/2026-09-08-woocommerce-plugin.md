@@ -2786,20 +2786,520 @@ git push -u origin feat/wc-quote
 
 ---
 
-## Задачи 7-9
+### Задача 7: Метка платежа и ссылка Solana Pay
 
-Расписываются после ревью задачи 6, по той же причине: каждая опирается на
-интерфейсы предыдущей, а ревью их меняет. За пять закрытых задач ревью
-меняло интерфейсы четырежды.
+**Файлы:**
+- Создать: `demo-shop/plugin/includes/Base58.php`, `includes/PaymentRequest.php`
+- Изменить: `demo-shop/plugin/solanapaykz.php` (подключение)
+- Тест: `demo-shop/plugin/tests/Base58Test.php`, `tests/PaymentRequestTest.php`
 
-- **Задача 7. Платёжный запрос.** Метка платежа — 32 случайных байта в
-  кодировке base58 (встроенного кодировщика в PHP нет, пишем сами на bcmath;
-  проверка алгоритма: 32 нулевых байта дают известный адрес
-  `11111111111111111111111111111111`). Ссылка Solana Pay по спецификации,
-  пара ключей не создаётся.
+**Интерфейсы:**
+- Потребляет: `Quote`, `Tokens`, `QuoteException`.
+- Отдаёт: `Base58::encode(string $bytes): string`;
+  класс `PaymentRequest` с readonly-свойствами `quote`, `reference`, `url` и
+  методами `PaymentRequest::create(Quote $quote, string $recipient, array $options = []): self`,
+  `PaymentRequest::generate_reference(): string`.
+
+Ссылки, которые строит этот код, проверены на совпадение с эталонной
+библиотекой `@solana/pay`: PHP-функция кодирования параметров запроса даёт
+байт-в-байт тот же результат, что её JavaScript-аналог. Эталоны получены
+запуском самой библиотеки и вписаны в тесты.
+
+- [ ] **Шаг 1: Создать ветку**
+
+```bash
+git checkout main && git pull
+git checkout -b feat/wc-payment-request
+```
+
+- [ ] **Шаг 2: Написать падающий тест для base58**
+
+```php
+<?php
+// demo-shop/plugin/tests/Base58Test.php
+
+declare(strict_types=1);
+
+use PHPUnit\Framework\TestCase;
+use SolanaPayKZ\Base58;
+
+final class Base58Test extends TestCase
+{
+    public function test_тридцать_два_нулевых_байта_дают_известный_адрес(): void
+    {
+        // Это System Program — адрес, который знает любой, кто работал с Solana.
+        // Совпадение с ним подтверждает, что алгоритм реализован верно.
+        self::assertSame(
+            '11111111111111111111111111111111',
+            Base58::encode(str_repeat("\x00", 32))
+        );
+    }
+
+    public function test_короткие_последовательности(): void
+    {
+        self::assertSame('1', Base58::encode("\x00"));
+        self::assertSame('2', Base58::encode("\x01"));
+        self::assertSame('11', Base58::encode("\x00\x00"));
+    }
+
+    public function test_пустой_вход_даёт_пустую_строку(): void
+    {
+        self::assertSame('', Base58::encode(''));
+    }
+
+    public function test_ведущие_нули_сохраняются(): void
+    {
+        // Ведущие нулевые байты кодируются единицами и не должны теряться:
+        // адрес с ними — другой адрес.
+        self::assertSame('112', Base58::encode("\x00\x00\x01"));
+    }
+
+    public function test_алфавит_без_похожих_символов(): void
+    {
+        // В base58 нет нуля, заглавной O, заглавной I и строчной l —
+        // чтобы адрес нельзя было перепутать при чтении глазами.
+        for ($i = 0; $i < 50; $i++) {
+            $encoded = Base58::encode(random_bytes(32));
+
+            self::assertSame(
+                strlen($encoded),
+                strspn($encoded, '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'),
+                'Встретился символ вне алфавита base58: ' . $encoded
+            );
+        }
+    }
+
+    public function test_длина_метки_из_тридцати_двух_байт(): void
+    {
+        for ($i = 0; $i < 50; $i++) {
+            $length = strlen(Base58::encode(random_bytes(32)));
+
+            self::assertGreaterThanOrEqual(32, $length);
+            self::assertLessThanOrEqual(44, $length);
+        }
+    }
+}
+```
+
+- [ ] **Шаг 3: Запустить и убедиться, что падает**
+
+Запустить: `docker exec -w /var/www/html/wp-content/plugins/solanapaykz solanapaykz_shop php vendor/bin/phpunit --filter Base58Test`
+Ожидается: FAIL — класса нет.
+
+- [ ] **Шаг 4: Реализовать base58**
+
+```php
+<?php
+// demo-shop/plugin/includes/Base58.php
+
+declare(strict_types=1);
+
+namespace SolanaPayKZ;
+
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+/**
+ * Кодирование в base58 — том виде, в котором Solana записывает адреса.
+ *
+ * Встроенного кодировщика в PHP нет, расширения gmp на типичном хостинге
+ * тоже может не быть, поэтому считаем на bcmath. Алфавит без нуля,
+ * заглавной O, заглавной I и строчной l: адрес не должен читаться
+ * двусмысленно.
+ */
+final class Base58
+{
+    private const ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+
+    public static function encode(string $bytes): string
+    {
+        if ($bytes === '') {
+            return '';
+        }
+
+        $number = '0';
+
+        for ($i = 0, $length = strlen($bytes); $i < $length; $i++) {
+            $number = bcadd(bcmul($number, '256'), (string) ord($bytes[$i]));
+        }
+
+        $encoded = '';
+
+        while (bccomp($number, '0') > 0) {
+            $encoded = self::ALPHABET[(int) bcmod($number, '58')] . $encoded;
+            $number = bcdiv($number, '58', 0);
+        }
+
+        // Ведущие нулевые байты кодируются единицами: без этого адрес,
+        // начинающийся с нулей, превратился бы в другой адрес.
+        for ($i = 0, $length = strlen($bytes); $i < $length && $bytes[$i] === "\x00"; $i++) {
+            $encoded = self::ALPHABET[0] . $encoded;
+        }
+
+        return $encoded;
+    }
+}
+```
+
+- [ ] **Шаг 5: Написать падающий тест для платёжного запроса**
+
+```php
+<?php
+// demo-shop/plugin/tests/PaymentRequestTest.php
+
+declare(strict_types=1);
+
+use PHPUnit\Framework\TestCase;
+use SolanaPayKZ\Cache;
+use SolanaPayKZ\PaymentRequest;
+use SolanaPayKZ\Quote;
+use SolanaPayKZ\QuoteException;
+use SolanaPayKZ\RateProvider;
+use SolanaPayKZ\RateSource;
+
+final class PaymentRequestTest extends TestCase
+{
+    private const MERCHANT = '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM';
+    private const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+
+    private function quote(string $amount_kzt = '10000', string $token = 'USDC', string $rate = '459.60000000'): Quote
+    {
+        $source = new class($rate) implements RateSource {
+            public function __construct(private string $rate) {}
+            public function get_name(): string { return 'binance'; }
+            public function get_kzt_per_token(string $token): string { return $this->rate; }
+        };
+
+        $cache = new class implements Cache {
+            public function get(string $key): ?string { return null; }
+            public function set(string $key, string $value, int $ttl_seconds): void {}
+        };
+
+        return Quote::create(new RateProvider([$source], $cache, 0), $amount_kzt, $token, 'mainnet');
+    }
+
+    public function test_метка_уникальна_и_имеет_вид_адреса(): void
+    {
+        $first = PaymentRequest::generate_reference();
+        $second = PaymentRequest::generate_reference();
+
+        self::assertNotSame($first, $second);
+        self::assertMatchesRegularExpression('/^[1-9A-HJ-NP-Za-km-z]{32,44}$/', $first);
+    }
+
+    public function test_ссылка_совпадает_с_эталоном_библиотеки(): void
+    {
+        // Эталон получен запуском @solana/pay — той самой библиотеки, которую
+        // используют кошельки. Совпадение означает, что наш URL будет прочитан
+        // ровно так же, как её собственный.
+        $request = PaymentRequest::create($this->quote(), self::MERCHANT, [
+            'reference' => 'DU4LZngDuaUGmzyhWiG7QwMqjF4C3b2dbjSmsH5wB1Jh',
+            'label' => 'Магазин',
+            'message' => 'Заказ №123',
+        ]);
+
+        self::assertSame(
+            'solana:9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM'
+            . '?amount=21.758051'
+            . '&spl-token=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
+            . '&reference=DU4LZngDuaUGmzyhWiG7QwMqjF4C3b2dbjSmsH5wB1Jh'
+            . '&label=%D0%9C%D0%B0%D0%B3%D0%B0%D0%B7%D0%B8%D0%BD'
+            . '&message=%D0%97%D0%B0%D0%BA%D0%B0%D0%B7+%E2%84%96123',
+            $request->url
+        );
+    }
+
+    public function test_для_нативного_sol_нет_адреса_монеты(): void
+    {
+        $request = PaymentRequest::create($this->quote('10000', 'SOL', '47758.44000000'), self::MERCHANT, [
+            'reference' => 'DU4LZngDuaUGmzyhWiG7QwMqjF4C3b2dbjSmsH5wB1Jh',
+        ]);
+
+        self::assertSame(
+            'solana:9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM'
+            . '?amount=0.209387074'
+            . '&reference=DU4LZngDuaUGmzyhWiG7QwMqjF4C3b2dbjSmsH5wB1Jh',
+            $request->url
+        );
+        self::assertStringNotContainsString('spl-token', $request->url);
+    }
+
+    public function test_незначащие_нули_в_сумме_обрезаются(): void
+    {
+        // Библиотека выводит «1», а не «1.000000». Совпадение важно:
+        // одинаковая сумма должна давать одинаковый QR-код.
+        $request = PaymentRequest::create($this->quote('459.60'), self::MERCHANT, [
+            'reference' => 'DU4LZngDuaUGmzyhWiG7QwMqjF4C3b2dbjSmsH5wB1Jh',
+        ]);
+
+        self::assertStringContainsString('amount=1&', $request->url);
+    }
+
+    public function test_необязательные_поля_отсутствуют_когда_не_переданы(): void
+    {
+        $request = PaymentRequest::create($this->quote(), self::MERCHANT, [
+            'reference' => 'DU4LZngDuaUGmzyhWiG7QwMqjF4C3b2dbjSmsH5wB1Jh',
+        ]);
+
+        self::assertStringNotContainsString('label=', $request->url);
+        self::assertStringNotContainsString('message=', $request->url);
+        self::assertStringNotContainsString('memo=', $request->url);
+    }
+
+    public function test_memo_попадает_в_ссылку(): void
+    {
+        $request = PaymentRequest::create($this->quote(), self::MERCHANT, [
+            'reference' => 'DU4LZngDuaUGmzyhWiG7QwMqjF4C3b2dbjSmsH5wB1Jh',
+            'memo' => 'order-42',
+        ]);
+
+        self::assertStringContainsString('&memo=order-42', $request->url);
+    }
+
+    public function test_метка_создаётся_автоматически_если_не_передана(): void
+    {
+        $request = PaymentRequest::create($this->quote(), self::MERCHANT);
+
+        self::assertMatchesRegularExpression('/^[1-9A-HJ-NP-Za-km-z]{32,44}$/', $request->reference);
+        self::assertStringContainsString('reference=' . $request->reference, $request->url);
+    }
+
+    public function test_отвергает_просроченную_котировку(): void
+    {
+        $quote = $this->quote();
+        $expired = Quote::from_array(array_merge($quote->to_array(), [
+            'created_at' => time() - 3600,
+            'expires_at' => time() - 1800,
+        ]));
+
+        $this->expectException(QuoteException::class);
+        PaymentRequest::create($expired, self::MERCHANT);
+    }
+
+    public function test_отвергает_пустой_адрес_получателя(): void
+    {
+        $this->expectException(QuoteException::class);
+        PaymentRequest::create($this->quote(), '');
+    }
+
+    public function test_отвергает_адрес_получателя_не_в_формате_base58(): void
+    {
+        // Символы 0, O, I и l в base58 не встречаются: адрес с ними заведомо
+        // неверен, и лучше сказать об этом продавцу при настройке, чем
+        // отправить покупателя платить в никуда.
+        $this->expectException(QuoteException::class);
+        PaymentRequest::create($this->quote(), 'НеАдрес0OIl');
+    }
+
+    public function test_отвергает_адрес_совпадающий_с_адресом_монеты(): void
+    {
+        // Частая ошибка при настройке: в поле адреса продавца вписывают
+        // адрес самой монеты. Платежи туда уходят безвозвратно.
+        $this->expectException(QuoteException::class);
+        PaymentRequest::create($this->quote(), self::USDC_MINT);
+    }
+}
+```
+
+- [ ] **Шаг 6: Запустить и убедиться, что падает**
+
+Запустить: `docker exec -w /var/www/html/wp-content/plugins/solanapaykz solanapaykz_shop php vendor/bin/phpunit --filter PaymentRequestTest`
+Ожидается: FAIL — класса нет.
+
+- [ ] **Шаг 7: Реализовать платёжный запрос**
+
+```php
+<?php
+// demo-shop/plugin/includes/PaymentRequest.php
+
+declare(strict_types=1);
+
+namespace SolanaPayKZ;
+
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+/**
+ * Ссылка Solana Pay, которую покупатель открывает кошельком.
+ *
+ * Метка платежа — 32 случайных байта в виде адреса. Пара ключей при этом
+ * не создаётся и приватного ключа не существует: метка только помечает
+ * транзакцию, средств не касается. Требование безопасности из технического
+ * задания соблюдается буквально.
+ */
+final class PaymentRequest
+{
+    /** Адрес в base58 короче 32 символов заведомо неверен. */
+    private const ADDRESS_PATTERN = '/^[1-9A-HJ-NP-Za-km-z]{32,44}$/';
+
+    private function __construct(
+        public readonly Quote $quote,
+        public readonly string $reference,
+        public readonly string $url
+    ) {
+    }
+
+    /** Случайная метка платежа. Пара ключей не создаётся. */
+    public static function generate_reference(): string
+    {
+        return Base58::encode(random_bytes(32));
+    }
+
+    /**
+     * @param array{reference?: string, label?: string, message?: string, memo?: string} $options
+     */
+    public static function create(Quote $quote, string $recipient, array $options = []): self
+    {
+        if ($quote->is_expired()) {
+            throw new QuoteException(sprintf(
+                'Котировка %s просрочена, платёжную ссылку по ней выпустить нельзя.',
+                $quote->quote_id
+            ));
+        }
+
+        self::require_valid_address($recipient, 'Адрес получателя');
+
+        $token = Tokens::resolve($quote->cluster, $quote->token);
+
+        // Частая ошибка при настройке: в поле адреса продавца вписывают адрес
+        // самой монеты. Владельца у такого счёта нет, и платежи туда уходят
+        // безвозвратно — лучше отказать сейчас, чем потерять деньги покупателя.
+        if ($token['mint'] !== null && $recipient === $token['mint']) {
+            throw new QuoteException(
+                'Адрес получателя совпадает с адресом монеты. Укажите адрес кошелька продавца.'
+            );
+        }
+
+        $reference = $options['reference'] ?? self::generate_reference();
+        self::require_valid_address($reference, 'Метка платежа');
+
+        $params = ['amount' => self::trim_zeros($quote->amount_token)];
+
+        if ($token['mint'] !== null) {
+            $params['spl-token'] = $token['mint'];
+        }
+
+        $params['reference'] = $reference;
+
+        foreach (['label', 'message', 'memo'] as $field) {
+            $value = $options[$field] ?? '';
+
+            if ($value !== '') {
+                $params[$field] = $value;
+            }
+        }
+
+        return new self(
+            $quote,
+            $reference,
+            'solana:' . $recipient . '?' . http_build_query($params)
+        );
+    }
+
+    /**
+     * Убирает незначащие нули: библиотека, на которую ориентируются кошельки,
+     * выводит «1», а не «1.000000». Одинаковая сумма должна давать одинаковый
+     * QR-код независимо от того, чем он построен.
+     */
+    private static function trim_zeros(string $amount): string
+    {
+        if (!str_contains($amount, '.')) {
+            return $amount;
+        }
+
+        return rtrim(rtrim($amount, '0'), '.');
+    }
+
+    private static function require_valid_address(string $address, string $label): void
+    {
+        if ($address === '') {
+            throw new QuoteException(sprintf('%s не указан.', $label));
+        }
+
+        if (preg_match(self::ADDRESS_PATTERN, $address) !== 1) {
+            throw new QuoteException(sprintf(
+                '%s не похож на адрес Solana: %s.',
+                $label,
+                $address
+            ));
+        }
+    }
+}
+```
+
+- [ ] **Шаг 8: Подключить в точке входа**
+
+В `solanapaykz.php` после `Quote.php` добавить:
+
+```php
+require_once __DIR__ . '/includes/Base58.php';
+require_once __DIR__ . '/includes/PaymentRequest.php';
+```
+
+- [ ] **Шаг 9: Запустить весь набор**
+
+Запустить: `docker exec -w /var/www/html/wp-content/plugins/solanapaykz solanapaykz_shop php vendor/bin/phpunit`
+Ожидается: PASS, 108 прежних тестов плюс новые.
+
+- [ ] **Шаг 10: Сверить ссылку с эталонной библиотекой вживую**
+
+Тест выше сверяется с записанным эталоном. Этот шаг проверяет, что эталон
+не устарел: тот же запрос строится обеими реализациями и сравнивается.
+
+```bash
+cd /var/www/solanapaykz
+cat > /tmp/cmp.test.ts <<'TS'
+import { describe, it, expect } from 'vitest';
+import { encodeURL } from '@solana/pay';
+import { address } from '@solana/kit';
+
+describe('сверка с PHP', () => {
+  it('ссылка совпадает', () => {
+    const url = encodeURL({
+      recipient: address('9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM'),
+      amount: 21.758051,
+      splToken: address('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'),
+      reference: address('DU4LZngDuaUGmzyhWiG7QwMqjF4C3b2dbjSmsH5wB1Jh'),
+      label: 'Магазин',
+      message: 'Заказ №123',
+    }).toString();
+    console.log('JS: ' + url);
+    expect(url).toContain('solana:');
+  });
+});
+TS
+cp /tmp/cmp.test.ts tests/tmp-cmp.test.ts
+npx vitest run tests/tmp-cmp.test.ts 2>&1 | grep "^JS:"
+rm tests/tmp-cmp.test.ts
+```
+
+Затем то же на PHP и сравнить строки глазами — они должны совпасть символ
+в символ, включая порядок параметров и кодировку кириллицы.
+
+- [ ] **Шаг 11: Коммит и пуш**
+
+```bash
+cd /var/www/solanapaykz
+git add -A
+git commit -m "feat: метка платежа и ссылка Solana Pay"
+git push -u origin feat/wc-payment-request
+```
+
+---
+
+## Задачи 8-9
+
+Расписываются после ревью задачи 7.
+
 - **Задача 8. Платёжный шлюз.** Класс, наследующий `WC_Payment_Gateway`,
   регистрация через фильтр `woocommerce_payment_gateways`, настройки
-  продавца, `process_payment`, вывод QR на странице «Спасибо за заказ».
+  продавца с проверкой адреса и RPC, `process_payment`, сохранение
+  котировки и метки в метаданных заказа, вывод QR на странице «Спасибо за
+  заказ». QR рисуется в браузере покупателя библиотекой, положенной файлом
+  в каталог плагина: серверная генерация потребовала бы ещё одной
+  зависимости, а картинка нужна только в браузере.
 - **Задача 9. Опрос и жизненный цикл заказа.** AJAX-эндпоинт, опрос из
   браузера каждые 5 секунд, WP-Cron каждые 5 минут, отмена через 15 минут,
   проверка отменённых ещё сутки, уведомление продавцу о позднем платеже.
