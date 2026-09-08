@@ -36,6 +36,9 @@ require_once __DIR__ . '/includes/TransientCache.php';
 require_once __DIR__ . '/includes/BinanceRateSource.php';
 require_once __DIR__ . '/includes/SyntheticRateSource.php';
 require_once __DIR__ . '/includes/RateProvider.php';
+require_once __DIR__ . '/includes/QuoteException.php';
+require_once __DIR__ . '/includes/Tokens.php';
+require_once __DIR__ . '/includes/Quote.php';
 
 const REQUIREMENTS = [
     'php' => '8.1',
