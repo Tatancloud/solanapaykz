@@ -124,43 +124,68 @@ final class Gateway extends WC_Payment_Gateway
             return ['result' => 'failure'];
         }
 
-        try {
-            $quote = Quote::create(
-                $this->build_rate_provider(),
-                (string) $order->get_total(),
-                (string) $this->get_option('token', 'USDC'),
-                (string) $this->get_option('cluster', 'devnet'),
-                (float) $this->get_option('markup_percent', '0'),
-                (int) $this->get_option('quote_ttl', '900')
-            );
-        } catch (RateUnavailableException $error) {
-            // Курс недоступен — заказ не создаём: продать по выдуманному курсу
-            // хуже, чем не продать.
-            error_log('SolanaPay-KZ: ' . $error->getMessage());
-            wc_add_notice(
-                'Оплата криптовалютой сейчас недоступна: не удалось получить курс. '
-                . 'Выберите другой способ оплаты.',
-                'error'
-            );
+        // Покупатель мог уже отсканировать QR по этому заказу раньше и уйти,
+        // не дождавшись подтверждения (finalized занимает до 15 секунд, при
+        // перегрузке сети — дольше), а вернуться оплатить его повторно
+        // штатным путём WooCommerce — по ссылке «Оплатить» из письма или из
+        // «Мой аккаунт → Заказы». Новая котировка означает новую метку
+        // платежа: проверка станет искать транзакции по ней, а деньги
+        // ушли со старой меткой — платёж не найдётся никогда. Пока прежняя
+        // котировка ещё не истекла, переиспользуем её и метку вместо того,
+        // чтобы выпускать новые. Требуем, чтобы метка и адрес получателя
+        // тоже сохранились: без них старую котировку показать нечем, и
+        // это тот же случай, что и полное отсутствие данных оплаты —
+        // выпускаем всё заново.
+        $existing_quote = OrderMeta::read_quote($order);
+        $existing_reference = OrderMeta::read_reference($order);
+        $existing_recipient = OrderMeta::read_recipient($order);
 
-            return ['result' => 'failure'];
-        } catch (Throwable $error) {
-            error_log('SolanaPay-KZ: ' . $error->getMessage());
-            wc_add_notice('Не удалось подготовить оплату криптовалютой. Выберите другой способ.', 'error');
+        $reuse = $existing_quote instanceof Quote
+            && !$existing_quote->is_expired()
+            && $existing_reference !== null
+            && $existing_recipient !== null;
 
-            return ['result' => 'failure'];
+        if ($reuse) {
+            $quote = $existing_quote;
+        } else {
+            try {
+                $quote = Quote::create(
+                    $this->build_rate_provider(),
+                    (string) $order->get_total(),
+                    (string) $this->get_option('token', 'USDC'),
+                    (string) $this->get_option('cluster', 'devnet'),
+                    (float) $this->get_option('markup_percent', '0'),
+                    (int) $this->get_option('quote_ttl', '900')
+                );
+            } catch (RateUnavailableException $error) {
+                // Курс недоступен — заказ не создаём: продать по выдуманному курсу
+                // хуже, чем не продать.
+                error_log('SolanaPay-KZ: ' . $error->getMessage());
+                wc_add_notice(
+                    'Оплата криптовалютой сейчас недоступна: не удалось получить курс. '
+                    . 'Выберите другой способ оплаты.',
+                    'error'
+                );
+
+                return ['result' => 'failure'];
+            } catch (Throwable $error) {
+                error_log('SolanaPay-KZ: ' . $error->getMessage());
+                wc_add_notice('Не удалось подготовить оплату криптовалютой. Выберите другой способ.', 'error');
+
+                return ['result' => 'failure'];
+            }
+
+            // Адрес получателя замораживаем на момент создания заказа: продавец
+            // может сменить кошелёк в настройках позже, а показ страницы и
+            // будущая проверка платежа должны сверяться с тем, что покупатель
+            // реально увидел в QR-коде, а не с текущими настройками.
+            OrderMeta::save_quote(
+                $order,
+                $quote,
+                PaymentRequest::generate_reference(),
+                (string) $this->get_option('recipient', '')
+            );
         }
-
-        // Адрес получателя замораживаем на момент создания заказа: продавец
-        // может сменить кошелёк в настройках позже, а показ страницы и
-        // будущая проверка платежа должны сверяться с тем, что покупатель
-        // реально увидел в QR-коде, а не с текущими настройками.
-        OrderMeta::save_quote(
-            $order,
-            $quote,
-            PaymentRequest::generate_reference(),
-            (string) $this->get_option('recipient', '')
-        );
 
         $order->update_status(
             'pending',
