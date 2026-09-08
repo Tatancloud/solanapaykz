@@ -25,6 +25,8 @@ final class OrderChecker
      */
     public function check(WC_Order $order, array $settings): array
     {
+        $order_id = $order->get_id();
+
         $quote = OrderMeta::read_quote($order);
         $reference = OrderMeta::read_reference($order);
         $recipient = OrderMeta::read_recipient($order);
@@ -33,36 +35,59 @@ final class OrderChecker
             return ['status' => 'error', 'message' => 'Данные оплаты не найдены.'];
         }
 
-        try {
-            $token = Tokens::resolve($quote->cluster, $quote->token);
-            $verify = new Verify(new Rpc((string) $settings['rpc_url']));
-            $result = $verify->check(
-                $reference,
-                $recipient,
-                // Честно передаём null дальше: подмена на '' заставляла
-                // Verify искать SPL-токен с пустым адресом минта, которого
-                // не существует ни в одной транзакции — платежи в нативном
-                // SOL никогда бы не засчитывались.
-                $token['mint'],
-                Money::parse_decimal_to_units($quote->amount_token, $token['decimals'])
-            );
-        } catch (Throwable $error) {
-            // Сбой связи с узлом — не ответ о платеже. Заказ не трогаем,
-            // покупателю говорим, что проверка временно недоступна.
-            error_log('SolanaPay-KZ: ' . $error->getMessage());
-
-            return ['status' => 'unknown', 'message' => 'Не удалось проверить оплату. Пробуем ещё раз.'];
+        if (!OrderLock::acquire($order_id)) {
+            // Другой процесс (браузерный опрос или крон) уже проверяет этот
+            // заказ прямо сейчас. Это не ошибка — оба процесса опрашивают
+            // независимо, и без лока оба могли бы дойти до payment_complete()
+            // одновременно: два письма покупателю, двойное списание
+            // остатков, дубли заметок заказа.
+            return CustomerMessage::for_order_status($order->get_status());
         }
 
-        $decision = PaymentDecision::decide(
-            $result,
-            $quote,
-            $order->get_status(),
-            (int) $settings['late_window'],
-            time()
-        );
+        try {
+            try {
+                $token = Tokens::resolve($quote->cluster, $quote->token);
+                $verify = new Verify(new Rpc((string) $settings['rpc_url']));
+                $result = $verify->check(
+                    $reference,
+                    $recipient,
+                    // Честно передаём null дальше: подмена на '' заставляла
+                    // Verify искать SPL-токен с пустым адресом минта,
+                    // которого не существует ни в одной транзакции —
+                    // платежи в нативном SOL никогда бы не засчитывались.
+                    $token['mint'],
+                    Money::parse_decimal_to_units($quote->amount_token, $token['decimals'])
+                );
+            } catch (Throwable $error) {
+                // Сбой связи с узлом — не ответ о платеже. Заказ не трогаем,
+                // покупателю говорим, что проверка временно недоступна.
+                error_log('SolanaPay-KZ: ' . $error->getMessage());
 
-        return $this->apply($order, $decision, $result);
+                return ['status' => 'unknown', 'message' => 'Не удалось проверить оплату. Пробуем ещё раз.'];
+            }
+
+            // Заказ перечитывается непосредственно перед мутацией: RPC-запрос
+            // занимает до нескольких секунд (таймаут — 10), и за это время
+            // статус мог смениться другим процессом — например, продавец
+            // вручную отменил заказ в админке, пока шла проверка.
+            $fresh_order = wc_get_order($order_id);
+
+            if (!$fresh_order instanceof WC_Order) {
+                return ['status' => 'error', 'message' => 'Заказ не найден.'];
+            }
+
+            $decision = PaymentDecision::decide(
+                $result,
+                $quote,
+                $fresh_order->get_status(),
+                (int) $settings['late_window'],
+                time()
+            );
+
+            return $this->apply($fresh_order, $decision, $result);
+        } finally {
+            OrderLock::release($order_id);
+        }
     }
 
     /**

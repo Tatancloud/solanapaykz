@@ -105,6 +105,7 @@ add_action('plugins_loaded', static function (): void {
 
     require_once __DIR__ . '/includes/PaymentDecision.php';
     require_once __DIR__ . '/includes/CustomerMessage.php';
+    require_once __DIR__ . '/includes/OrderLock.php';
     require_once __DIR__ . '/includes/OrderChecker.php';
     require_once __DIR__ . '/includes/Ajax.php';
     require_once __DIR__ . '/includes/Scheduler.php';
