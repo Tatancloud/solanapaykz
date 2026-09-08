@@ -2212,30 +2212,597 @@ git push -u origin feat/wc-rates
 
 ---
 
-## Задачи 6-9
+### Задача 6: Токены и котировка
 
-Расписываются после ревью задачи 5 — тем же порядком и по той же причине,
-что задачи 5-9 не были расписаны до ревью первых четырёх: каждая опирается на
-интерфейсы предыдущей, а ревью их меняет. За четыре закрытые задачи ревью
-изменило интерфейсы трижды.
+**Файлы:**
+- Создать: `demo-shop/plugin/includes/Tokens.php`, `includes/Quote.php`,
+  `includes/QuoteException.php`
+- Изменить: `demo-shop/plugin/solanapaykz.php` (подключение)
+- Тест: `demo-shop/plugin/tests/TokensTest.php`, `tests/QuoteTest.php`
 
-Их содержание задано спекой:
+**Интерфейсы:**
+- Потребляет: `Money`, `RateProvider` из задачи 5.
+- Отдаёт: `Tokens::resolve(string $cluster, string $token): array{mint: ?string, decimals: int}`,
+  константу `Tokens::SUPPORTED`;
+  класс `Quote` с публичными readonly-свойствами и методами
+  `Quote::create(RateProvider $rates, string $amount_kzt, string $token, string $cluster, float $markup_percent = 0.0, int $ttl_seconds = 900): self`,
+  `is_expired(?int $now = null): bool`, `to_array(): array`,
+  `Quote::from_array(array $data): self`;
+  исключение `QuoteException`.
 
-- **Задача 6. Котировка.** Срок жизни 15 минут, наценка продавца, сумма и курс
-  фиксируются в момент создания. Хранится в метаданных заказа и проверяется
-  заново при каждом чтении: приходит из базы, то есть извне.
-- **Задача 7. Платёжный запрос.** Метка платежа — 32 случайных байта,
-  закодированных в base58 (встроенного кодировщика в PHP нет, пишем сами на
-  bcmath; проверка алгоритма: 32 нулевых байта дают известный адрес
+Котировка хранится в метаданных заказа и возвращается оттуда при каждой
+проверке платежа — то есть приходит извне, из чужой базы. Поэтому
+`from_array` проверяет каждое поле заново, а не доверяет содержимому.
+
+- [ ] **Шаг 1: Создать ветку**
+
+```bash
+cd /var/www/solanapaykz && git checkout main && git pull
+git checkout -b feat/wc-quote
+```
+
+- [ ] **Шаг 2: Написать падающий тест для токенов**
+
+```php
+<?php
+// demo-shop/plugin/tests/TokensTest.php
+
+declare(strict_types=1);
+
+use PHPUnit\Framework\TestCase;
+use SolanaPayKZ\QuoteException;
+use SolanaPayKZ\Tokens;
+
+final class TokensTest extends TestCase
+{
+    public function test_usdc_в_основной_сети(): void
+    {
+        $token = Tokens::resolve('mainnet', 'USDC');
+
+        self::assertSame('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', $token['mint']);
+        self::assertSame(6, $token['decimals']);
+    }
+
+    public function test_usdc_в_тестовой_сети_имеет_другой_адрес(): void
+    {
+        self::assertSame(
+            '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
+            Tokens::resolve('devnet', 'USDC')['mint']
+        );
+    }
+
+    public function test_у_нативного_sol_нет_адреса_монеты(): void
+    {
+        $token = Tokens::resolve('mainnet', 'SOL');
+
+        self::assertNull($token['mint']);
+        self::assertSame(9, $token['decimals']);
+    }
+
+    public function test_отвергает_неизвестный_токен(): void
+    {
+        $this->expectException(QuoteException::class);
+        Tokens::resolve('mainnet', 'BTC');
+    }
+
+    public function test_отвергает_неизвестную_сеть(): void
+    {
+        $this->expectException(QuoteException::class);
+        Tokens::resolve('testnet', 'USDC');
+    }
+}
+```
+
+- [ ] **Шаг 3: Запустить и убедиться, что падает**
+
+Запустить: `docker exec -w /var/www/html/wp-content/plugins/solanapaykz solanapaykz_shop php vendor/bin/phpunit --filter TokensTest`
+Ожидается: FAIL — классов нет.
+
+- [ ] **Шаг 4: Реализовать исключение и токены**
+
+```php
+<?php
+// demo-shop/plugin/includes/QuoteException.php
+
+declare(strict_types=1);
+
+namespace SolanaPayKZ;
+
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+use RuntimeException;
+
+/** Котировка непригодна: неверные данные на входе или испорченная запись заказа. */
+final class QuoteException extends RuntimeException
+{
+}
+```
+
+```php
+<?php
+// demo-shop/plugin/includes/Tokens.php
+
+declare(strict_types=1);
+
+namespace SolanaPayKZ;
+
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+/**
+ * Адреса монет по сетям.
+ *
+ * Адреса проверены запросом getTokenSupply к соответствующей сети: ошибка
+ * в одном символе означала бы платежи в никуда.
+ */
+final class Tokens
+{
+    public const SUPPORTED = ['USDC', 'SOL'];
+
+    private const TABLE = [
+        'mainnet' => [
+            'USDC' => ['mint' => 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', 'decimals' => 6],
+            'SOL'  => ['mint' => null, 'decimals' => 9],
+        ],
+        'devnet' => [
+            'USDC' => ['mint' => '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU', 'decimals' => 6],
+            'SOL'  => ['mint' => null, 'decimals' => 9],
+        ],
+    ];
+
+    /** @return array{mint: ?string, decimals: int} */
+    public static function resolve(string $cluster, string $token): array
+    {
+        $entry = self::TABLE[$cluster][$token] ?? null;
+
+        if ($entry === null) {
+            throw new QuoteException(sprintf(
+                'Неизвестное сочетание сети и монеты: %s / %s.',
+                $cluster,
+                $token
+            ));
+        }
+
+        return $entry;
+    }
+}
+```
+
+- [ ] **Шаг 5: Написать падающий тест для котировки**
+
+```php
+<?php
+// demo-shop/plugin/tests/QuoteTest.php
+
+declare(strict_types=1);
+
+use PHPUnit\Framework\TestCase;
+use SolanaPayKZ\Cache;
+use SolanaPayKZ\Quote;
+use SolanaPayKZ\QuoteException;
+use SolanaPayKZ\RateProvider;
+use SolanaPayKZ\RateSource;
+
+final class QuoteTest extends TestCase
+{
+    private function rates(string $rate = '459.60000000', string $name = 'binance'): RateProvider
+    {
+        $source = new class($rate, $name) implements RateSource {
+            public function __construct(private string $rate, private string $name) {}
+            public function get_name(): string { return $this->name; }
+            public function get_kzt_per_token(string $token): string { return $this->rate; }
+        };
+
+        $cache = new class implements Cache {
+            public function get(string $key): ?string { return null; }
+            public function set(string $key, string $value, int $ttl_seconds): void {}
+        };
+
+        return new RateProvider([$source], $cache, 0);
+    }
+
+    public function test_считает_сумму_к_оплате(): void
+    {
+        $quote = Quote::create($this->rates(), '10000', 'USDC', 'mainnet');
+
+        self::assertSame('21.758051', $quote->amount_token);
+        self::assertSame('10000', $quote->amount_kzt);
+        self::assertSame('10000.00', $quote->amount_kzt_charged);
+        self::assertSame('459.60000000', $quote->rate);
+        self::assertSame('binance', $quote->rate_source);
+    }
+
+    public function test_срок_жизни_по_умолчанию_пятнадцать_минут(): void
+    {
+        $quote = Quote::create($this->rates(), '10000', 'USDC', 'mainnet');
+
+        self::assertSame(900, $quote->expires_at - $quote->created_at);
+    }
+
+    public function test_применяет_наценку_к_сумме_в_тенге(): void
+    {
+        $quote = Quote::create($this->rates(), '10000', 'USDC', 'mainnet', 1.0);
+
+        self::assertSame('10100.00', $quote->amount_kzt_charged);
+        self::assertSame('21.975631', $quote->amount_token);
+    }
+
+    public function test_считает_sol_с_девятью_знаками(): void
+    {
+        $quote = Quote::create($this->rates('47758.44000000'), '10000', 'SOL', 'mainnet');
+
+        self::assertSame('0.209387074', $quote->amount_token);
+    }
+
+    public function test_идентификатор_уникален(): void
+    {
+        $first = Quote::create($this->rates(), '10000', 'USDC', 'mainnet');
+        $second = Quote::create($this->rates(), '10000', 'USDC', 'mainnet');
+
+        self::assertNotSame($first->quote_id, $second->quote_id);
+        self::assertMatchesRegularExpression('/^[0-9a-f]{32}$/', $first->quote_id);
+    }
+
+    public function test_просрочена_начиная_с_момента_истечения(): void
+    {
+        $quote = Quote::create($this->rates(), '10000', 'USDC', 'mainnet');
+
+        self::assertFalse($quote->is_expired($quote->expires_at - 1));
+        self::assertTrue($quote->is_expired($quote->expires_at));
+        self::assertTrue($quote->is_expired($quote->expires_at + 1));
+    }
+
+    public function test_отвергает_нулевую_сумму(): void
+    {
+        $this->expectException(QuoteException::class);
+        Quote::create($this->rates(), '0', 'USDC', 'mainnet');
+    }
+
+    public function test_отвергает_сумму_с_избыточной_точностью(): void
+    {
+        $this->expectException(QuoteException::class);
+        Quote::create($this->rates(), '100.999', 'USDC', 'mainnet');
+    }
+
+    public function test_отвергает_неположительный_срок_жизни(): void
+    {
+        $this->expectException(QuoteException::class);
+        Quote::create($this->rates(), '10000', 'USDC', 'mainnet', 0.0, 0);
+    }
+
+    public function test_не_обращается_к_курсу_при_неверном_вводе(): void
+    {
+        // Сетевой запрос ради заведомо неверной суммы — лишняя задержка
+        // на кассе и лишний запрос к бирже.
+        $counting = new class implements RateSource {
+            public int $calls = 0;
+            public function get_name(): string { return 'binance'; }
+            public function get_kzt_per_token(string $token): string
+            {
+                $this->calls++;
+
+                return '459.60000000';
+            }
+        };
+
+        $cache = new class implements Cache {
+            public function get(string $key): ?string { return null; }
+            public function set(string $key, string $value, int $ttl_seconds): void {}
+        };
+
+        try {
+            Quote::create(new RateProvider([$counting], $cache, 0), 'мусор', 'USDC', 'mainnet');
+        } catch (QuoteException) {
+            // ожидаемо
+        }
+
+        self::assertSame(0, $counting->calls);
+    }
+
+    public function test_путешествие_через_массив_сохраняет_котировку(): void
+    {
+        $original = Quote::create($this->rates(), '10000', 'USDC', 'mainnet');
+        $restored = Quote::from_array($original->to_array());
+
+        self::assertEquals($original, $restored);
+    }
+
+    public function test_восстановление_отвергает_испорченную_запись(): void
+    {
+        $valid = Quote::create($this->rates(), '10000', 'USDC', 'mainnet')->to_array();
+
+        $broken = [
+            'без суммы токена'      => ['amount_token' => null],
+            'сумма токена нулевая'  => ['amount_token' => '0.000000'],
+            'сумма токена мусор'    => ['amount_token' => 'не-число'],
+            'нет курса'             => ['rate' => null],
+            'курс нулевой'          => ['rate' => '0'],
+            'неизвестная монета'    => ['token' => 'BTC'],
+            'неизвестная сеть'      => ['cluster' => 'testnet'],
+            'срок раньше создания'  => ['expires_at' => $valid['created_at'] - 1],
+            'идентификатор пустой'  => ['quote_id' => ''],
+        ];
+
+        foreach ($broken as $label => $override) {
+            try {
+                Quote::from_array(array_merge($valid, $override));
+                self::fail("Испорченная запись «{$label}» должна быть отвергнута.");
+            } catch (QuoteException) {
+                self::assertTrue(true);
+            }
+        }
+    }
+
+    public function test_восстановление_отвергает_отсутствующее_поле(): void
+    {
+        $valid = Quote::create($this->rates(), '10000', 'USDC', 'mainnet')->to_array();
+        unset($valid['rate_source']);
+
+        $this->expectException(QuoteException::class);
+        Quote::from_array($valid);
+    }
+}
+```
+
+- [ ] **Шаг 6: Запустить и убедиться, что падает**
+
+Запустить: `docker exec -w /var/www/html/wp-content/plugins/solanapaykz solanapaykz_shop php vendor/bin/phpunit --filter QuoteTest`
+Ожидается: FAIL — класса `Quote` нет.
+
+- [ ] **Шаг 7: Реализовать котировку**
+
+```php
+<?php
+// demo-shop/plugin/includes/Quote.php
+
+declare(strict_types=1);
+
+namespace SolanaPayKZ;
+
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+use Throwable;
+
+/**
+ * Зафиксированная цена заказа в криптовалюте.
+ *
+ * QR-код несёт неизменную сумму, а платит покупатель когда захочет, поэтому
+ * курс замораживается на ограниченный срок: риск его сдвига несёт продавец.
+ *
+ * Свойства объявлены readonly: котировку хранят в заказе и потом сверяют с
+ * пришедшим платежом, поэтому менять её после создания нельзя.
+ */
+final class Quote
+{
+    /** Пятнадцать минут. Обоснование срока — в спецификации, раздел 7. */
+    public const DEFAULT_TTL_SECONDS = 900;
+
+    private function __construct(
+        public readonly string $quote_id,
+        public readonly string $amount_kzt,
+        public readonly string $amount_kzt_charged,
+        public readonly string $token,
+        public readonly string $cluster,
+        public readonly string $amount_token,
+        public readonly string $rate,
+        public readonly string $rate_source,
+        public readonly int $created_at,
+        public readonly int $expires_at
+    ) {
+    }
+
+    public static function create(
+        RateProvider $rates,
+        string $amount_kzt,
+        string $token,
+        string $cluster,
+        float $markup_percent = 0.0,
+        int $ttl_seconds = self::DEFAULT_TTL_SECONDS
+    ): self {
+        if ($ttl_seconds <= 0) {
+            throw new QuoteException(
+                sprintf('Срок жизни котировки должен быть положительным, получено %d.', $ttl_seconds)
+            );
+        }
+
+        // Всё дешёвое и синхронное — до сетевого запроса за курсом: нет смысла
+        // ходить к бирже ради заведомо неверной суммы.
+        $decimals = Tokens::resolve($cluster, $token)['decimals'];
+
+        try {
+            $charged = Money::apply_markup($amount_kzt, $markup_percent);
+        } catch (Throwable $error) {
+            throw new QuoteException($error->getMessage(), 0, $error);
+        }
+
+        if (bccomp(Money::parse_decimal_to_units($charged, Money::KZT_DECIMALS), '0') <= 0) {
+            throw new QuoteException('Сумма заказа должна быть больше нуля.');
+        }
+
+        $rate = $rates->get_kzt_per_token($token);
+
+        try {
+            $units = Money::convert_kzt_to_token_units($charged, $rate['rate'], $decimals);
+        } catch (Throwable $error) {
+            throw new QuoteException($error->getMessage(), 0, $error);
+        }
+
+        $now = time();
+
+        return new self(
+            bin2hex(random_bytes(16)),
+            $amount_kzt,
+            $charged,
+            $token,
+            $cluster,
+            Money::format_units($units, $decimals),
+            $rate['rate'],
+            $rate['source'],
+            $now,
+            $now + $ttl_seconds
+        );
+    }
+
+    /** Котировка просрочена начиная с момента истечения включительно. */
+    public function is_expired(?int $now = null): bool
+    {
+        return ($now ?? time()) >= $this->expires_at;
+    }
+
+    /** @return array<string, string|int> */
+    public function to_array(): array
+    {
+        return [
+            'quote_id'           => $this->quote_id,
+            'amount_kzt'         => $this->amount_kzt,
+            'amount_kzt_charged' => $this->amount_kzt_charged,
+            'token'              => $this->token,
+            'cluster'            => $this->cluster,
+            'amount_token'       => $this->amount_token,
+            'rate'               => $this->rate,
+            'rate_source'        => $this->rate_source,
+            'created_at'         => $this->created_at,
+            'expires_at'         => $this->expires_at,
+        ];
+    }
+
+    /**
+     * Восстанавливает котировку из записи заказа.
+     *
+     * Каждое поле проверяется заново: запись пролежала в базе магазина и
+     * пришла к нам извне. Пустое поле суммы из-за неудачной миграции
+     * означало бы проверку платежа на нулевую сумму, то есть подтверждение
+     * любого перевода.
+     *
+     * @param array<string, mixed> $data
+     */
+    public static function from_array(array $data): self
+    {
+        foreach (['quote_id', 'amount_kzt', 'amount_kzt_charged', 'token', 'cluster',
+                  'amount_token', 'rate', 'rate_source', 'created_at', 'expires_at'] as $field) {
+            if (!array_key_exists($field, $data)) {
+                throw new QuoteException(sprintf('В записи котировки нет поля «%s».', $field));
+            }
+        }
+
+        $decimals = Tokens::resolve((string) $data['cluster'], (string) $data['token'])['decimals'];
+
+        $quote_id = (string) $data['quote_id'];
+
+        if ($quote_id === '') {
+            throw new QuoteException('Идентификатор котировки пуст.');
+        }
+
+        self::require_positive_amount((string) $data['amount_token'], $decimals, 'Сумма к оплате');
+        self::require_positive_amount((string) $data['rate'], Money::RATE_DECIMALS, 'Курс');
+
+        $created_at = (int) $data['created_at'];
+        $expires_at = (int) $data['expires_at'];
+
+        if ($expires_at <= $created_at) {
+            throw new QuoteException('Срок истечения котировки не позже момента её создания.');
+        }
+
+        return new self(
+            $quote_id,
+            (string) $data['amount_kzt'],
+            (string) $data['amount_kzt_charged'],
+            (string) $data['token'],
+            (string) $data['cluster'],
+            (string) $data['amount_token'],
+            (string) $data['rate'],
+            (string) $data['rate_source'],
+            $created_at,
+            $expires_at
+        );
+    }
+
+    private static function require_positive_amount(string $value, int $decimals, string $label): void
+    {
+        // Точность в сравнении обязательна: без неё сверяются только целые
+        // части, и любое значение меньше единицы считается нулём.
+        if (!Money::is_valid_decimal($value) || bccomp($value, '0', $decimals) <= 0) {
+            throw new QuoteException(sprintf(
+                '%s в записи котировки непригодна: %s.',
+                $label,
+                var_export($value, true)
+            ));
+        }
+    }
+}
+```
+
+- [ ] **Шаг 8: Подключить в точке входа**
+
+В `solanapaykz.php` после `RateProvider.php` добавить:
+
+```php
+require_once __DIR__ . '/includes/QuoteException.php';
+require_once __DIR__ . '/includes/Tokens.php';
+require_once __DIR__ . '/includes/Quote.php';
+```
+
+- [ ] **Шаг 9: Запустить весь набор**
+
+Запустить: `docker exec -w /var/www/html/wp-content/plugins/solanapaykz solanapaykz_shop php vendor/bin/phpunit`
+Ожидается: PASS, 81 прежний тест плюс новые.
+
+- [ ] **Шаг 10: Проверить на живом курсе**
+
+```bash
+docker exec solanapaykz_shop php -r '
+define("ABSPATH", "/tmp/");
+$b = "/var/www/html/wp-content/plugins/solanapaykz/includes/";
+foreach (["Money","RpcException","HttpClient","CurlHttpClient","RateUnavailableException","RateSource","Cache","BinanceRateSource","SyntheticRateSource","RateProvider","QuoteException","Tokens","Quote"] as $c) require $b . $c . ".php";
+$http = new SolanaPayKZ\CurlHttpClient();
+$cache = new class implements SolanaPayKZ\Cache {
+    private array $i = [];
+    public function get(string $k): ?string { return $this->i[$k] ?? null; }
+    public function set(string $k, string $v, int $t): void { $this->i[$k] = $v; }
+};
+$rates = new SolanaPayKZ\RateProvider([new SolanaPayKZ\BinanceRateSource($http)], $cache, 60);
+$q = SolanaPayKZ\Quote::create($rates, "25000", "USDC", "mainnet");
+printf("25000 ₸ -> %s USDC (курс %s от «%s»)\n", $q->amount_token, $q->rate, $q->rate_source);
+printf("действует %d минут, идентификатор %s\n", ($q->expires_at - $q->created_at) / 60, $q->quote_id);
+$restored = SolanaPayKZ\Quote::from_array($q->to_array());
+printf("после путешествия через массив: %s USDC\n", $restored->amount_token);
+'
+```
+Ожидается: сумма в USDC по живому курсу, срок 15 минут, восстановленная котировка совпадает.
+
+- [ ] **Шаг 11: Коммит и пуш**
+
+```bash
+cd /var/www/solanapaykz
+git add -A
+git commit -m "feat: токены и котировка со сроком жизни"
+git push -u origin feat/wc-quote
+```
+
+---
+
+## Задачи 7-9
+
+Расписываются после ревью задачи 6, по той же причине: каждая опирается на
+интерфейсы предыдущей, а ревью их меняет. За пять закрытых задач ревью
+меняло интерфейсы четырежды.
+
+- **Задача 7. Платёжный запрос.** Метка платежа — 32 случайных байта в
+  кодировке base58 (встроенного кодировщика в PHP нет, пишем сами на bcmath;
+  проверка алгоритма: 32 нулевых байта дают известный адрес
   `11111111111111111111111111111111`). Ссылка Solana Pay по спецификации,
-  без создания пары ключей.
+  пара ключей не создаётся.
 - **Задача 8. Платёжный шлюз.** Класс, наследующий `WC_Payment_Gateway`,
-  регистрация через фильтр `woocommerce_payment_gateways`, настройки продавца,
-  `process_payment`, отображение QR на странице «Спасибо за заказ».
-- **Задача 9. Опрос и жизненный цикл заказа.** AJAX-эндпоинт для страницы
-  оплаты, опрос из браузера каждые 5 секунд, WP-Cron каждые 5 минут, отмена
-  через 15 минут, проверка отменённых ещё сутки, уведомление продавцу о
-  позднем платеже.
+  регистрация через фильтр `woocommerce_payment_gateways`, настройки
+  продавца, `process_payment`, вывод QR на странице «Спасибо за заказ».
+- **Задача 9. Опрос и жизненный цикл заказа.** AJAX-эндпоинт, опрос из
+  браузера каждые 5 секунд, WP-Cron каждые 5 минут, отмена через 15 минут,
+  проверка отменённых ещё сутки, уведомление продавцу о позднем платеже.
 
 ## Самопроверка плана
 
