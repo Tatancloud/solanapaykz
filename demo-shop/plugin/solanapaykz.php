@@ -28,6 +28,7 @@ require_once __DIR__ . '/includes/SolanaChain.php';
 require_once __DIR__ . '/includes/HttpClient.php';
 require_once __DIR__ . '/includes/CurlHttpClient.php';
 require_once __DIR__ . '/includes/Rpc.php';
+require_once __DIR__ . '/includes/Verify.php';
 
 const REQUIREMENTS = [
     'php' => '8.1',
