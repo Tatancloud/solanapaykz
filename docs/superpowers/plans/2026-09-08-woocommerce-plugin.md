@@ -1383,28 +1383,859 @@ git push -u origin feat/wc-verify
 
 ---
 
-## Оставшиеся задачи
+### Задача 5: Курс тенге к токену
 
-Задачи 5-9 (курс, котировка, платёжный запрос, платёжный шлюз
-WooCommerce, опрос статуса и страница оплаты) будут расписаны так же
-подробно после того, как первые четыре пройдут ревью. Причина: они
-опираются на интерфейсы, которые ревью может изменить, и переписывать
-готовый план дешевле один раз, чем четыре.
+**Файлы:**
+- Создать: `demo-shop/plugin/includes/RateSource.php`, `includes/Cache.php`,
+  `includes/TransientCache.php`, `includes/BinanceRateSource.php`,
+  `includes/SyntheticRateSource.php`, `includes/RateProvider.php`,
+  `includes/RateUnavailableException.php`
+- Изменить: `demo-shop/plugin/solanapaykz.php` (подключение)
+- Тест: `demo-shop/plugin/tests/RatesTest.php`
 
-Их содержание определено спекой:
+**Интерфейсы:**
+- Потребляет: `HttpClient` и `RpcException` из задачи 3, `Money::multiply_rates`.
+- Отдаёт: интерфейс `RateSource` с `get_kzt_per_token(string $token): string`;
+  интерфейс `Cache` с `get(string $key): ?string` и `set(string $key, string $value, int $ttl_seconds): void`;
+  классы `BinanceRateSource`, `SyntheticRateSource`, `TransientCache`,
+  `RateProvider` с `get_kzt_per_token(string $token): array{rate: string, source: string}`;
+  исключение `RateUnavailableException`.
 
-- **Задача 5. Курс.** Binance основной (`USDTKZT × USDCUSDT`), синтетика
-  резервная, кеш в транзиентах WordPress на 60 секунд отдельно от срока
-  жизни котировки. При недоступности обоих источников заказ не создаётся.
-- **Задача 6. Котировка.** Срок жизни 15 минут, наценка, хранение в
-  метаданных заказа, проверка при каждом чтении из базы.
-- **Задача 7. Платёжный запрос.** Метка платежа как 32 случайных байта в
-  виде адреса, ссылка Solana Pay, без создания пары ключей.
-- **Задача 8. Платёжный шлюз.** Класс `WC_Payment_Gateway`, настройки
-  продавца, `process_payment`, отображение на странице «Спасибо за заказ».
-- **Задача 9. Опрос и страница оплаты.** AJAX-эндпоинт, опрос из браузера
-  каждые 5 секунд, WP-Cron каждые 5 минут, отмена через 15 минут,
-  проверка отменённых ещё сутки, уведомление продавцу о позднем платеже.
+Кеш вынесен в интерфейс, потому что транзиенты WordPress недоступны в тестах,
+а набор обязан работать без поднятия WordPress.
+
+- [ ] **Шаг 1: Создать ветку**
+
+```bash
+cd /var/www/solanapaykz && git checkout main && git pull
+git checkout -b feat/wc-rates
+```
+
+- [ ] **Шаг 2: Написать падающий тест**
+
+```php
+<?php
+// demo-shop/plugin/tests/RatesTest.php
+
+declare(strict_types=1);
+
+use PHPUnit\Framework\TestCase;
+use SolanaPayKZ\BinanceRateSource;
+use SolanaPayKZ\Cache;
+use SolanaPayKZ\HttpClient;
+use SolanaPayKZ\RateProvider;
+use SolanaPayKZ\RateSource;
+use SolanaPayKZ\RateUnavailableException;
+use SolanaPayKZ\RpcException;
+use SolanaPayKZ\SyntheticRateSource;
+
+/** Отдаёт заранее заданные ответы вместо обращения к сети. */
+final class StubHttpClient implements HttpClient
+{
+    /** @var list<string> */
+    public array $urls = [];
+
+    /** @param array<string, array> $routes Часть URL => ответ */
+    public function __construct(private array $routes)
+    {
+    }
+
+    public function post_json(string $url, array $payload, int $timeout_seconds): array
+    {
+        throw new RuntimeException('Курс запрашивается через get_json, не post_json.');
+    }
+
+    public function get_json(string $url, int $timeout_seconds): array
+    {
+        $this->urls[] = $url;
+
+        foreach ($this->routes as $needle => $response) {
+            if (str_contains($url, $needle)) {
+                if ($response instanceof RpcException) {
+                    throw $response;
+                }
+
+                return $response;
+            }
+        }
+
+        throw new RpcException('Тест не задал ответ для ' . $url);
+    }
+}
+
+final class ArrayCache implements Cache
+{
+    /** @var array<string, array{value: string, expires: int}> */
+    private array $items = [];
+
+    public int $now = 1000;
+
+    public function get(string $key): ?string
+    {
+        $item = $this->items[$key] ?? null;
+
+        return $item !== null && $item['expires'] > $this->now ? $item['value'] : null;
+    }
+
+    public function set(string $key, string $value, int $ttl_seconds): void
+    {
+        $this->items[$key] = ['value' => $value, 'expires' => $this->now + $ttl_seconds];
+    }
+}
+
+final class RatesTest extends TestCase
+{
+    public function test_binance_считает_курс_usdc_из_двух_тикеров(): void
+    {
+        $http = new StubHttpClient([
+            'symbol=USDTKZT'  => ['symbol' => 'USDTKZT', 'price' => '459.60000000'],
+            'symbol=USDCUSDT' => ['symbol' => 'USDCUSDT', 'price' => '1.00008000'],
+        ]);
+
+        self::assertSame('459.63676800', (new BinanceRateSource($http))->get_kzt_per_token('USDC'));
+    }
+
+    public function test_binance_считает_курс_sol(): void
+    {
+        $http = new StubHttpClient([
+            'symbol=USDTKZT' => ['symbol' => 'USDTKZT', 'price' => '459.60000000'],
+            'symbol=SOLUSDT' => ['symbol' => 'SOLUSDT', 'price' => '103.90000000'],
+        ]);
+
+        self::assertSame('47752.44000000', (new BinanceRateSource($http))->get_kzt_per_token('SOL'));
+    }
+
+    public function test_binance_отвергает_ответ_без_цены(): void
+    {
+        $http = new StubHttpClient(['symbol=USDTKZT' => ['symbol' => 'USDTKZT']]);
+
+        $this->expectException(RpcException::class);
+        (new BinanceRateSource($http))->get_kzt_per_token('USDC');
+    }
+
+    public function test_binance_отвергает_непригодную_цену(): void
+    {
+        foreach (['0', '-1', 'abc', '1e400', ' 1.5 '] as $price) {
+            $http = new StubHttpClient([
+                'symbol=USDTKZT'  => ['symbol' => 'USDTKZT', 'price' => $price],
+                'symbol=USDCUSDT' => ['symbol' => 'USDCUSDT', 'price' => '1.00000000'],
+            ]);
+
+            try {
+                (new BinanceRateSource($http))->get_kzt_per_token('USDC');
+                self::fail("Цена «{$price}» должна быть отвергнута.");
+            } catch (RpcException) {
+                self::assertTrue(true);
+            }
+        }
+    }
+
+    public function test_binance_принимает_цену_меньше_единицы(): void
+    {
+        // Цена USDC к доллару колеблется около единицы и регулярно бывает
+        // меньше её. Сравнение без указания точности отвергло бы такую цену.
+        $http = new StubHttpClient([
+            'symbol=USDTKZT'  => ['symbol' => 'USDTKZT', 'price' => '459.60000000'],
+            'symbol=USDCUSDT' => ['symbol' => 'USDCUSDT', 'price' => '0.99980800'],
+        ]);
+
+        self::assertSame('459.51175680', (new BinanceRateSource($http))->get_kzt_per_token('USDC'));
+    }
+
+    public function test_синтетика_принимает_цену_меньше_единицы(): void
+    {
+        $http = new StubHttpClient([
+            'open.er-api.com' => ['result' => 'success', 'rates' => ['KZT' => 455.296]],
+            'coingecko'       => ['usd-coin' => ['usd' => 0.999808]],
+        ]);
+
+        self::assertSame('455.20858316', (new SyntheticRateSource($http))->get_kzt_per_token('USDC'));
+    }
+
+    public function test_синтетика_собирает_курс_из_двух_источников(): void
+    {
+        $http = new StubHttpClient([
+            'open.er-api.com' => ['result' => 'success', 'rates' => ['KZT' => 455.296]],
+            'coingecko'       => ['usd-coin' => ['usd' => 1.0]],
+        ]);
+
+        self::assertSame('455.29600000', (new SyntheticRateSource($http))->get_kzt_per_token('USDC'));
+    }
+
+    public function test_синтетика_считает_молчаливый_отказ_отказом(): void
+    {
+        // CoinGecko не знает тенге и на запрос цены в KZT отвечает HTTP 200
+        // и пустым объектом. Принять это за ответ — значит выставить счёт на ноль.
+        $http = new StubHttpClient([
+            'open.er-api.com' => ['result' => 'success', 'rates' => ['KZT' => 455.296]],
+            'coingecko'       => ['usd-coin' => []],
+        ]);
+
+        $this->expectException(RpcException::class);
+        (new SyntheticRateSource($http))->get_kzt_per_token('USDC');
+    }
+
+    public function test_синтетика_отвергает_ответ_без_тенге(): void
+    {
+        $http = new StubHttpClient([
+            'open.er-api.com' => ['result' => 'success', 'rates' => ['EUR' => 0.9]],
+            'coingecko'       => ['usd-coin' => ['usd' => 1.0]],
+        ]);
+
+        $this->expectException(RpcException::class);
+        (new SyntheticRateSource($http))->get_kzt_per_token('USDC');
+    }
+
+    public function test_синтетика_отвергает_тело_null(): void
+    {
+        $http = new StubHttpClient([
+            'open.er-api.com' => [],
+            'coingecko'       => ['usd-coin' => ['usd' => 1.0]],
+        ]);
+
+        $this->expectException(RpcException::class);
+        (new SyntheticRateSource($http))->get_kzt_per_token('USDC');
+    }
+
+    public function test_провайдер_берёт_курс_из_первого_источника(): void
+    {
+        $provider = new RateProvider([$this->source('binance', '459.60000000')], new ArrayCache(), 60);
+
+        self::assertSame(
+            ['rate' => '459.60000000', 'source' => 'binance'],
+            $provider->get_kzt_per_token('USDC')
+        );
+    }
+
+    public function test_провайдер_переключается_на_резервный(): void
+    {
+        $provider = new RateProvider([
+            $this->failing_source('binance'),
+            $this->source('synthetic', '455.29600000'),
+        ], new ArrayCache(), 60);
+
+        self::assertSame(
+            ['rate' => '455.29600000', 'source' => 'synthetic'],
+            $provider->get_kzt_per_token('USDC')
+        );
+    }
+
+    public function test_провайдер_ловит_любую_ошибку_источника(): void
+    {
+        // Контракт источников держится на дисциплине, а не на типах: если
+        // источник нарушит его, переключение всё равно должно сработать.
+        $broken = new class implements RateSource {
+            public function get_name(): string { return 'broken'; }
+            public function get_kzt_per_token(string $token): string { throw new TypeError('что угодно'); }
+        };
+
+        $provider = new RateProvider([$broken, $this->source('synthetic', '455.00000000')], new ArrayCache(), 60);
+
+        self::assertSame('synthetic', $provider->get_kzt_per_token('USDC')['source']);
+    }
+
+    public function test_провайдер_бросает_когда_упали_все(): void
+    {
+        $provider = new RateProvider([
+            $this->failing_source('binance'),
+            $this->failing_source('synthetic'),
+        ], new ArrayCache(), 60);
+
+        $this->expectException(RateUnavailableException::class);
+        $provider->get_kzt_per_token('USDC');
+    }
+
+    public function test_провайдер_не_подставляет_устаревший_курс(): void
+    {
+        // Устаревший курс хуже явной ошибки: продавец получит деньги
+        // неизвестно по какой цене и не узнает об этом.
+        $cache = new ArrayCache();
+        $flaky = new class implements RateSource {
+            public bool $fail = false;
+            public function get_name(): string { return 'binance'; }
+            public function get_kzt_per_token(string $token): string
+            {
+                if ($this->fail) { throw new RuntimeException('упал'); }
+
+                return '459.60000000';
+            }
+        };
+
+        $provider = new RateProvider([$flaky], $cache, 60);
+        $provider->get_kzt_per_token('USDC');
+
+        $flaky->fail = true;
+        $cache->now += 120; // кеш истёк
+
+        $this->expectException(RateUnavailableException::class);
+        $provider->get_kzt_per_token('USDC');
+    }
+
+    public function test_провайдер_кеширует_успешный_ответ(): void
+    {
+        $counting = new class implements RateSource {
+            public int $calls = 0;
+            public function get_name(): string { return 'binance'; }
+            public function get_kzt_per_token(string $token): string
+            {
+                $this->calls++;
+
+                return '459.60000000';
+            }
+        };
+
+        $provider = new RateProvider([$counting], new ArrayCache(), 60);
+        $provider->get_kzt_per_token('USDC');
+        $provider->get_kzt_per_token('USDC');
+
+        self::assertSame(1, $counting->calls);
+    }
+
+    public function test_провайдер_не_кеширует_ошибку(): void
+    {
+        // Закешированная ошибка означала бы, что после единственного сбоя
+        // биржи заказы падают до истечения срока, хотя биржа уже ожила.
+        $cache = new ArrayCache();
+        $flaky = new class implements RateSource {
+            public int $calls = 0;
+            public function get_name(): string { return 'binance'; }
+            public function get_kzt_per_token(string $token): string
+            {
+                $this->calls++;
+                if ($this->calls === 1) { throw new RuntimeException('первый раз упал'); }
+
+                return '459.60000000';
+            }
+        };
+
+        $provider = new RateProvider([$flaky], $cache, 60);
+
+        try { $provider->get_kzt_per_token('USDC'); } catch (RateUnavailableException) { }
+
+        self::assertSame('459.60000000', $provider->get_kzt_per_token('USDC')['rate']);
+    }
+
+    public function test_провайдер_кеширует_токены_раздельно(): void
+    {
+        $counting = new class implements RateSource {
+            /** @var list<string> */
+            public array $tokens = [];
+            public function get_name(): string { return 'binance'; }
+            public function get_kzt_per_token(string $token): string
+            {
+                $this->tokens[] = $token;
+
+                return $token === 'USDC' ? '459.60000000' : '47752.44000000';
+            }
+        };
+
+        $provider = new RateProvider([$counting], new ArrayCache(), 60);
+        $provider->get_kzt_per_token('USDC');
+        $provider->get_kzt_per_token('SOL');
+        $provider->get_kzt_per_token('USDC');
+
+        self::assertSame(['USDC', 'SOL'], $counting->tokens);
+    }
+
+    private function source(string $name, string $rate): RateSource
+    {
+        return new class($name, $rate) implements RateSource {
+            public function __construct(private string $name, private string $rate) {}
+            public function get_name(): string { return $this->name; }
+            public function get_kzt_per_token(string $token): string { return $this->rate; }
+        };
+    }
+
+    private function failing_source(string $name): RateSource
+    {
+        return new class($name) implements RateSource {
+            public function __construct(private string $name) {}
+            public function get_name(): string { return $this->name; }
+            public function get_kzt_per_token(string $token): string
+            {
+                throw new RpcException('источник недоступен');
+            }
+        };
+    }
+}
+```
+
+- [ ] **Шаг 3: Запустить тест и убедиться, что падает**
+
+Запустить: `docker exec -w /var/www/html/wp-content/plugins/solanapaykz solanapaykz_shop php vendor/bin/phpunit --filter RatesTest`
+Ожидается: FAIL — классов нет.
+
+- [ ] **Шаг 4: Добавить получение по HTTP в интерфейс клиента**
+
+Курс запрашивается методом GET, а существующий `HttpClient` умеет только POST.
+Добавить в `includes/HttpClient.php` метод в интерфейс:
+
+```php
+    /**
+     * @return array<string, mixed> Разобранный JSON-ответ.
+     */
+    public function get_json(string $url, int $timeout_seconds): array;
+```
+
+И реализовать в `includes/CurlHttpClient.php`, рядом с `post_json`:
+
+```php
+    public function get_json(string $url, int $timeout_seconds): array
+    {
+        return $this->request($url, null, $timeout_seconds);
+    }
+```
+
+Общую часть `post_json` и `get_json` вынести в приватный `request()`: он
+принимает `?array $payload` и при `null` не ставит `CURLOPT_POST`. Тело
+метода `post_json` становится `return $this->request($url, $payload, $timeout_seconds);`.
+
+Там же добавить в набор опций curl заголовок с названием клиента:
+
+```php
+    /** Представляемся: сервер вправе знать, кто к нему обращается. */
+    private const USER_AGENT = 'SolanaPayKZ-WooCommerce/0.1 (+https://github.com/Tatancloud/solanapaykz)';
+```
+
+и `CURLOPT_USERAGENT => self::USER_AGENT` в массиве опций. **Без этого
+резервный источник курса не работает:** CoinGecko отвечает 403 на запрос без
+такого заголовка. Проверено — тот же запрос с заголовком возвращает 200.
+
+Заголовок `Content-Type: application/json` перенести внутрь ветки для POST:
+на запросе методом GET он бессмыслен.
+
+**И обязательно:** добавление метода в интерфейс `HttpClient` ломает
+существующий тест задачи 3 — его `FakeHttpClient` реализует только
+`post_json` и перестаёт удовлетворять интерфейсу. В `tests/RpcTest.php`
+добавить в `FakeHttpClient` метод `get_json`, бросающий исключение с
+пояснением, что клиент блокчейна ходит только методом POST. Проверено:
+без этой правки весь набор падает с фатальной ошибкой.
+
+- [ ] **Шаг 5: Реализовать исключение и интерфейсы**
+
+```php
+<?php
+// demo-shop/plugin/includes/RateUnavailableException.php
+
+declare(strict_types=1);
+
+namespace SolanaPayKZ;
+
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+use RuntimeException;
+
+/** Ни один источник курса не ответил. */
+final class RateUnavailableException extends RuntimeException
+{
+}
+```
+
+```php
+<?php
+// demo-shop/plugin/includes/RateSource.php
+
+declare(strict_types=1);
+
+namespace SolanaPayKZ;
+
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+/** Источник курса. Возвращает, сколько тенге стоит один токен. */
+interface RateSource
+{
+    /** Короткое имя для записи в заказ — по нему разбирают спорные случаи. */
+    public function get_name(): string;
+
+    /** @return string Курс десятичной строкой. */
+    public function get_kzt_per_token(string $token): string;
+}
+```
+
+```php
+<?php
+// demo-shop/plugin/includes/Cache.php
+
+declare(strict_types=1);
+
+namespace SolanaPayKZ;
+
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+/**
+ * Хранилище с ограниченным сроком жизни.
+ *
+ * Вынесено в интерфейс, потому что транзиенты WordPress недоступны в тестах,
+ * а набор обязан работать без поднятия WordPress.
+ */
+interface Cache
+{
+    public function get(string $key): ?string;
+
+    public function set(string $key, string $value, int $ttl_seconds): void;
+}
+```
+
+```php
+<?php
+// demo-shop/plugin/includes/TransientCache.php
+
+declare(strict_types=1);
+
+namespace SolanaPayKZ;
+
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+/** Кеш поверх транзиентов WordPress. */
+final class TransientCache implements Cache
+{
+    private const PREFIX = 'solanapaykz_';
+
+    public function get(string $key): ?string
+    {
+        $value = get_transient(self::PREFIX . $key);
+
+        return is_string($value) ? $value : null;
+    }
+
+    public function set(string $key, string $value, int $ttl_seconds): void
+    {
+        set_transient(self::PREFIX . $key, $value, $ttl_seconds);
+    }
+}
+```
+
+- [ ] **Шаг 6: Реализовать источник Binance**
+
+```php
+<?php
+// demo-shop/plugin/includes/BinanceRateSource.php
+
+declare(strict_types=1);
+
+namespace SolanaPayKZ;
+
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+/**
+ * Основной источник курса.
+ *
+ * На бирже существует ровно одна пара с тенге — USDTKZT, поэтому курс токена
+ * собирается из двух тикеров: USDTKZT × USDCUSDT для USDC и USDTKZT × SOLUSDT
+ * для SOL. Пар KZTUSDC или KZTSOL не существует.
+ */
+final class BinanceRateSource implements RateSource
+{
+    private const ENDPOINT = 'https://api.binance.com/api/v3/ticker/price';
+
+    public function __construct(
+        private HttpClient $http,
+        private int $timeout_seconds = 10
+    ) {
+    }
+
+    public function get_name(): string
+    {
+        return 'binance';
+    }
+
+    public function get_kzt_per_token(string $token): string
+    {
+        $kzt_per_usdt  = $this->fetch_price('USDTKZT');
+        $usdt_per_token = $this->fetch_price($token === 'USDC' ? 'USDCUSDT' : 'SOLUSDT');
+
+        return Money::multiply_rates($kzt_per_usdt, $usdt_per_token);
+    }
+
+    private function fetch_price(string $symbol): string
+    {
+        $data = $this->http->get_json(self::ENDPOINT . '?symbol=' . $symbol, $this->timeout_seconds);
+        $price = $data['price'] ?? null;
+
+        // Формат проверяется тем же предикатом, что и в денежном модуле:
+        // иначе непригодное значение упадёт двумя слоями выше чужой ошибкой.
+        // Точность в bccomp обязательна: без неё сравниваются только целые
+        // части, и любая цена меньше единицы (а USDCUSDT колеблется около неё)
+        // будет принята за ноль и отвергнута. Проверено.
+        if (!is_string($price) || !Money::is_valid_decimal($price)
+            || bccomp($price, '0', Money::RATE_DECIMALS) <= 0
+        ) {
+            throw new RpcException(sprintf(
+                'Binance %s: непригодная цена %s.',
+                $symbol,
+                var_export($price, true)
+            ));
+        }
+
+        return $price;
+    }
+}
+```
+
+- [ ] **Шаг 7: Реализовать резервный источник**
+
+```php
+<?php
+// demo-shop/plugin/includes/SyntheticRateSource.php
+
+declare(strict_types=1);
+
+namespace SolanaPayKZ;
+
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+/**
+ * Резервный источник: курс доллара к тенге × цена токена в долларах.
+ *
+ * Прямой запрос цены в тенге у CoinGecko невозможен: тенге нет в списке его
+ * валют, а на такой запрос он отвечает HTTP 200 и пустым объектом. Принять
+ * это за ответ — значит выставить покупателю счёт на ноль.
+ *
+ * Курс доллара берётся у агрегатора и обновляется раз в сутки, поэтому его
+ * значение отличается от биржевого примерно на процент. Для резервного
+ * варианта это приемлемо, но должно быть названо в документации.
+ */
+final class SyntheticRateSource implements RateSource
+{
+    private const FX_ENDPOINT = 'https://open.er-api.com/v6/latest/USD';
+    private const PRICE_ENDPOINT = 'https://api.coingecko.com/api/v3/simple/price';
+
+    private const IDS = ['USDC' => 'usd-coin', 'SOL' => 'solana'];
+
+    public function __construct(
+        private HttpClient $http,
+        private int $timeout_seconds = 10
+    ) {
+    }
+
+    public function get_name(): string
+    {
+        return 'synthetic';
+    }
+
+    public function get_kzt_per_token(string $token): string
+    {
+        return Money::multiply_rates($this->fetch_kzt_per_usd(), $this->fetch_usd_per_token($token));
+    }
+
+    private function fetch_kzt_per_usd(): string
+    {
+        $data = $this->http->get_json(self::FX_ENDPOINT, $this->timeout_seconds);
+
+        if (($data['result'] ?? null) !== 'success') {
+            throw new RpcException('Курс валют: ответ без признака успеха.');
+        }
+
+        $rates = $data['rates'] ?? null;
+
+        return $this->to_rate(
+            is_array($rates) ? ($rates['KZT'] ?? null) : null,
+            'Курс валют: в ответе нет тенге'
+        );
+    }
+
+    private function fetch_usd_per_token(string $token): string
+    {
+        $id = self::IDS[$token] ?? null;
+
+        if ($id === null) {
+            throw new RpcException(sprintf('Неизвестный токен %s.', $token));
+        }
+
+        $url = self::PRICE_ENDPOINT . '?ids=' . $id . '&vs_currencies=usd';
+        $data = $this->http->get_json($url, $this->timeout_seconds);
+        $entry = $data[$id] ?? null;
+
+        return $this->to_rate(
+            is_array($entry) ? ($entry['usd'] ?? null) : null,
+            sprintf('CoinGecko: нет цены для %s', $id)
+        );
+    }
+
+    /**
+     * Приводит число к строке курса, отвергая всё непригодное.
+     *
+     * Проверяется не только исходное число, но и результат форматирования:
+     * очень большое значение даёт экспоненциальную запись, очень маленькое
+     * округляется до нулей — и то, и другое непригодно как курс.
+     */
+    private function to_rate(mixed $value, string $error_message): string
+    {
+        if (!is_int($value) && !is_float($value)) {
+            throw new RpcException(sprintf('%s (получено %s).', $error_message, var_export($value, true)));
+        }
+
+        if (!is_finite((float) $value) || $value <= 0) {
+            throw new RpcException(sprintf('%s (непригодное значение %s).', $error_message, var_export($value, true)));
+        }
+
+        $formatted = number_format((float) $value, Money::RATE_DECIMALS, '.', '');
+
+        // Точность обязательна по той же причине, что и в источнике Binance:
+        // цена USDC к доллару меньше единицы, и сравнение по целым частям
+        // отвергло бы её как нулевую.
+        if (!Money::is_valid_decimal($formatted) || bccomp($formatted, '0', Money::RATE_DECIMALS) <= 0) {
+            throw new RpcException(sprintf('%s (после форматирования получилось %s).', $error_message, $formatted));
+        }
+
+        return $formatted;
+    }
+}
+```
+
+- [ ] **Шаг 8: Реализовать провайдер с фолбэком и кешем**
+
+```php
+<?php
+// demo-shop/plugin/includes/RateProvider.php
+
+declare(strict_types=1);
+
+namespace SolanaPayKZ;
+
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+use Throwable;
+
+/**
+ * Опрашивает источники по порядку и отдаёт первый успешный ответ.
+ *
+ * Устаревший курс не подставляется никогда: если все источники недоступны,
+ * вызывающая сторона получает ошибку. Продавец, получивший деньги по
+ * неизвестному курсу, — хуже продавца, увидевшего явный отказ.
+ */
+final class RateProvider
+{
+    /** @param list<RateSource> $sources Порядок задаёт приоритет. */
+    public function __construct(
+        private array $sources,
+        private Cache $cache,
+        private int $cache_ttl_seconds
+    ) {
+    }
+
+    /** @return array{rate: string, source: string} */
+    public function get_kzt_per_token(string $token): array
+    {
+        $key = 'rate_' . $token;
+        $cached = $this->cache->get($key);
+
+        if ($cached !== null) {
+            $parts = explode('|', $cached, 2);
+
+            if (count($parts) === 2 && Money::is_valid_decimal($parts[0])) {
+                return ['rate' => $parts[0], 'source' => $parts[1]];
+            }
+        }
+
+        $failures = [];
+
+        foreach ($this->sources as $source) {
+            try {
+                $rate = $source->get_kzt_per_token($token);
+            } catch (Throwable $error) {
+                // Ловим любую ошибку, а не только свою: контракт источников
+                // держится на дисциплине, и его нарушение не должно ронять заказ.
+                $failures[] = $source->get_name() . ': ' . $error->getMessage();
+                continue;
+            }
+
+            if ($this->cache_ttl_seconds > 0) {
+                $this->cache->set($key, $rate . '|' . $source->get_name(), $this->cache_ttl_seconds);
+            }
+
+            return ['rate' => $rate, 'source' => $source->get_name()];
+        }
+
+        throw new RateUnavailableException(
+            'Ни один источник курса не ответил. ' . implode('; ', $failures)
+        );
+    }
+}
+```
+
+- [ ] **Шаг 9: Подключить в точке входа**
+
+В `solanapaykz.php` после `Verify.php` добавить в этом порядке:
+
+```php
+require_once __DIR__ . '/includes/RateUnavailableException.php';
+require_once __DIR__ . '/includes/RateSource.php';
+require_once __DIR__ . '/includes/Cache.php';
+require_once __DIR__ . '/includes/TransientCache.php';
+require_once __DIR__ . '/includes/BinanceRateSource.php';
+require_once __DIR__ . '/includes/SyntheticRateSource.php';
+require_once __DIR__ . '/includes/RateProvider.php';
+```
+
+- [ ] **Шаг 10: Запустить тесты**
+
+Запустить: `docker exec -w /var/www/html/wp-content/plugins/solanapaykz solanapaykz_shop php vendor/bin/phpunit`
+Ожидается: PASS, 57 прежних тестов плюс новые.
+
+- [ ] **Шаг 11: Проверить на живых биржах**
+
+```bash
+docker exec solanapaykz_shop php -r '
+define("ABSPATH", "/tmp/");
+$b = "/var/www/html/wp-content/plugins/solanapaykz/includes/";
+foreach (["Money","RpcException","HttpClient","CurlHttpClient","RateUnavailableException","RateSource","BinanceRateSource","SyntheticRateSource"] as $c) require $b . $c . ".php";
+$http = new SolanaPayKZ\CurlHttpClient();
+printf("Binance USDC:   %s\n", (new SolanaPayKZ\BinanceRateSource($http))->get_kzt_per_token("USDC"));
+printf("синтетика USDC: %s\n", (new SolanaPayKZ\SyntheticRateSource($http))->get_kzt_per_token("USDC"));
+'
+```
+Ожидается: два курса около 455-460 ₸, отличающиеся примерно на процент.
+
+- [ ] **Шаг 12: Коммит и пуш**
+
+```bash
+cd /var/www/solanapaykz
+git add -A
+git commit -m "feat: курс тенге к токену с резервным источником"
+git push -u origin feat/wc-rates
+```
+
+---
+
+## Задачи 6-9
+
+Расписываются после ревью задачи 5 — тем же порядком и по той же причине,
+что задачи 5-9 не были расписаны до ревью первых четырёх: каждая опирается на
+интерфейсы предыдущей, а ревью их меняет. За четыре закрытые задачи ревью
+изменило интерфейсы трижды.
+
+Их содержание задано спекой:
+
+- **Задача 6. Котировка.** Срок жизни 15 минут, наценка продавца, сумма и курс
+  фиксируются в момент создания. Хранится в метаданных заказа и проверяется
+  заново при каждом чтении: приходит из базы, то есть извне.
+- **Задача 7. Платёжный запрос.** Метка платежа — 32 случайных байта,
+  закодированных в base58 (встроенного кодировщика в PHP нет, пишем сами на
+  bcmath; проверка алгоритма: 32 нулевых байта дают известный адрес
+  `11111111111111111111111111111111`). Ссылка Solana Pay по спецификации,
+  без создания пары ключей.
+- **Задача 8. Платёжный шлюз.** Класс, наследующий `WC_Payment_Gateway`,
+  регистрация через фильтр `woocommerce_payment_gateways`, настройки продавца,
+  `process_payment`, отображение QR на странице «Спасибо за заказ».
+- **Задача 9. Опрос и жизненный цикл заказа.** AJAX-эндпоинт для страницы
+  оплаты, опрос из браузера каждые 5 секунд, WP-Cron каждые 5 минут, отмена
+  через 15 минут, проверка отменённых ещё сутки, уведомление продавцу о
+  позднем платеже.
 
 ## Самопроверка плана
 
