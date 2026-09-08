@@ -30,23 +30,35 @@ if (!defined('ABSPATH')) {
  * и не перезаписывает ничего, а $wpdb->query() честно возвращает 0
  * задетых строк — выигрывает ровно один процесс, кто бы что ни проверял
  * до этого.
+ *
+ * Значение лока несёт токен владельца и срок истечения (`токен|expires_at`).
+ * Токен обязателен: без него release() удалял бы строку по одному только
+ * имени, не проверяя, что удаляет именно свою запись. Если держатель
+ * превысит TTL (запрос к узлу — 10 секунд, плюс payment_complete(), плюс
+ * синхронная отправка писем — это реально), сосед перехватит лок, а
+ * release() первого процесса без токена снял бы уже чужой, свежий лок —
+ * внутрь вошли бы двое. С токеном release() удаляет строку только тогда,
+ * когда её значение всё ещё начинается с его собственного токена.
  */
 final class OrderLock
 {
     private const TTL_SECONDS = 30;
 
     /**
-     * Занять лок. Возвращает false, если лок уже держит другой процесс —
-     * это следует читать как «ждём», а не как ошибку.
+     * Занять лок. Возвращает токен владельца, который затем обязателен
+     * для release(), либо null, если лок уже держит другой процесс — это
+     * следует читать как «ждём», а не как ошибку.
      */
-    public static function acquire(int $order_id): bool
+    public static function acquire(int $order_id): ?string
     {
         global $wpdb;
 
         $key = self::option_name($order_id);
+        $token = bin2hex(random_bytes(16));
+        $value = self::encode($token, time() + self::TTL_SECONDS);
 
-        if (self::insert_if_absent($key, time() + self::TTL_SECONDS)) {
-            return true;
+        if (self::insert_if_absent($key, $value)) {
+            return $token;
         }
 
         // Лок уже существует. Если он старше TTL — предыдущий процесс не
@@ -57,13 +69,14 @@ final class OrderLock
         // остальные получат 0 задетых строк на этом же запросе и не пойдут
         // дальше вставлять новый лок.
         $deleted = $wpdb->query($wpdb->prepare(
-            "DELETE FROM {$wpdb->options} WHERE option_name = %s AND CAST(option_value AS UNSIGNED) < %d",
+            "DELETE FROM {$wpdb->options} WHERE option_name = %s"
+            . " AND CAST(SUBSTRING_INDEX(option_value, '|', -1) AS UNSIGNED) < %d",
             $key,
             time()
         ));
 
         if ((int) $deleted !== 1) {
-            return false;
+            return null;
         }
 
         self::forget_cache($key);
@@ -71,28 +84,42 @@ final class OrderLock
         // Забрать лок повторной вставкой может снова не тот же процесс,
         // который его удалил (в теории), но это ничего не портит: важна
         // только атомарность самой вставки, а не то, кто именно её выиграл.
-        return self::insert_if_absent($key, time() + self::TTL_SECONDS);
+        return self::insert_if_absent($key, $value) ? $token : null;
     }
 
-    /** Снимать строго в finally: и на успешном пути, и на исключении. */
-    public static function release(int $order_id): void
+    /**
+     * Снимать строго в finally: и на успешном пути, и на исключении.
+     * Удаляет запись, только если она всё ещё несёт этот же токен —
+     * просроченный и уже перехваченный кем-то лок этим вызовом не тронуть.
+     */
+    public static function release(int $order_id, string $token): void
     {
         global $wpdb;
 
         $key = self::option_name($order_id);
 
-        $wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->options} WHERE option_name = %s", $key));
+        $wpdb->query($wpdb->prepare(
+            "DELETE FROM {$wpdb->options} WHERE option_name = %s AND option_value LIKE %s",
+            $key,
+            $wpdb->esc_like($token) . '|%'
+        ));
+
         self::forget_cache($key);
     }
 
-    private static function insert_if_absent(string $key, int $expires_at): bool
+    private static function encode(string $token, int $expires_at): string
+    {
+        return $token . '|' . $expires_at;
+    }
+
+    private static function insert_if_absent(string $key, string $value): bool
     {
         global $wpdb;
 
         $inserted = $wpdb->query($wpdb->prepare(
             "INSERT IGNORE INTO {$wpdb->options} (option_name, option_value, autoload) VALUES (%s, %s, 'no')",
             $key,
-            (string) $expires_at
+            $value
         ));
 
         $won = 1 === (int) $inserted;

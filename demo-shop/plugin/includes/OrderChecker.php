@@ -65,7 +65,9 @@ final class OrderChecker
             return ['status' => 'error', 'message' => 'Данные оплаты не найдены.', 'mutated' => true];
         }
 
-        if (!OrderLock::acquire($order_id)) {
+        $lock_token = OrderLock::acquire($order_id);
+
+        if ($lock_token === null) {
             // Другой процесс (браузерный опрос или крон) уже проверяет этот
             // заказ прямо сейчас. Это не ошибка — оба процесса опрашивают
             // независимо, и без лока оба могли бы дойти до payment_complete()
@@ -97,7 +99,7 @@ final class OrderChecker
             }
 
             try {
-                $token = Tokens::resolve($quote->cluster, $quote->token);
+                $token_info = Tokens::resolve($quote->cluster, $quote->token);
                 $verify = new Verify(new Rpc((string) $settings['rpc_url']));
                 $result = $verify->check(
                     $reference,
@@ -106,8 +108,8 @@ final class OrderChecker
                     // Verify искать SPL-токен с пустым адресом минта,
                     // которого не существует ни в одной транзакции —
                     // платежи в нативном SOL никогда бы не засчитывались.
-                    $token['mint'],
-                    Money::parse_decimal_to_units($quote->amount_token, $token['decimals'])
+                    $token_info['mint'],
+                    Money::parse_decimal_to_units($quote->amount_token, $token_info['decimals'])
                 );
             } catch (Throwable $error) {
                 // Сбой связи с узлом — не ответ о платеже. Заказ не трогаем,
@@ -150,7 +152,7 @@ final class OrderChecker
 
             return $this->apply($fresh_order, $decision, $result);
         } finally {
-            OrderLock::release($order_id);
+            OrderLock::release($order_id, $lock_token);
         }
     }
 
