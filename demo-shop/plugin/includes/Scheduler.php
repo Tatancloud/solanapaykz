@@ -122,11 +122,14 @@ final class Scheduler
      * обнулялся, а предупреждение о зависшей подстраховке не сработало ни
      * разу.
      *
-     * @param array{status: string, message: string, mutated: bool} $result
+     * @param array{status: string, message: string, mutated?: bool} $result
      */
     private static function mutated(array $result): bool
     {
-        return $result['mutated'];
+        // Голое обращение к ключу при strict_types и возвращаемом bool
+        // превратило бы забытый в какой-нибудь будущей ветке ключ 'mutated'
+        // в фатальную ошибку вместо честного «изменений не было».
+        return $result['mutated'] ?? false;
     }
 
     /** @return list<WC_Order> */

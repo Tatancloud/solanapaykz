@@ -55,6 +55,11 @@ final class Ajax
             'cluster' => $gateway->get_option('cluster', 'devnet'),
         ]);
 
+        // 'mutated' — служебный признак для Scheduler (см. там же), а не
+        // для браузера: наружу нужны только status и message. Безвредно
+        // оставлять как есть, но незачем и передавать лишнее наружу.
+        unset($result['mutated']);
+
         wp_send_json_success($result);
     }
 }

@@ -51,7 +51,8 @@
 
 .solanapaykz__status--expired,
 .solanapaykz__status--mismatch,
-.solanapaykz__status--late {
+.solanapaykz__status--late,
+.solanapaykz__status--error {
     background: #fdeaea;
     color: #a12622;
 }
