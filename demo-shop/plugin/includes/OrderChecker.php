@@ -66,6 +66,21 @@ final class OrderChecker
             $reference = OrderMeta::read_reference($order);
             $recipient = OrderMeta::read_recipient($order);
 
+            if ($quote === null && OrderMeta::quote_format_is_unknown($order)) {
+                // Формат котировки не испорчен — он новее, чем понимает эта
+                // версия плагина: заказ выпущен более новой сборкой (например,
+                // после отката плагина на сервере). Это не повод проваливать
+                // заказ: не трогаем его и ждём — либо обновления плагина, либо
+                // ручного разбора продавцом.
+                error_log(sprintf(
+                    'SolanaPay-KZ: заказ %d — формат котировки не распознан этой версией плагина,'
+                    . ' автоматическая проверка отложена.',
+                    $order_id
+                ));
+
+                return ['status' => 'unknown', 'message' => self::UNAVAILABLE_MESSAGE, 'mutated' => false];
+            }
+
             if ($quote === null || $reference === null || $recipient === null) {
                 // Заказ с испорченными или отсутствующими данными оплаты через
                 // наш шлюз оплатить нельзя никогда. Статус — failed, а не

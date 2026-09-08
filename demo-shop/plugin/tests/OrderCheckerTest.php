@@ -290,4 +290,57 @@ final class OrderCheckerTest extends TestCase
         self::assertSame('pending', $result['status']);
         self::assertFalse($result['mutated']);
     }
+
+    public function test_неизвестный_формат_котировки_не_проваливает_заказ(): void
+    {
+        // Заказ выпущен более новой сборкой плагина (например, после отката
+        // сервера на прежнюю версию) — поле версии есть, но значение не то,
+        // что понимает текущий код. Это не порча данных: заказ должен
+        // остаться нетронутым, а не уехать в failed вместе со всей пачкой
+        // таких заказов.
+        $quote = $this->quote('mainnet');
+        $data = $quote->to_array();
+        $data['format_version'] = Quote::FORMAT_VERSION + 1;
+
+        $order = new WC_Order(3, 'pending');
+        $order->set_meta_for_test(OrderMeta::QUOTE, json_encode($data));
+        $order->set_meta_for_test(OrderMeta::REFERENCE, 'МеткаПлатежа');
+        $order->set_meta_for_test(OrderMeta::RECIPIENT, 'АдресПродавца');
+
+        $checker = new OrderChecker();
+        $result = $checker->check($order, [
+            'cluster' => 'mainnet',
+            'rpc_url' => 'https://rpc.example',
+            'late_window' => 86400,
+        ]);
+
+        self::assertSame('unknown', $result['status']);
+        self::assertFalse($result['mutated']);
+        self::assertSame(
+            'pending',
+            $order->get_status(),
+            'Неизвестный формат котировки не должен проваливать заказ.'
+        );
+    }
+
+    public function test_испорченная_котировка_проваливает_заказ(): void
+    {
+        // Регресс-тест на ветку рядом: неизвестный формат (проверено выше)
+        // и настоящая порча данных не должны схлопнуться в одно поведение.
+        $order = new WC_Order(4, 'pending');
+        $order->set_meta_for_test(OrderMeta::QUOTE, 'это не json вовсе');
+        $order->set_meta_for_test(OrderMeta::REFERENCE, 'МеткаПлатежа');
+        $order->set_meta_for_test(OrderMeta::RECIPIENT, 'АдресПродавца');
+
+        $checker = new OrderChecker();
+        $result = $checker->check($order, [
+            'cluster' => 'mainnet',
+            'rpc_url' => 'https://rpc.example',
+            'late_window' => 86400,
+        ]);
+
+        self::assertSame('error', $result['status']);
+        self::assertTrue($result['mutated']);
+        self::assertSame('failed', $order->get_status());
+    }
 }
