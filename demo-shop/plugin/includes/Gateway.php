@@ -306,10 +306,17 @@ final class Gateway extends WC_Payment_Gateway
             true
         );
 
-        // wp_localize_script() приводит все значения к строкам — expiresAt
+        // wp_localize_script() приводит все значения к строкам — secondsLeft
         // и intervalMs в JS оказывались строками, и арифметика таймера
         // держалась на неявном приведении типов. wp_add_inline_script() с
         // wp_json_encode() отдаёт настоящие числа.
+        //
+        // Браузер получает оставшиеся секунды, а не абсолютный expires_at:
+        // отсчёт по часам покупателя от абсолютного времени истечения на
+        // сбитых часах (частый случай на телефоне — часовой пояс, севшая
+        // батарейка) сразу показывал бы «срок истёк» на живой ещё котировке
+        // или наоборот. Секунды, отсчитываемые локально от момента загрузки
+        // страницы (см. checkout.js), от показаний часов уже не зависят.
         wp_add_inline_script(
             'solanapaykz-checkout',
             'var solanapaykzData = ' . wp_json_encode([
@@ -318,7 +325,7 @@ final class Gateway extends WC_Payment_Gateway
                 'action' => Ajax::ACTION,
                 'orderId' => $order->get_id(),
                 'orderKey' => $order->get_order_key(),
-                'expiresAt' => $quote->expires_at,
+                'secondsLeft' => max(0, $quote->expires_at - time()),
                 'intervalMs' => 5000,
             ]) . ';',
             'before'
