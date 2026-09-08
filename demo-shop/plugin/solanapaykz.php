@@ -23,6 +23,11 @@ const PLUGIN_DIR  = __DIR__;
 
 require_once __DIR__ . '/includes/Environment.php';
 require_once __DIR__ . '/includes/Money.php';
+require_once __DIR__ . '/includes/RpcException.php';
+require_once __DIR__ . '/includes/SolanaChain.php';
+require_once __DIR__ . '/includes/HttpClient.php';
+require_once __DIR__ . '/includes/CurlHttpClient.php';
+require_once __DIR__ . '/includes/Rpc.php';
 
 const REQUIREMENTS = [
     'php' => '8.1',
