@@ -13,7 +13,20 @@ use JsonException;
 
 final class CurlHttpClient implements HttpClient
 {
+    /** Представляемся: сервер вправе знать, кто к нему обращается. */
+    private const USER_AGENT = 'SolanaPayKZ-WooCommerce/0.1 (+https://github.com/Tatancloud/solanapaykz)';
+
     public function post_json(string $url, array $payload, int $timeout_seconds): array
+    {
+        return $this->request($url, $payload, $timeout_seconds);
+    }
+
+    public function get_json(string $url, int $timeout_seconds): array
+    {
+        return $this->request($url, null, $timeout_seconds);
+    }
+
+    private function request(string $url, ?array $payload, int $timeout_seconds): array
     {
         $handle = curl_init($url);
 
@@ -22,19 +35,25 @@ final class CurlHttpClient implements HttpClient
         }
 
         try {
-            $json_payload = json_encode($payload, JSON_THROW_ON_ERROR);
+            $json_payload = $payload !== null ? json_encode($payload, JSON_THROW_ON_ERROR) : null;
         } catch (JsonException $e) {
             throw new RpcException(sprintf('%s: не удалось закодировать параметры запроса (%s).', $url, $e->getMessage()));
         }
 
-        curl_setopt_array($handle, [
+        $options = [
             CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_POST           => true,
-            CURLOPT_POSTFIELDS     => $json_payload,
-            CURLOPT_HTTPHEADER     => ['Content-Type: application/json'],
             CURLOPT_TIMEOUT        => $timeout_seconds,
             CURLOPT_CONNECTTIMEOUT => $timeout_seconds,
-        ]);
+            CURLOPT_USERAGENT      => self::USER_AGENT,
+        ];
+
+        if ($payload !== null) {
+            $options[CURLOPT_POST]       = true;
+            $options[CURLOPT_POSTFIELDS] = $json_payload;
+            $options[CURLOPT_HTTPHEADER] = ['Content-Type: application/json'];
+        }
+
+        curl_setopt_array($handle, $options);
 
         $body   = curl_exec($handle);
         $errno  = curl_errno($handle);

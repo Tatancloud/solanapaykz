@@ -33,6 +33,11 @@ final class FakeHttpClient implements HttpClient
 
         return $next;
     }
+
+    public function get_json(string $url, int $timeout_seconds): array
+    {
+        throw new RpcException('Клиент блокчейна ходит только методом POST.');
+    }
 }
 
 final class RpcTest extends TestCase
