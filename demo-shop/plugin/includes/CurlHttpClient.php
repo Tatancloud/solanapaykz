@@ -9,6 +9,8 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
+use JsonException;
+
 final class CurlHttpClient implements HttpClient
 {
     public function post_json(string $url, array $payload, int $timeout_seconds): array
@@ -19,10 +21,16 @@ final class CurlHttpClient implements HttpClient
             throw new RpcException('Не удалось инициализировать curl.');
         }
 
+        try {
+            $json_payload = json_encode($payload, JSON_THROW_ON_ERROR);
+        } catch (JsonException $e) {
+            throw new RpcException(sprintf('%s: не удалось закодировать параметры запроса (%s).', $url, $e->getMessage()));
+        }
+
         curl_setopt_array($handle, [
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_POST           => true,
-            CURLOPT_POSTFIELDS     => json_encode($payload, JSON_THROW_ON_ERROR),
+            CURLOPT_POSTFIELDS     => $json_payload,
             CURLOPT_HTTPHEADER     => ['Content-Type: application/json'],
             CURLOPT_TIMEOUT        => $timeout_seconds,
             CURLOPT_CONNECTTIMEOUT => $timeout_seconds,

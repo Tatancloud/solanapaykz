@@ -94,4 +94,88 @@ final class RpcTest extends TestCase
         $this->expectException(RpcException::class);
         (new Rpc('https://rpc.example', 10, $http))->get_signatures_for_address('Метка');
     }
+
+    public function test_невалидный_utf8_в_метке_даёт_rpc_exception(): void
+    {
+        $http = new FakeHttpClient([
+            static function (): array {
+                throw new \JsonException('Malformed UTF-8 characters');
+            },
+        ]);
+
+        $this->expectException(RpcException::class);
+        (new Rpc('https://rpc.example', 10, $http))->get_signatures_for_address("Некорректный\xFF UTF-8");
+    }
+
+    public function test_подписи_не_array_даёт_ошибку(): void
+    {
+        $http = new FakeHttpClient([['result' => false]]);
+
+        $this->expectException(RpcException::class);
+        (new Rpc('https://rpc.example', 10, $http))->get_signatures_for_address('Метка');
+    }
+
+    public function test_подписи_ноль_даёт_ошибку(): void
+    {
+        $http = new FakeHttpClient([['result' => 0]]);
+
+        $this->expectException(RpcException::class);
+        (new Rpc('https://rpc.example', 10, $http))->get_signatures_for_address('Метка');
+    }
+
+    public function test_подписи_строка_даёт_ошибку(): void
+    {
+        $http = new FakeHttpClient([['result' => 'unexpected string']]);
+
+        $this->expectException(RpcException::class);
+        (new Rpc('https://rpc.example', 10, $http))->get_signatures_for_address('Метка');
+    }
+
+    public function test_транзакция_false_даёт_ошибку(): void
+    {
+        $http = new FakeHttpClient([['result' => false]]);
+
+        $this->expectException(RpcException::class);
+        (new Rpc('https://rpc.example', 10, $http))->get_transaction('подпись');
+    }
+
+    public function test_транзакция_ноль_даёт_ошибку(): void
+    {
+        $http = new FakeHttpClient([['result' => 0]]);
+
+        $this->expectException(RpcException::class);
+        (new Rpc('https://rpc.example', 10, $http))->get_transaction('подпись');
+    }
+
+    public function test_транзакция_строка_даёт_ошибку(): void
+    {
+        $http = new FakeHttpClient([['result' => 'unexpected string']]);
+
+        $this->expectException(RpcException::class);
+        (new Rpc('https://rpc.example', 10, $http))->get_transaction('подпись');
+    }
+
+    public function test_http_ошибка_даёт_rpc_exception(): void
+    {
+        $http = new FakeHttpClient([
+            static function (): void {
+                throw new RpcException('https://rpc.example: HTTP 500.');
+            },
+        ]);
+
+        $this->expectException(RpcException::class);
+        (new Rpc('https://rpc.example', 10, $http))->get_transaction('подпись');
+    }
+
+    public function test_невалидный_json_даёт_rpc_exception(): void
+    {
+        $http = new FakeHttpClient([
+            static function (): void {
+                throw new RpcException('https://rpc.example: ответ не является объектом JSON.');
+            },
+        ]);
+
+        $this->expectException(RpcException::class);
+        (new Rpc('https://rpc.example', 10, $http))->get_transaction('подпись');
+    }
 }

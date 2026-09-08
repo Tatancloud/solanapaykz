@@ -9,6 +9,8 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
+use JsonException;
+
 /**
  * Минимальный клиент Solana JSON-RPC.
  *
@@ -40,7 +42,14 @@ final class Rpc implements SolanaChain
             ['commitment' => 'finalized', 'limit' => $limit],
         ]);
 
-        return is_array($response) ? $response : [];
+        if (!is_array($response)) {
+            throw new RpcException(sprintf(
+                'Узел блокчейна вернул неожиданный формат ответа (ожидается массив): %s.',
+                gettype($response)
+            ));
+        }
+
+        return $response;
     }
 
     /**
@@ -59,7 +68,18 @@ final class Rpc implements SolanaChain
             ],
         ]);
 
-        return is_array($response) ? $response : null;
+        if ($response === null) {
+            return null;
+        }
+
+        if (!is_array($response)) {
+            throw new RpcException(sprintf(
+                'Узел блокчейна вернул неожиданный формат ответа (ожидается массив или null): %s.',
+                gettype($response)
+            ));
+        }
+
+        return $response;
     }
 
     /**
@@ -68,12 +88,16 @@ final class Rpc implements SolanaChain
      */
     private function call(string $method, array $params): mixed
     {
-        $decoded = $this->http->post_json($this->url, [
-            'jsonrpc' => '2.0',
-            'id' => 1,
-            'method' => $method,
-            'params' => $params,
-        ], $this->timeout_seconds);
+        try {
+            $decoded = $this->http->post_json($this->url, [
+                'jsonrpc' => '2.0',
+                'id' => 1,
+                'method' => $method,
+                'params' => $params,
+            ], $this->timeout_seconds);
+        } catch (JsonException $e) {
+            throw new RpcException(sprintf('%s: не удалось закодировать параметры запроса (%s).', $this->url, $e->getMessage()));
+        }
 
         if (isset($decoded['error'])) {
             $message = is_array($decoded['error']) && isset($decoded['error']['message'])
