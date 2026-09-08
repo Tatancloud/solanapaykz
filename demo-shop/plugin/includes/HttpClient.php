@@ -17,4 +17,9 @@ interface HttpClient
      * @return array<string, mixed> Разобранный JSON-ответ.
      */
     public function post_json(string $url, array $payload, int $timeout_seconds): array;
+
+    /**
+     * @return array<string, mixed> Разобранный JSON-ответ.
+     */
+    public function get_json(string $url, int $timeout_seconds): array;
 }

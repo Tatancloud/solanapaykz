@@ -29,6 +29,13 @@ require_once __DIR__ . '/includes/HttpClient.php';
 require_once __DIR__ . '/includes/CurlHttpClient.php';
 require_once __DIR__ . '/includes/Rpc.php';
 require_once __DIR__ . '/includes/Verify.php';
+require_once __DIR__ . '/includes/RateUnavailableException.php';
+require_once __DIR__ . '/includes/RateSource.php';
+require_once __DIR__ . '/includes/Cache.php';
+require_once __DIR__ . '/includes/TransientCache.php';
+require_once __DIR__ . '/includes/BinanceRateSource.php';
+require_once __DIR__ . '/includes/SyntheticRateSource.php';
+require_once __DIR__ . '/includes/RateProvider.php';
 
 const REQUIREMENTS = [
     'php' => '8.1',
