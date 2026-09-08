@@ -52,6 +52,7 @@ final class Ajax
         $result = (new OrderChecker())->check($order, [
             'rpc_url' => $gateway->get_option('rpc_url', ''),
             'late_window' => $gateway->get_option('late_window', '86400'),
+            'cluster' => $gateway->get_option('cluster', 'devnet'),
         ]);
 
         wp_send_json_success($result);

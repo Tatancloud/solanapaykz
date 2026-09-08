@@ -66,6 +66,7 @@ final class Scheduler
         $settings = [
             'rpc_url' => $gateway->get_option('rpc_url', ''),
             'late_window' => $late_window,
+            'cluster' => $gateway->get_option('cluster', 'devnet'),
         ];
 
         $checker = new OrderChecker();

@@ -57,6 +57,22 @@ final class OrderChecker
             return CustomerMessage::for_order_status($order->get_status());
         }
 
+        // rpc_url берётся из текущих настроек шлюза, а сеть проверки — из
+        // замороженной котировки заказа (иначе смена сети продавцом задним
+        // числом проверяла бы старый заказ не там, где реально был выпущен
+        // платёж). Если продавец переключил сеть в настройках уже после
+        // создания заказа, rpc_url и cluster заказа могут молча разойтись —
+        // это стоит записать в журнал, а не оставить незамеченным.
+        if (isset($settings['cluster']) && (string) $settings['cluster'] !== $quote->cluster) {
+            error_log(sprintf(
+                'SolanaPay-KZ: заказ %d — сеть в настройках («%s») отличается от сети котировки («%s»).'
+                . ' Проверка идёт по сети котировки, как и должна.',
+                $order_id,
+                (string) $settings['cluster'],
+                $quote->cluster
+            ));
+        }
+
         try {
             try {
                 $token = Tokens::resolve($quote->cluster, $quote->token);
@@ -120,7 +136,14 @@ final class OrderChecker
                 break;
 
             case 'cancel':
-                $order->update_status('cancelled', $decision['note']);
+                // PaymentDecision больше не выдаёт 'cancel' для заказа, уже
+                // ставшего cancelled (см. правку про список «действовать
+                // только на pending/cancelled»), но проверка здесь дёшева
+                // и избавляет от лишнего save() при заказе, отменённом уже
+                // другим путём в тот же момент.
+                if ($order->get_status() !== 'cancelled') {
+                    $order->update_status('cancelled', $decision['note']);
+                }
 
                 break;
 

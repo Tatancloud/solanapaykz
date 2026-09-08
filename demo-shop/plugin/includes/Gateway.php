@@ -281,15 +281,23 @@ final class Gateway extends WC_Payment_Gateway
             true
         );
 
-        wp_localize_script('solanapaykz-checkout', 'solanapaykzData', [
-            'url' => $request->url,
-            'ajaxUrl' => admin_url('admin-ajax.php'),
-            'action' => Ajax::ACTION,
-            'orderId' => $order->get_id(),
-            'orderKey' => $order->get_order_key(),
-            'expiresAt' => $quote->expires_at,
-            'intervalMs' => 5000,
-        ]);
+        // wp_localize_script() приводит все значения к строкам — expiresAt
+        // и intervalMs в JS оказывались строками, и арифметика таймера
+        // держалась на неявном приведении типов. wp_add_inline_script() с
+        // wp_json_encode() отдаёт настоящие числа.
+        wp_add_inline_script(
+            'solanapaykz-checkout',
+            'var solanapaykzData = ' . wp_json_encode([
+                'url' => $request->url,
+                'ajaxUrl' => admin_url('admin-ajax.php'),
+                'action' => Ajax::ACTION,
+                'orderId' => $order->get_id(),
+                'orderKey' => $order->get_order_key(),
+                'expiresAt' => $quote->expires_at,
+                'intervalMs' => 5000,
+            ]) . ';',
+            'before'
+        );
 
         ?>
         <section class="solanapaykz" id="solanapaykz">
