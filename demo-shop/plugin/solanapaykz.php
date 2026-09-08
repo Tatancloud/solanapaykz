@@ -146,11 +146,35 @@ add_action('plugins_loaded', static function (): void {
 });
 
 /**
- * Снимаем расписание при выключении плагина: иначе задача продолжит
- * пытаться выполниться на классах, которых уже нет в автозагрузке.
+ * Снимаем расписание при выключении плагина по литеральному имени
+ * события, без обращения к классу Scheduler: файл планировщика
+ * подключается только когда среда пригодна и WooCommerce активен
+ * (см. выше), а деактивация плагина случается и без этих условий —
+ * продавец выключил WooCommerce (обновление, переезд) или хостер
+ * выкатил PHP без bcmath. Если бы хук проверял class_exists(Scheduler),
+ * он в этих случаях отработал бы вхолостую, и задача осталась бы в
+ * расписании навсегда. Дубли снятие через unschedule_event() (как
+ * делал Scheduler::unregister()) не убирало бы — wp_clear_scheduled_hook()
+ * снимает все совпадающие записи разом.
+ *
+ * На сетевую деактивацию (network_wide) WordPress передаёт признак
+ * вторым аргументом хука deactivate_<plugin>: на каждом сайте сети своя
+ * запись расписания, и её тоже нужно снять — иначе после сетевой
+ * деактивации на всех сайтах, кроме текущего, задача продолжит
+ * висеть в расписании.
  */
-register_deactivation_hook(__FILE__, static function (): void {
-    if (class_exists(Scheduler::class)) {
-        Scheduler::unregister();
+register_deactivation_hook(__FILE__, static function (bool $network_deactivating): void {
+    if (is_multisite() && $network_deactivating) {
+        $site_ids = get_sites(['fields' => 'ids']);
+
+        foreach ($site_ids as $site_id) {
+            switch_to_blog((int) $site_id);
+            wp_clear_scheduled_hook('solanapaykz_check_orders');
+            restore_current_blog();
+        }
+
+        return;
     }
+
+    wp_clear_scheduled_hook('solanapaykz_check_orders');
 });
