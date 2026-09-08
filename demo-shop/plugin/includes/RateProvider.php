@@ -20,6 +20,29 @@ use Throwable;
  */
 final class RateProvider
 {
+    /**
+     * Максимальное отклонение свежего курса от последнего принятого значения
+     * того же токена, в процентах. Курс токена законно движется за минуты,
+     * но скачок больше пятой части — не рыночное движение, а признак того,
+     * что источник поменял базовую пару или отдал цену другого инструмента
+     * (см. RateSource::USD_KZT_MIN/MAX — там тот же принцип для курса
+     * доллара). Двадцать процентов с большим запасом переживают и то, что
+     * резервный источник обновляется раз в сутки и обычно даёт значение
+     * примерно на процент ниже биржевого.
+     */
+    private const MAX_DEVIATION_PERCENT = '20';
+
+    /**
+     * Срок памяти о последнем принятом курсе — для сверки, а не для показа
+     * покупателю: это не тот кеш, что $cache_ttl_seconds (обычно минута),
+     * а куда более долгая память, переживающая обычные перерывы в трафике
+     * магазина. Сутки — тот же срок, что и предельный TTL самой котировки
+     * (Quote::from_array()), с той же логикой: дольше — уже не «недавняя
+     * проверка», а решение, которое стоит доверить администратору, а не
+     * автоматике.
+     */
+    public const LAST_KNOWN_TTL_SECONDS = 86400;
+
     /** @param list<RateSource> $sources Порядок задаёт приоритет. */
     public function __construct(
         private array $sources,
@@ -51,6 +74,9 @@ final class RateProvider
             ));
         }
 
+        $last_known_key = 'rate_last_known_' . $token;
+        $last_known = $this->read_last_known($last_known_key);
+
         $failures = [];
 
         foreach ($this->sources as $source) {
@@ -70,9 +96,27 @@ final class RateProvider
                 continue;
             }
 
+            // Сверка с предыдущим принятым значением ловит то, что полоса
+            // правдоподобия внутри источников не видит: подмену пары или
+            // инструмента, которая всё ещё укладывается в 400–600 (например,
+            // источник molча вернул курс евро вместо доллара). Пропускаем
+            // сверку, если памяти ещё нет (первый запуск) или она устарела.
+            if ($last_known !== null && $this->deviates_too_much($rate, $last_known)) {
+                $failures[] = sprintf(
+                    '%s: курс %s отклоняется от последнего принятого значения %s больше чем на %s%%.',
+                    $source->get_name(),
+                    $rate,
+                    $last_known,
+                    self::MAX_DEVIATION_PERCENT
+                );
+                continue;
+            }
+
             if ($this->cache_ttl_seconds > 0) {
                 $this->cache->set($key, $rate . '|' . $source->get_name(), $this->cache_ttl_seconds);
             }
+
+            $this->cache->set($last_known_key, $rate, self::LAST_KNOWN_TTL_SECONDS);
 
             return ['rate' => $rate, 'source' => $source->get_name()];
         }
@@ -80,5 +124,32 @@ final class RateProvider
         throw new RateUnavailableException(
             'Ни один источник курса не ответил. ' . implode('; ', $failures)
         );
+    }
+
+    /** Читает память о последнем принятом курсе, отбрасывая повреждённую запись без падения. */
+    private function read_last_known(string $key): ?string
+    {
+        $value = $this->cache->get($key);
+
+        if ($value === null || !Money::is_valid_decimal($value) || bccomp($value, '0', Money::RATE_DECIMALS) <= 0) {
+            return null;
+        }
+
+        return $value;
+    }
+
+    /** Отклонение больше MAX_DEVIATION_PERCENT % от предыдущего значения — точной арифметикой bcmath. */
+    private function deviates_too_much(string $rate, string $previous): bool
+    {
+        $scale = Money::RATE_DECIMALS + 6;
+        $diff = bcsub($rate, $previous, $scale);
+
+        if (bccomp($diff, '0', $scale) < 0) {
+            $diff = bcmul($diff, '-1', $scale);
+        }
+
+        $threshold = bcmul($previous, bcdiv(self::MAX_DEVIATION_PERCENT, '100', $scale), $scale);
+
+        return bccomp($diff, $threshold, $scale) > 0;
     }
 }
