@@ -1,6 +1,4 @@
 <?php
-// demo-shop/plugin/includes/class-environment.php
-
 declare(strict_types=1);
 
 namespace SolanaPayKZ;
