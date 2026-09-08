@@ -23,12 +23,17 @@ final class Verify
     }
 
     /**
+     * @param ?string $mint Адрес монеты, либо null для нативного SOL —
+     *     признак «монета без минта» передаётся честно, а не подменяется
+     *     пустой строкой: пустая строка не встречается ни в одном токен-
+     *     балансе, поэтому такая подмена превращала бы любой нативный
+     *     перевод в вечный mismatch.
      * @return array{status: string, signature: ?string, reason: ?string, received_units: ?string}
      */
     public function check(
         string $reference,
         string $recipient,
-        string $mint,
+        ?string $mint,
         string $expected_units
     ): array {
         $signatures = $this->chain->get_signatures_for_address($reference);
@@ -77,7 +82,7 @@ final class Verify
         string $signature,
         string $reference,
         string $recipient,
-        string $mint,
+        ?string $mint,
         string $expected_units
     ): array {
         $meta = is_array($transaction['meta'] ?? null) ? $transaction['meta'] : [];
@@ -114,14 +119,20 @@ final class Verify
             return $this->result('mismatch', $signature, 'В транзакции нет метки платежа.');
         }
 
-        // 3 и 4. Ищем поступление нужного токена нужному получателю.
-        $received = $this->received_units($meta, $recipient, $mint);
+        // 3 и 4. Ищем поступление: для SPL-токена — по token-балансам, для
+        // нативного SOL (mint === null) — по разнице системных балансов
+        // на индексе получателя.
+        $received = $mint === null
+            ? $this->received_native_units($transaction, $meta, $recipient)
+            : $this->received_units($meta, $recipient, $mint);
 
         if ($received === null) {
             return $this->result(
                 'mismatch',
                 $signature,
-                'В транзакции нет перевода нужного токена нужному получателю.'
+                $mint === null
+                    ? 'В транзакции нет перевода SOL нужному получателю.'
+                    : 'В транзакции нет перевода нужного токена нужному получателю.'
             );
         }
 
@@ -134,6 +145,49 @@ final class Verify
         }
 
         return $this->result('confirmed', $signature, null, $received);
+    }
+
+    /**
+     * Сколько лампортов SOL поступило получателю.
+     *
+     * У нативного SOL нет token-балансов: сумма считается по разнице
+     * meta.preBalances/postBalances на индексе аккаунта получателя в общем
+     * списке ключей транзакции (account_keys() уже учитывает и
+     * версионированные транзакции с loadedAddresses). Получателя нет
+     * среди ключей, либо массивов балансов нет или они короче индекса —
+     * это mismatch, а не «перевода не было»: аномальный ответ узла нельзя
+     * молча принимать за отсутствие оплаты.
+     *
+     * @param array<string, mixed> $transaction
+     * @param array<string, mixed> $meta
+     */
+    private function received_native_units(array $transaction, array $meta, string $recipient): ?string
+    {
+        $index = array_search($recipient, $this->account_keys($transaction, $meta), true);
+
+        if ($index === false) {
+            return null;
+        }
+
+        $pre = $meta['preBalances'] ?? null;
+        $post = $meta['postBalances'] ?? null;
+
+        if (!is_array($pre) || !is_array($post)
+            || !array_key_exists($index, $pre) || !array_key_exists($index, $post)
+        ) {
+            return null;
+        }
+
+        $before = $pre[$index];
+        $after = $post[$index];
+
+        if ((!is_int($before) && !is_string($before)) || (!is_int($after) && !is_string($after))) {
+            return null;
+        }
+
+        $delta = bcsub((string) $after, (string) $before);
+
+        return bccomp($delta, '0') > 0 ? $delta : null;
     }
 
     /**

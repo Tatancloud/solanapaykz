@@ -34,15 +34,17 @@ final class OrderChecker
         }
 
         try {
+            $token = Tokens::resolve($quote->cluster, $quote->token);
             $verify = new Verify(new Rpc((string) $settings['rpc_url']));
             $result = $verify->check(
                 $reference,
                 $recipient,
-                (string) (Tokens::resolve($quote->cluster, $quote->token)['mint'] ?? ''),
-                Money::parse_decimal_to_units(
-                    $quote->amount_token,
-                    Tokens::resolve($quote->cluster, $quote->token)['decimals']
-                )
+                // Честно передаём null дальше: подмена на '' заставляла
+                // Verify искать SPL-токен с пустым адресом минта, которого
+                // не существует ни в одной транзакции — платежи в нативном
+                // SOL никогда бы не засчитывались.
+                $token['mint'],
+                Money::parse_decimal_to_units($quote->amount_token, $token['decimals'])
             );
         } catch (Throwable $error) {
             // Сбой связи с узлом — не ответ о платеже. Заказ не трогаем,

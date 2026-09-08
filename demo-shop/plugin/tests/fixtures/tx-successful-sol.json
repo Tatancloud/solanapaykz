@@ -1,0 +1,24 @@
+{
+  "result": {
+    "meta": {
+      "err": null,
+      "preBalances": [2500000000, 500000000, 5000, 1169280],
+      "postBalances": [2394995000, 600000000, 5000, 1169280],
+      "preTokenBalances": [],
+      "postTokenBalances": []
+    },
+    "transaction": {
+      "message": {
+        "accountKeys": [
+          "8pM8XVuQ9jcHUwuGrxb3KDD7GAmTfDdKq3srxSXWQBTX",
+          "7uTT8Xi5RWXzy7h9XL244GRgEycDYDhLjr3ZyNdXi8pZ",
+          "SysvarRecentB1ockHashes11111111111111111111",
+          "11111111111111111111111111111111"
+        ]
+      },
+      "signatures": [
+        "4wJKz5c3d6P1s7VvJqXn9Y8mR2tGZ3qF6bN1cW9pDqL5hK4xT8rE2yA7vB3sM6nQ"
+      ]
+    }
+  }
+}
