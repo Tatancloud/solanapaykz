@@ -14,6 +14,12 @@
     var timer = null;
     var poller = null;
 
+    // До finalized проходит около 15 секунд. Покупатель, отправивший
+    // платёж за несколько секунд до истечения цены, не должен увидеть
+    // «срок истёк» и больше никогда не узнать, подтвердилась ли оплата —
+    // опрос продолжается ещё некоторое время после истечения таймера.
+    var GRACE_SECONDS = 180;
+
     // Уровень коррекции M: ссылка Solana Pay длинная, а код должен
     // читаться с экрана телефона под углом и при бликах.
     function drawQr() {
@@ -30,13 +36,24 @@
     function updateTimer() {
         var left = data.expiresAt - Math.floor(Date.now() / 1000);
 
-        if (left <= 0) {
-            timerBox.textContent = 'Срок оплаты истёк.';
-            stop();
+        if (left > 0) {
+            timerBox.textContent = 'Цена действует ещё ' + pad(Math.floor(left / 60)) + ':' + pad(left % 60);
             return;
         }
 
-        timerBox.textContent = 'Цена действует ещё ' + pad(Math.floor(left / 60)) + ':' + pad(left % 60);
+        var overtime = -left;
+
+        if (overtime < GRACE_SECONDS) {
+            // Таймер истёк, но опрос продолжается: если платёж уже
+            // отправлен, ждём его подтверждения, а не молча объявляем
+            // деньги потерянными.
+            timerBox.textContent = 'Срок цены истёк. Если вы уже отправили платёж, '
+                + 'дождитесь подтверждения — это занимает до минуты.';
+            return;
+        }
+
+        timerBox.textContent = 'Срок оплаты истёк. Если вы всё же отправили платёж, свяжитесь с магазином.';
+        stop();
     }
 
     function stop() {
