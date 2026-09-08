@@ -306,10 +306,10 @@ final class Gateway extends WC_Payment_Gateway
             true
         );
 
-        // wp_localize_script() приводит все значения к строкам — secondsLeft
-        // и intervalMs в JS оказывались строками, и арифметика таймера
-        // держалась на неявном приведении типов. wp_add_inline_script() с
-        // wp_json_encode() отдаёт настоящие числа.
+        // Значения идут через wp_add_inline_script() с wp_json_encode(), а
+        // не через wp_localize_script(): тот приводит все значения к
+        // строкам, и арифметике таймера в JS пришлось бы полагаться на
+        // неявное приведение типов.
         //
         // Браузер получает оставшиеся секунды, а не абсолютный expires_at:
         // отсчёт по часам покупателя от абсолютного времени истечения на
@@ -317,17 +317,29 @@ final class Gateway extends WC_Payment_Gateway
         // батарейка) сразу показывал бы «срок истёк» на живой ещё котировке
         // или наоборот. Секунды, отсчитываемые локально от момента загрузки
         // страницы (см. checkout.js), от показаний часов уже не зависят.
+        // Путь без схемы и хоста: admin_url() отдаёт их из настроек сайта
+        // (FORCE_SSL_ADMIN, отдельный домен админки), и на сайте, где они
+        // расходятся с фронтендом, запрос со страницы оплаты упёрся бы в
+        // CORS — обработчик ошибки в checkout.js молча перепланирует опрос,
+        // и покупатель до конца грейса видит «ожидаем оплату» даже на уже
+        // оплаченном заказе. Относительный путь резолвится браузером от
+        // текущего origin и этой проблемы не знает.
+        $ajax_path = (string) wp_parse_url(admin_url('admin-ajax.php'), PHP_URL_PATH);
+
         wp_add_inline_script(
             'solanapaykz-checkout',
+            // JSON_HEX_TAG: результат вставляется внутрь тега <script> —
+            // сейчас безопасно (значения не несут пользовательской разметки
+            // с «</script»), но флаг стоит копейки и на будущее не помешает.
             'var solanapaykzData = ' . wp_json_encode([
                 'url' => $request->url,
-                'ajaxUrl' => admin_url('admin-ajax.php'),
+                'ajaxUrl' => $ajax_path,
                 'action' => Ajax::ACTION,
                 'orderId' => $order->get_id(),
                 'orderKey' => $order->get_order_key(),
                 'secondsLeft' => max(0, $quote->expires_at - time()),
                 'intervalMs' => 5000,
-            ]) . ';',
+            ], JSON_HEX_TAG) . ';',
             'before'
         );
 

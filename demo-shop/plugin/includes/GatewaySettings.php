@@ -201,7 +201,7 @@ final class GatewaySettings
      */
     public static function fields(string $currency = 'KZT'): array
     {
-        $fields = [
+        return [
             'currency_notice' => self::build_currency_notice($currency),
             'enabled' => [
                 'title' => 'Включить',
@@ -280,8 +280,6 @@ final class GatewaySettings
                 'desc_tip' => true,
             ],
         ];
-
-        return $fields;
     }
 
     /**
@@ -291,13 +289,20 @@ final class GatewaySettings
      */
     private static function build_currency_notice(string $currency): array
     {
+        // htmlspecialchars(), а не esc_html(): валюта магазина в WooCommerce
+        // всегда из закрытого списка кодов, эксплуатации тут нет, но класс
+        // сознательно не зовёт функции WordPress ни в одном другом месте
+        // (см. комментарий у validate()) — так его можно тестировать без
+        // поднятия WordPress, и эта правка не должна быть исключением.
+        $safe_currency = htmlspecialchars($currency, ENT_QUOTES, 'UTF-8');
+
         if ($currency === self::REQUIRED_CURRENCY) {
             return [
                 'type' => 'title',
                 'title' => 'Статус плагина',
                 'description' => sprintf(
                     'Валюта магазина: <strong>%s</strong> — плагин работает.',
-                    $currency
+                    $safe_currency
                 ),
             ];
         }
@@ -309,7 +314,7 @@ final class GatewaySettings
                 'Валюта магазина: <strong>%s</strong> — плагин отключён. '
                 . 'Курс берётся к тенге, поэтому нужен магазин с ценами в тенге. '
                 . 'Смените валюту в настройках WooCommerce: Настройки → Основные → Валюта.',
-                $currency
+                $safe_currency
             ),
         ];
     }

@@ -11,7 +11,6 @@
  * Author: Tatancloud
  * License: MIT
  * Update URI: false
- * Text Domain: solanapaykz
  */
 
 declare(strict_types=1);
@@ -23,7 +22,6 @@ if (!defined('ABSPATH')) {
 }
 
 const PLUGIN_FILE = __FILE__;
-const PLUGIN_DIR  = __DIR__;
 
 /**
  * Версия плагина в одном месте. Читается Gateway.php при подключении
@@ -81,7 +79,7 @@ const REQUIREMENTS = [
 
 /**
  * Не даём включить плагин на непригодной среде: молчаливый неверный
- * расчёт суммы хуже honest отказа при активации.
+ * расчёт суммы хуже честного отказа при активации.
  */
 register_activation_hook(__FILE__, static function (): void {
     $missing = Environment::check(REQUIREMENTS);

@@ -82,7 +82,12 @@ final class PaymentRequest
         return new self(
             $quote,
             $reference,
-            'solana:' . $recipient . '?' . http_build_query($params, '', '&')
+            // PHP_QUERY_RFC3986: по умолчанию http_build_query() кодирует
+            // пробел как '+' (устаревшее application/x-www-form-urlencoded),
+            // а кошелёк декодирует ссылку по RFC3986, где '+' — обычный
+            // символ. Покупатель увидел бы «Мой+магазин» и «Заказ+№11» в
+            // момент подтверждения платежа.
+            'solana:' . $recipient . '?' . http_build_query($params, '', '&', PHP_QUERY_RFC3986)
         );
     }
 

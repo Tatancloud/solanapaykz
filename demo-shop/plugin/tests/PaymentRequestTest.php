@@ -43,9 +43,14 @@ final class PaymentRequestTest extends TestCase
 
     public function test_ссылка_совпадает_с_эталоном_библиотеки(): void
     {
-        // Эталон получен запуском @solana/pay — той самой библиотеки, которую
-        // используют кошельки. Совпадение означает, что наш URL будет прочитан
-        // ровно так же, как её собственный.
+        // Пробел закодирован как %20 (PHP_QUERY_RFC3986), а не как '+':
+        // '+' — это application/x-www-form-urlencoded, и парсер, который
+        // читает query-строку сам (decodeURIComponent по каждому значению,
+        // а не через URLSearchParams), не превращает его обратно в пробел —
+        // покупатель увидел бы «Заказ+№123» в момент подтверждения платежа.
+        // @solana/pay сам строит и читает такие ссылки через URLSearchParams
+        // (в этом случае оба варианта эквивалентны), но протокол Solana Pay
+        // открытый, и не все кошельки обязаны повторять его реализацию.
         $request = PaymentRequest::create($this->quote(), self::MERCHANT, [
             'reference' => 'DU4LZngDuaUGmzyhWiG7QwMqjF4C3b2dbjSmsH5wB1Jh',
             'label' => 'Магазин',
@@ -58,7 +63,7 @@ final class PaymentRequestTest extends TestCase
             . '&spl-token=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
             . '&reference=DU4LZngDuaUGmzyhWiG7QwMqjF4C3b2dbjSmsH5wB1Jh'
             . '&label=%D0%9C%D0%B0%D0%B3%D0%B0%D0%B7%D0%B8%D0%BD'
-            . '&message=%D0%97%D0%B0%D0%BA%D0%B0%D0%B7+%E2%84%96123',
+            . '&message=%D0%97%D0%B0%D0%BA%D0%B0%D0%B7%20%E2%84%96123',
             $request->url
         );
     }
