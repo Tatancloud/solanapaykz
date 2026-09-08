@@ -41,6 +41,40 @@ final class Scheduler
         if (wp_next_scheduled(self::HOOK) === false) {
             wp_schedule_event(time() + 300, 'solanapaykz_five_minutes', self::HOOK);
         }
+
+        add_action('admin_notices', [self::class, 'maybe_warn_about_disabled_cron']);
+    }
+
+    /**
+     * DISABLE_WP_CRON отключает встроенный псевдо-cron WordPress (он
+     * срабатывает при заходе посетителя на сайт), а системный cron на
+     * wp-cron.php — типовое сочетание с ним не настраивают. Эта задача
+     * тогда не выполняется никогда: покупатель оплатил и закрыл вкладку —
+     * заказ навсегда в ожидании, письмо не ушло, товар не отгружен. Плагин
+     * без этого предупреждения молчит, и продавец узнаёт о проблеме только
+     * от рассерженного покупателя.
+     */
+    public static function maybe_warn_about_disabled_cron(): void
+    {
+        if (!defined('DISABLE_WP_CRON') || !DISABLE_WP_CRON) {
+            return;
+        }
+
+        $settings = get_option('woocommerce_solanapaykz_settings', []);
+
+        if (!is_array($settings) || ($settings['enabled'] ?? 'no') !== 'yes') {
+            return;
+        }
+
+        printf(
+            '<div class="notice notice-warning"><p><strong>SolanaPay-KZ:</strong> %s</p></div>',
+            esc_html(
+                'На сайте отключён встроенный псевдо-cron WordPress (константа DISABLE_WP_CRON). '
+                . 'Без настоящего системного cron на wp-cron.php фоновая проверка оплаты не '
+                . 'сработает никогда — подтверждение платежа будет работать только пока '
+                . 'покупатель держит вкладку с оплатой открытой.'
+            )
+        );
     }
 
     public static function unregister(): void
