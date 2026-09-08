@@ -34,6 +34,12 @@ final class BinanceRateSource implements RateSource
     public function get_kzt_per_token(string $token): string
     {
         $kzt_per_usdt  = $this->fetch_price('USDTKZT');
+
+        // Полоса — только на курс доллара: цена самого токена (USDCUSDT
+        // около единицы, SOLUSDT — десятки-сотни) к тенге отношения не
+        // имеет, и диапазон 400–600 к ней неприменим.
+        $this->assert_plausible_usd_rate($kzt_per_usdt);
+
         $usdt_per_token = $this->fetch_price($token === 'USDC' ? 'USDCUSDT' : 'SOLUSDT');
 
         return Money::multiply_rates($kzt_per_usdt, $usdt_per_token);
@@ -60,5 +66,26 @@ final class BinanceRateSource implements RateSource
         }
 
         return $price;
+    }
+
+    /**
+     * Отвергает курс доллара к тенге вне полосы правдоподобия (см.
+     * RateSource::USD_KZT_MIN/MAX). Единственный признак завышения курса
+     * при смене базовой пары биржей — иначе заказ на тысячи тенге
+     * превращается в доли токена, а покупатель платит копейку и получает
+     * подтверждение.
+     */
+    private function assert_plausible_usd_rate(string $rate): void
+    {
+        if (bccomp($rate, self::USD_KZT_MIN, Money::RATE_DECIMALS) < 0
+            || bccomp($rate, self::USD_KZT_MAX, Money::RATE_DECIMALS) > 0
+        ) {
+            throw new RpcException(sprintf(
+                'Binance USDTKZT: курс %s вне полосы правдоподобия [%s; %s] для курса доллара к тенге.',
+                $rate,
+                self::USD_KZT_MIN,
+                self::USD_KZT_MAX
+            ));
+        }
     }
 }

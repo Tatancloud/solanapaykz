@@ -10,6 +10,7 @@ if (!defined('ABSPATH')) {
 }
 
 use Throwable;
+use WC_Data_Store;
 use WC_Order;
 
 /**
@@ -66,6 +67,21 @@ final class OrderChecker
             $reference = OrderMeta::read_reference($order);
             $recipient = OrderMeta::read_recipient($order);
 
+            if ($quote === null && OrderMeta::quote_format_is_unknown($order)) {
+                // Формат котировки не испорчен — он новее, чем понимает эта
+                // версия плагина: заказ выпущен более новой сборкой (например,
+                // после отката плагина на сервере). Это не повод проваливать
+                // заказ: не трогаем его и ждём — либо обновления плагина, либо
+                // ручного разбора продавцом.
+                error_log(sprintf(
+                    'SolanaPay-KZ: заказ %d — формат котировки не распознан этой версией плагина,'
+                    . ' автоматическая проверка отложена.',
+                    $order_id
+                ));
+
+                return ['status' => 'unknown', 'message' => self::UNAVAILABLE_MESSAGE, 'mutated' => false];
+            }
+
             if ($quote === null || $reference === null || $recipient === null) {
                 // Заказ с испорченными или отсутствующими данными оплаты через
                 // наш шлюз оплатить нельзя никогда. Статус — failed, а не
@@ -76,8 +92,8 @@ final class OrderChecker
                 // заказа, который провален окончательно. failed возвращает
                 // остаток, письмо уходит администратору (WC_Email_Failed_Order),
                 // а не покупателю, и заказ так же выпадает из выборки pending —
-                // без специальной метки в мете (см. правку про meta_query,
-                // который на этом магазине не работает без HPOS).
+                // без специальной метки в мете: на этом магазине HPOS выключен,
+                // а meta_query по старому хранилищу заказов (посты) не работает.
                 //
                 // Трогаем только заказы в pending: отменённый заказ не должен
                 // воскресать ни при каких условиях — это ровно то, ради чего
@@ -142,11 +158,21 @@ final class OrderChecker
                 return ['status' => 'unknown', 'message' => self::UNAVAILABLE_MESSAGE, 'mutated' => false];
             }
 
-            // Перечитываем заказ перед мутацией: за время RPC-запроса (до 10 секунд)
-            // статус мог смениться другим процессом — лок не единственная защита.
-            // clean_post_cache() сбрасывает кеш поста; на HPOS это не нужно и не сработает.
+            // Перечитываем заказ перед мутацией — статус мог смениться другим
+            // процессом за время RPC-запроса. clean_post_cache() чистит кеш
+            // старого хранилища (посты) и на HPOS не делает ничего.
             if (function_exists('clean_post_cache')) {
                 clean_post_cache($order_id);
+            }
+
+            // На HPOS заказ хранится не в постах — нужен сброс кеша самого
+            // хранилища заказов через штатный WC_Data_Store, а не WordPress-
+            // кеш постов. Честно: это сбрасывает кеш объектов WooCommerce
+            // ('orders'), а не любой возможный уровень кеширования на
+            // хостинге, — но это единственный публичный способ, который
+            // WooCommerce сам предоставляет плагинам для этой цели.
+            if (class_exists(WC_Data_Store::class)) {
+                WC_Data_Store::load('order')->clear_cached_data([$order_id]);
             }
 
             $fresh_order = wc_get_order($order_id);
@@ -186,10 +212,10 @@ final class OrderChecker
                 break;
 
             case 'cancel':
-                // PaymentDecision больше не выдаёт 'cancel' для заказа, уже
-                // ставшего cancelled (см. правку про список «действовать
-                // только на pending/cancelled»), но проверка здесь дёшева
-                // и избавляет от лишнего save() при заказе, отменённом уже
+                // PaymentDecision решает 'cancel' только для заказа в pending
+                // (см. список статусов, на которые она действует), поэтому уже
+                // отменённый заказ сюда обычно не попадает — но проверка здесь
+                // дёшева и избавляет от лишнего save(), если заказ отменили
                 // другим путём в тот же момент.
                 if ($order->get_status() !== 'cancelled') {
                     $order->update_status('cancelled', $decision['note']);

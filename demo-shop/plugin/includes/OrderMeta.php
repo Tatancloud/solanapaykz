@@ -46,19 +46,20 @@ final class OrderMeta
      * Испорченная запись — это не «платежа нет», а сломанный заказ, поэтому
      * причина пишется в журнал: иначе продавец увидит вечное «ожидаем оплату»
      * без единого следа о том, что пошло не так.
+     *
+     * null здесь не различает «данных нет», «данные испорчены» и «формат
+     * новее, чем понимает эта версия плагина» — вызывающему коду, которому
+     * это различие важно (OrderChecker), нужен quote_format_is_unknown().
      */
     public static function read_quote(WC_Order $order): ?Quote
     {
         $raw = $order->get_meta(self::QUOTE);
+        $data = self::decode_quote_data($order);
 
-        if (!is_string($raw) || $raw === '') {
-            return null;
-        }
-
-        $data = json_decode($raw, true);
-
-        if (!is_array($data)) {
-            error_log(sprintf('SolanaPay-KZ: заказ %d — котировка не разбирается как JSON.', $order->get_id()));
+        if ($data === null) {
+            if (is_string($raw) && $raw !== '') {
+                error_log(sprintf('SolanaPay-KZ: заказ %d — котировка не разбирается как JSON.', $order->get_id()));
+            }
 
             return null;
         }
@@ -90,6 +91,52 @@ final class OrderMeta
 
             return null;
         }
+    }
+
+    /**
+     * true, если запись котировки есть и разбирается как JSON, но несёт
+     * версию формата новее той, что понимает Quote::FORMAT_VERSION.
+     *
+     * Отличает для OrderChecker «формат неизвестен» (заказ создан более
+     * новой сборкой плагина — не трогать, проверить снова позже) от
+     * «данные испорчены» (разобрать нельзя вообще — провалить заказ).
+     * read_quote() возвращает null в обоих случаях и для этого различения
+     * не годится.
+     */
+    public static function quote_format_is_unknown(WC_Order $order): bool
+    {
+        $data = self::decode_quote_data($order);
+
+        if ($data === null) {
+            return false;
+        }
+
+        try {
+            Quote::from_array($data);
+
+            return false;
+        } catch (QuoteException $error) {
+            return $error->getCode() === Quote::ERROR_UNKNOWN_FORMAT_VERSION;
+        }
+    }
+
+    /**
+     * @return ?array<string, mixed> Запись котировки как массив, либо null,
+     *     если её нет или это не JSON-объект. Не пишет в журнал: решение о
+     *     том, что означает пустой результат, у каждого вызывающего метода
+     *     своё, и запись должна остаться за ним.
+     */
+    private static function decode_quote_data(WC_Order $order): ?array
+    {
+        $raw = $order->get_meta(self::QUOTE);
+
+        if (!is_string($raw) || $raw === '') {
+            return null;
+        }
+
+        $data = json_decode($raw, true);
+
+        return is_array($data) ? $data : null;
     }
 
     public static function read_reference(WC_Order $order): ?string

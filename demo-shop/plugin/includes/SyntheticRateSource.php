@@ -53,10 +53,34 @@ final class SyntheticRateSource implements RateSource
 
         $rates = $data['rates'] ?? null;
 
-        return $this->to_rate(
+        $rate = $this->to_rate(
             is_array($rates) ? ($rates['KZT'] ?? null) : null,
             'Курс валют: в ответе нет тенге'
         );
+
+        $this->assert_plausible_usd_rate($rate);
+
+        return $rate;
+    }
+
+    /**
+     * Отвергает курс доллара к тенге вне полосы правдоподобия (см.
+     * RateSource::USD_KZT_MIN/MAX). Тот же рубеж, что и у BinanceRateSource:
+     * оба источника тянут этот курс как промежуточное звено, и оба должны
+     * ловить одну и ту же смену базовой пары или подмену инструмента.
+     */
+    private function assert_plausible_usd_rate(string $rate): void
+    {
+        if (bccomp($rate, self::USD_KZT_MIN, Money::RATE_DECIMALS) < 0
+            || bccomp($rate, self::USD_KZT_MAX, Money::RATE_DECIMALS) > 0
+        ) {
+            throw new RpcException(sprintf(
+                'Курс валют: %s вне полосы правдоподобия [%s; %s] для курса доллара к тенге.',
+                $rate,
+                self::USD_KZT_MIN,
+                self::USD_KZT_MAX
+            ));
+        }
     }
 
     private function fetch_usd_per_token(string $token): string
