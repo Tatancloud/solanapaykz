@@ -41,6 +41,7 @@ require_once __DIR__ . '/includes/Tokens.php';
 require_once __DIR__ . '/includes/Quote.php';
 require_once __DIR__ . '/includes/Base58.php';
 require_once __DIR__ . '/includes/PaymentRequest.php';
+require_once __DIR__ . '/includes/GatewaySettings.php';
 
 const REQUIREMENTS = [
     'php' => '8.1',
@@ -93,5 +94,12 @@ add_action('plugins_loaded', static function (): void {
         return;
     }
 
-    // Платёжный шлюз подключается в задаче 8.
+    require_once __DIR__ . '/includes/OrderMeta.php';
+    require_once __DIR__ . '/includes/Gateway.php';
+
+    add_filter('woocommerce_payment_gateways', static function (array $gateways): array {
+        $gateways[] = Gateway::class;
+
+        return $gateways;
+    });
 });
