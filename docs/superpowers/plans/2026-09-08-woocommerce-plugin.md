@@ -3289,20 +3289,874 @@ git push -u origin feat/wc-payment-request
 
 ---
 
-## Задачи 8-9
+### Задача 8: Настройки продавца и платёжный шлюз
 
-Расписываются после ревью задачи 7.
+**Файлы:**
+- Создать: `demo-shop/plugin/includes/GatewaySettings.php`, `includes/OrderMeta.php`,
+  `includes/Gateway.php`
+- Изменить: `demo-shop/plugin/solanapaykz.php` (подключение и регистрация шлюза)
+- Тест: `demo-shop/plugin/tests/GatewaySettingsTest.php`
 
-- **Задача 8. Платёжный шлюз.** Класс, наследующий `WC_Payment_Gateway`,
-  регистрация через фильтр `woocommerce_payment_gateways`, настройки
-  продавца с проверкой адреса и RPC, `process_payment`, сохранение
-  котировки и метки в метаданных заказа, вывод QR на странице «Спасибо за
-  заказ». QR рисуется в браузере покупателя библиотекой, положенной файлом
-  в каталог плагина: серверная генерация потребовала бы ещё одной
-  зависимости, а картинка нужна только в браузере.
-- **Задача 9. Опрос и жизненный цикл заказа.** AJAX-эндпоинт, опрос из
-  браузера каждые 5 секунд, WP-Cron каждые 5 минут, отмена через 15 минут,
-  проверка отменённых ещё сутки, уведомление продавцу о позднем платеже.
+**Интерфейсы:**
+- Потребляет: `Tokens`, `Base58`, `QuoteException`, `Quote`, `PaymentRequest`,
+  `RateProvider`, `BinanceRateSource`, `SyntheticRateSource`, `TransientCache`.
+- Отдаёт: `GatewaySettings::validate(array $values): array` — список сообщений об
+  ошибках, пустой массив если всё верно; `GatewaySettings::fields(): array` —
+  описание полей для админки; константы `OrderMeta::QUOTE`, `OrderMeta::REFERENCE`,
+  `OrderMeta::SIGNATURE`, `OrderMeta::LATE_PAYMENT` и методы чтения-записи;
+  класс `Gateway extends \WC_Payment_Gateway`.
+
+**Что здесь тестируется автоматически, а что руками.** Проверка настроек —
+чистая логика без WordPress, она покрывается тестами. Сам шлюз обращается к
+функциям WordPress (`wc_get_order`, `get_option`, `wp_enqueue_script`), которых
+в тестовом окружении нет, поэтому он делается предельно тонким: принимает
+решение, зовёт готовые классы и отдаёт результат. Его проверяем вручную на
+демо-магазине, шаги в конце задачи.
+
+- [ ] **Шаг 1: Создать ветку**
+
+```bash
+git checkout main && git pull
+git checkout -b feat/wc-gateway
+```
+
+- [ ] **Шаг 2: Написать падающий тест проверки настроек**
+
+```php
+<?php
+// demo-shop/plugin/tests/GatewaySettingsTest.php
+
+declare(strict_types=1);
+
+use PHPUnit\Framework\TestCase;
+use SolanaPayKZ\GatewaySettings;
+
+final class GatewaySettingsTest extends TestCase
+{
+    private const MERCHANT = '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM';
+    private const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+
+    /** @return array<string, string> */
+    private function valid(array $overrides = []): array
+    {
+        return array_merge([
+            'recipient'      => self::MERCHANT,
+            'cluster'        => 'mainnet',
+            'rpc_url'        => 'https://rpc.example.com',
+            'token'          => 'USDC',
+            'markup_percent' => '0',
+            'quote_ttl'      => '900',
+            'late_window'    => '86400',
+        ], $overrides);
+    }
+
+    public function test_верные_настройки_не_дают_ошибок(): void
+    {
+        self::assertSame([], GatewaySettings::validate($this->valid()));
+    }
+
+    public function test_требует_адрес_продавца(): void
+    {
+        $errors = GatewaySettings::validate($this->valid(['recipient' => '']));
+
+        self::assertCount(1, $errors);
+        self::assertStringContainsString('адрес', mb_strtolower($errors[0]));
+    }
+
+    public function test_отвергает_адрес_неверной_длины_в_байтах(): void
+    {
+        // Строка из допустимых символов правильной длины может не быть
+        // адресом: настоящий адрес Solana — ровно 32 байта.
+        $errors = GatewaySettings::validate($this->valid(['recipient' => str_repeat('z', 44)]));
+
+        self::assertCount(1, $errors);
+    }
+
+    public function test_отвергает_адрес_монеты_вместо_кошелька(): void
+    {
+        // Частая ошибка настройки: платежи по такому адресу уходят безвозвратно.
+        $errors = GatewaySettings::validate($this->valid(['recipient' => self::USDC_MINT]));
+
+        self::assertCount(1, $errors);
+        self::assertStringContainsString('монет', mb_strtolower($errors[0]));
+    }
+
+    public function test_адрес_монеты_другой_сети_тоже_отвергается(): void
+    {
+        $errors = GatewaySettings::validate($this->valid([
+            'cluster' => 'devnet',
+            'recipient' => '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
+        ]));
+
+        self::assertCount(1, $errors);
+    }
+
+    public function test_требует_адрес_узла(): void
+    {
+        $errors = GatewaySettings::validate($this->valid(['rpc_url' => '']));
+
+        self::assertCount(1, $errors);
+        self::assertStringContainsString('узл', mb_strtolower($errors[0]));
+    }
+
+    public function test_отвергает_адрес_узла_не_похожий_на_ссылку(): void
+    {
+        foreach (['не-ссылка', 'ftp://узел', 'httpsx://a.b', '//rpc.example.com'] as $bad) {
+            $errors = GatewaySettings::validate($this->valid(['rpc_url' => $bad]));
+
+            self::assertNotSame([], $errors, "Адрес «{$bad}» должен быть отвергнут.");
+        }
+    }
+
+    public function test_принимает_адрес_узла_по_http_и_https(): void
+    {
+        foreach (['https://rpc.example.com', 'http://127.0.0.1:8899'] as $good) {
+            self::assertSame([], GatewaySettings::validate($this->valid(['rpc_url' => $good])));
+        }
+    }
+
+    public function test_отвергает_неизвестную_сеть(): void
+    {
+        self::assertNotSame([], GatewaySettings::validate($this->valid(['cluster' => 'testnet'])));
+    }
+
+    public function test_отвергает_неизвестную_монету(): void
+    {
+        self::assertNotSame([], GatewaySettings::validate($this->valid(['token' => 'BTC'])));
+    }
+
+    public function test_отвергает_наценку_вне_допустимых_границ(): void
+    {
+        foreach (['-1', '101', 'не-число'] as $bad) {
+            self::assertNotSame([], GatewaySettings::validate($this->valid(['markup_percent' => $bad])));
+        }
+    }
+
+    public function test_принимает_дробную_наценку(): void
+    {
+        self::assertSame([], GatewaySettings::validate($this->valid(['markup_percent' => '2.5'])));
+    }
+
+    public function test_отвергает_наценку_меньше_минимального_шага(): void
+    {
+        // 0,004 процента после округления превращается в ноль: продавец
+        // настроит наценку и не заметит, что её нет.
+        self::assertNotSame([], GatewaySettings::validate($this->valid(['markup_percent' => '0.004'])));
+    }
+
+    public function test_отвергает_срок_жизни_котировки_вне_разумных_границ(): void
+    {
+        foreach (['0', '-60', '90000', 'не-число'] as $bad) {
+            self::assertNotSame([], GatewaySettings::validate($this->valid(['quote_ttl' => $bad])));
+        }
+    }
+
+    public function test_ноль_в_сроке_проверки_отменённых_допустим(): void
+    {
+        // Ноль означает «не проверять отменённые заказы» — осознанный выбор
+        // продавца, а не ошибка.
+        self::assertSame([], GatewaySettings::validate($this->valid(['late_window' => '0'])));
+    }
+
+    public function test_собирает_все_ошибки_а_не_первую(): void
+    {
+        $errors = GatewaySettings::validate([
+            'recipient' => '',
+            'cluster' => 'testnet',
+            'rpc_url' => '',
+            'token' => 'BTC',
+            'markup_percent' => '200',
+            'quote_ttl' => '0',
+            'late_window' => '-1',
+        ]);
+
+        // Продавец должен увидеть весь список сразу, а не исправлять по одной.
+        self::assertGreaterThanOrEqual(5, count($errors));
+    }
+
+    public function test_описание_полей_содержит_все_настройки(): void
+    {
+        $fields = GatewaySettings::fields();
+
+        foreach (['enabled', 'title', 'description', 'recipient', 'cluster',
+                  'rpc_url', 'token', 'markup_percent', 'quote_ttl', 'late_window'] as $key) {
+            self::assertArrayHasKey($key, $fields);
+        }
+    }
+}
+```
+
+- [ ] **Шаг 3: Запустить и убедиться, что падает**
+
+Запустить: `docker exec -w /var/www/html/wp-content/plugins/solanapaykz solanapaykz_shop php vendor/bin/phpunit --filter GatewaySettingsTest`
+Ожидается: FAIL — класса нет.
+
+- [ ] **Шаг 4: Реализовать проверку настроек**
+
+```php
+<?php
+// demo-shop/plugin/includes/GatewaySettings.php
+
+declare(strict_types=1);
+
+namespace SolanaPayKZ;
+
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+use Throwable;
+
+/**
+ * Настройки продавца и их проверка.
+ *
+ * Проверка вынесена из класса шлюза, чтобы её можно было покрыть тестами:
+ * сам шлюз завязан на функции WordPress и в тестовом окружении не работает.
+ *
+ * Ошибки собираются списком, а не выбрасываются на первой: продавец должен
+ * увидеть всё, что нужно исправить, за один заход.
+ */
+final class GatewaySettings
+{
+    /** Верхняя граница срока жизни котировки — сутки. */
+    private const MAX_QUOTE_TTL = 86400;
+
+    /** Верхняя граница окна проверки отменённых заказов — неделя. */
+    private const MAX_LATE_WINDOW = 604800;
+
+    /**
+     * @param array<string, mixed> $values
+     * @return list<string> Сообщения об ошибках на русском.
+     */
+    public static function validate(array $values): array
+    {
+        $errors = [];
+
+        $cluster = (string) ($values['cluster'] ?? '');
+        $token = (string) ($values['token'] ?? '');
+
+        if (!in_array($cluster, ['mainnet', 'devnet'], true)) {
+            $errors[] = 'Выберите сеть: основную или тестовую.';
+        }
+
+        if (!in_array($token, Tokens::SUPPORTED, true)) {
+            $errors[] = sprintf('Монета «%s» не поддерживается.', $token);
+        }
+
+        $errors = array_merge($errors, self::check_recipient(
+            (string) ($values['recipient'] ?? ''),
+            $cluster,
+            $token
+        ));
+
+        $errors = array_merge($errors, self::check_rpc_url((string) ($values['rpc_url'] ?? '')));
+        $errors = array_merge($errors, self::check_markup((string) ($values['markup_percent'] ?? '0')));
+
+        $errors = array_merge($errors, self::check_seconds(
+            (string) ($values['quote_ttl'] ?? ''),
+            'Срок жизни котировки',
+            1,
+            self::MAX_QUOTE_TTL
+        ));
+
+        $errors = array_merge($errors, self::check_seconds(
+            (string) ($values['late_window'] ?? ''),
+            'Срок проверки отменённых заказов',
+            0,
+            self::MAX_LATE_WINDOW
+        ));
+
+        return $errors;
+    }
+
+    /** @return list<string> */
+    private static function check_recipient(string $recipient, string $cluster, string $token): array
+    {
+        if ($recipient === '') {
+            return ['Укажите адрес кошелька Solana, на который будут приходить платежи.'];
+        }
+
+        // decode возвращает null на строке с недопустимыми символами, а не
+        // бросает исключение — это его контракт из задачи 7.
+        $decoded = Base58::decode($recipient);
+
+        if ($decoded === null) {
+            return ['Адрес кошелька записан не в том формате: допустимы только символы base58.'];
+        }
+
+        if (strlen($decoded) !== 32) {
+            return ['Адрес кошелька неверной длины. Проверьте, что скопировали его целиком.'];
+        }
+
+        // Адрес монеты в поле кошелька — частая ошибка настройки, и платежи
+        // по нему уходят безвозвратно. Проверяем обе сети: продавец мог
+        // переключить сеть уже после того, как вписал адрес.
+        foreach (['mainnet', 'devnet'] as $known_cluster) {
+            foreach (Tokens::SUPPORTED as $known_token) {
+                try {
+                    $mint = Tokens::resolve($known_cluster, $known_token)['mint'];
+                } catch (Throwable) {
+                    continue;
+                }
+
+                if ($mint !== null && $recipient === $mint) {
+                    return ['Это адрес монеты, а не кошелька. Укажите адрес своего кошелька — '
+                        . 'платежи на адрес монеты вернуть невозможно.'];
+                }
+            }
+        }
+
+        return [];
+    }
+
+    /** @return list<string> */
+    private static function check_rpc_url(string $url): array
+    {
+        if ($url === '') {
+            return ['Укажите адрес узла Solana. Публичный узел для приёма платежей не подходит: '
+                . 'он ограничивает запросы и не хранит историю, нужную для поиска платежа.'];
+        }
+
+        $parts = parse_url($url);
+
+        if ($parts === false || !isset($parts['scheme'], $parts['host'])
+            || !in_array($parts['scheme'], ['http', 'https'], true)
+        ) {
+            return ['Адрес узла должен начинаться с http:// или https://.'];
+        }
+
+        return [];
+    }
+
+    /** @return list<string> */
+    private static function check_markup(string $value): array
+    {
+        if (!is_numeric($value)) {
+            return ['Наценка должна быть числом.'];
+        }
+
+        $percent = (float) $value;
+
+        if ($percent < 0 || $percent > 100) {
+            return ['Наценка должна быть от 0 до 100 процентов.'];
+        }
+
+        // Меньше сотой доли процента округлится до нуля, и продавец будет
+        // думать, что наценка работает.
+        if ($percent > 0 && (int) round($percent * 100) === 0) {
+            return ['Наценка меньше 0,01 процента не применяется. Укажите большее значение или ноль.'];
+        }
+
+        return [];
+    }
+
+    /** @return list<string> */
+    private static function check_seconds(string $value, string $label, int $min, int $max): array
+    {
+        if (!is_numeric($value) || (string) (int) $value !== trim($value)) {
+            return [sprintf('%s должен быть целым числом секунд.', $label)];
+        }
+
+        $seconds = (int) $value;
+
+        if ($seconds < $min || $seconds > $max) {
+            return [sprintf('%s должен быть от %d до %d секунд.', $label, $min, $max)];
+        }
+
+        return [];
+    }
+
+    /**
+     * Описание полей для админки WooCommerce.
+     *
+     * @return array<string, array<string, mixed>>
+     */
+    public static function fields(): array
+    {
+        return [
+            'enabled' => [
+                'title' => 'Включить',
+                'type' => 'checkbox',
+                'label' => 'Принимать оплату криптовалютой',
+                'default' => 'no',
+            ],
+            'title' => [
+                'title' => 'Название способа оплаты',
+                'type' => 'text',
+                'description' => 'Что увидит покупатель при оформлении заказа.',
+                'default' => 'Оплата криптовалютой (USDC)',
+                'desc_tip' => true,
+            ],
+            'description' => [
+                'title' => 'Описание',
+                'type' => 'textarea',
+                'default' => 'Отсканируйте QR-код кошельком Solana. Деньги придут продавцу напрямую.',
+            ],
+            'recipient' => [
+                'title' => 'Адрес кошелька продавца',
+                'type' => 'text',
+                'description' => 'Адрес Solana, на который придут платежи. Это адрес вашего кошелька, '
+                    . 'а не адрес монеты.',
+                'default' => '',
+                'desc_tip' => true,
+            ],
+            'cluster' => [
+                'title' => 'Сеть',
+                'type' => 'select',
+                'options' => [
+                    'mainnet' => 'Основная сеть (настоящие деньги)',
+                    'devnet' => 'Тестовая сеть (бесплатные монеты, для проверки)',
+                ],
+                'default' => 'devnet',
+                'description' => 'Начните с тестовой сети и переключитесь на основную, '
+                    . 'когда убедитесь, что всё работает.',
+                'desc_tip' => true,
+            ],
+            'rpc_url' => [
+                'title' => 'Адрес узла Solana',
+                'type' => 'text',
+                'description' => 'Публичный узел не подходит: он ограничивает запросы и не хранит '
+                    . 'историю, нужную для поиска платежа. Нужен собственный провайдер.',
+                'default' => '',
+                'desc_tip' => true,
+            ],
+            'token' => [
+                'title' => 'Монета',
+                'type' => 'select',
+                'options' => ['USDC' => 'USDC (стейблкоин)', 'SOL' => 'SOL'],
+                'default' => 'USDC',
+            ],
+            'markup_percent' => [
+                'title' => 'Наценка, %',
+                'type' => 'text',
+                'description' => 'Добавляется к сумме заказа до пересчёта в криптовалюту. '
+                    . 'Страховка от движения курса, пока покупатель платит.',
+                'default' => '0',
+                'desc_tip' => true,
+            ],
+            'quote_ttl' => [
+                'title' => 'Срок действия цены, секунд',
+                'type' => 'text',
+                'description' => 'Сколько времени действует зафиксированный курс. По умолчанию 15 минут.',
+                'default' => '900',
+                'desc_tip' => true,
+            ],
+            'late_window' => [
+                'title' => 'Проверять отменённые заказы, секунд',
+                'type' => 'text',
+                'description' => 'Отмена заказа не отменяет QR-код: покупатель может заплатить позже. '
+                    . 'В течение этого времени плагин продолжит проверять отменённые заказы и '
+                    . 'предупредит вас о позднем платеже. Ноль отключает проверку.',
+                'default' => '86400',
+                'desc_tip' => true,
+            ],
+        ];
+    }
+}
+```
+
+- [ ] **Шаг 5: Запустить тесты настроек**
+
+Запустить: `docker exec -w /var/www/html/wp-content/plugins/solanapaykz solanapaykz_shop php vendor/bin/phpunit --filter GatewaySettingsTest`
+Ожидается: PASS.
+
+- [ ] **Шаг 6: Реализовать работу с данными заказа**
+
+```php
+<?php
+// demo-shop/plugin/includes/OrderMeta.php
+
+declare(strict_types=1);
+
+namespace SolanaPayKZ;
+
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+use Throwable;
+use WC_Order;
+
+/**
+ * Чтение и запись данных плагина в заказе.
+ *
+ * Своих таблиц в базе плагин не создаёт: всё живёт в метаданных заказа,
+ * которые WooCommerce переносит вместе с ним при переезде магазина.
+ */
+final class OrderMeta
+{
+    public const QUOTE = '_solanapaykz_quote';
+    public const REFERENCE = '_solanapaykz_reference';
+    public const SIGNATURE = '_solanapaykz_signature';
+    public const LATE_PAYMENT = '_solanapaykz_late_payment';
+
+    public static function save_quote(WC_Order $order, Quote $quote, string $reference): void
+    {
+        $order->update_meta_data(self::QUOTE, wp_json_encode($quote->to_array()));
+        $order->update_meta_data(self::REFERENCE, $reference);
+        $order->save();
+    }
+
+    /**
+     * Возвращает котировку заказа или null, если её нет либо запись испорчена.
+     *
+     * Испорченная запись — это не «платежа нет», а сломанный заказ, поэтому
+     * причина пишется в журнал: иначе продавец увидит вечное «ожидаем оплату»
+     * без единого следа о том, что пошло не так.
+     */
+    public static function read_quote(WC_Order $order): ?Quote
+    {
+        $raw = $order->get_meta(self::QUOTE);
+
+        if (!is_string($raw) || $raw === '') {
+            return null;
+        }
+
+        $data = json_decode($raw, true);
+
+        if (!is_array($data)) {
+            error_log(sprintf('SolanaPay-KZ: заказ %d — котировка не разбирается как JSON.', $order->get_id()));
+
+            return null;
+        }
+
+        try {
+            return Quote::from_array($data);
+        } catch (Throwable $error) {
+            error_log(sprintf(
+                'SolanaPay-KZ: заказ %d — котировка непригодна: %s',
+                $order->get_id(),
+                $error->getMessage()
+            ));
+
+            return null;
+        }
+    }
+
+    public static function read_reference(WC_Order $order): ?string
+    {
+        $reference = $order->get_meta(self::REFERENCE);
+
+        return is_string($reference) && $reference !== '' ? $reference : null;
+    }
+
+    public static function save_signature(WC_Order $order, string $signature): void
+    {
+        $order->update_meta_data(self::SIGNATURE, $signature);
+        $order->save();
+    }
+
+    public static function mark_late_payment(WC_Order $order, string $signature): void
+    {
+        $order->update_meta_data(self::LATE_PAYMENT, $signature);
+        $order->save();
+    }
+}
+```
+
+- [ ] **Шаг 7: Реализовать платёжный шлюз**
+
+```php
+<?php
+// demo-shop/plugin/includes/Gateway.php
+
+declare(strict_types=1);
+
+namespace SolanaPayKZ;
+
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+use Throwable;
+use WC_Order;
+use WC_Payment_Gateway;
+
+/**
+ * Способ оплаты «криптовалютой» в WooCommerce.
+ *
+ * Класс намеренно тонкий: вся содержательная работа — расчёт, ссылка,
+ * проверка платежа — лежит в классах, которые не зависят от WordPress и
+ * покрыты тестами. Здесь только связывание с магазином.
+ */
+final class Gateway extends WC_Payment_Gateway
+{
+    public function __construct()
+    {
+        $this->id = 'solanapaykz';
+        $this->method_title = 'SolanaPay-KZ';
+        $this->method_description = 'Приём оплаты в криптовалюте на блокчейне Solana '
+            . 'с автоматическим пересчётом из тенге. Деньги идут напрямую на кошелёк продавца.';
+        $this->has_fields = false;
+        $this->supports = ['products'];
+
+        $this->init_form_fields();
+        $this->init_settings();
+
+        $this->title = $this->get_option('title', 'Оплата криптовалютой (USDC)');
+        $this->description = $this->get_option('description', '');
+
+        add_action('woocommerce_update_options_payment_gateways_' . $this->id, [$this, 'process_admin_options']);
+        add_action('woocommerce_thankyou_' . $this->id, [$this, 'render_payment_page']);
+    }
+
+    public function init_form_fields(): void
+    {
+        $this->form_fields = GatewaySettings::fields();
+    }
+
+    /**
+     * Не даём сохранить заведомо нерабочие настройки: иначе продавец узнает
+     * об ошибке от первого покупателя, который не смог заплатить.
+     */
+    public function process_admin_options(): bool
+    {
+        $saved = parent::process_admin_options();
+
+        if ($this->get_option('enabled') !== 'yes') {
+            return $saved;
+        }
+
+        $errors = GatewaySettings::validate([
+            'recipient' => $this->get_option('recipient', ''),
+            'cluster' => $this->get_option('cluster', ''),
+            'rpc_url' => $this->get_option('rpc_url', ''),
+            'token' => $this->get_option('token', ''),
+            'markup_percent' => $this->get_option('markup_percent', '0'),
+            'quote_ttl' => $this->get_option('quote_ttl', '900'),
+            'late_window' => $this->get_option('late_window', '86400'),
+        ]);
+
+        foreach ($errors as $error) {
+            \WC_Admin_Settings::add_error('SolanaPay-KZ: ' . $error);
+        }
+
+        if ($errors !== []) {
+            $this->update_option('enabled', 'no');
+            \WC_Admin_Settings::add_error(
+                'SolanaPay-KZ выключен, пока настройки не исправлены.'
+            );
+        }
+
+        return $saved;
+    }
+
+    /** Способ оплаты не показывается покупателю, пока настройки неверны. */
+    public function is_available(): bool
+    {
+        if (!parent::is_available()) {
+            return false;
+        }
+
+        return GatewaySettings::validate([
+            'recipient' => $this->get_option('recipient', ''),
+            'cluster' => $this->get_option('cluster', ''),
+            'rpc_url' => $this->get_option('rpc_url', ''),
+            'token' => $this->get_option('token', ''),
+            'markup_percent' => $this->get_option('markup_percent', '0'),
+            'quote_ttl' => $this->get_option('quote_ttl', '900'),
+            'late_window' => $this->get_option('late_window', '86400'),
+        ]) === [];
+    }
+
+    /**
+     * @param int $order_id
+     * @return array<string, string>
+     */
+    public function process_payment($order_id): array
+    {
+        $order = wc_get_order($order_id);
+
+        if (!$order instanceof WC_Order) {
+            return ['result' => 'failure'];
+        }
+
+        try {
+            $quote = Quote::create(
+                $this->build_rate_provider(),
+                (string) $order->get_total(),
+                (string) $this->get_option('token', 'USDC'),
+                (string) $this->get_option('cluster', 'devnet'),
+                (float) $this->get_option('markup_percent', '0'),
+                (int) $this->get_option('quote_ttl', '900')
+            );
+
+            $request = PaymentRequest::create($quote, (string) $this->get_option('recipient', ''), [
+                'label' => (string) get_bloginfo('name'),
+                'message' => sprintf('Заказ №%s', $order->get_order_number()),
+            ]);
+        } catch (RateUnavailableException $error) {
+            // Курс недоступен — заказ не создаём: продать по выдуманному курсу
+            // хуже, чем не продать.
+            error_log('SolanaPay-KZ: ' . $error->getMessage());
+            wc_add_notice(
+                'Оплата криптовалютой сейчас недоступна: не удалось получить курс. '
+                . 'Выберите другой способ оплаты.',
+                'error'
+            );
+
+            return ['result' => 'failure'];
+        } catch (Throwable $error) {
+            error_log('SolanaPay-KZ: ' . $error->getMessage());
+            wc_add_notice('Не удалось подготовить оплату криптовалютой. Выберите другой способ.', 'error');
+
+            return ['result' => 'failure'];
+        }
+
+        OrderMeta::save_quote($order, $quote, $request->reference);
+
+        $order->update_status(
+            'pending',
+            sprintf('Ожидается оплата %s %s. Курс %s от «%s».',
+                $quote->amount_token, $quote->token, $quote->rate, $quote->rate_source)
+        );
+
+        // Корзину очищаем: заказ уже создан, возвращаться к ней незачем.
+        if (function_exists('WC') && WC()->cart !== null) {
+            WC()->cart->empty_cart();
+        }
+
+        return [
+            'result' => 'success',
+            'redirect' => $this->get_return_url($order),
+        ];
+    }
+
+    /** Страница «Спасибо за заказ»: сумма, QR и ожидание оплаты. */
+    public function render_payment_page(int $order_id): void
+    {
+        $order = wc_get_order($order_id);
+
+        if (!$order instanceof WC_Order || $order->get_payment_method() !== $this->id) {
+            return;
+        }
+
+        $quote = OrderMeta::read_quote($order);
+        $reference = OrderMeta::read_reference($order);
+
+        if ($quote === null || $reference === null) {
+            echo '<p>Не удалось загрузить данные оплаты. Свяжитесь с магазином.</p>';
+
+            return;
+        }
+
+        // Разметка и опрос статуса — задача 9. Пока выводим сумму и ссылку,
+        // чтобы страницу можно было проверить вручную.
+        printf(
+            '<section class="solanapaykz-payment"><h2>Оплата криптовалютой</h2>'
+            . '<p>К оплате: <strong>%s %s</strong> (%s ₸ по курсу %s)</p>'
+            . '<p><a href="%s">Открыть в кошельке</a></p></section>',
+            esc_html($quote->amount_token),
+            esc_html($quote->token),
+            esc_html($quote->amount_kzt_charged),
+            esc_html($quote->rate),
+            esc_url(PaymentRequest::create($quote, (string) $this->get_option('recipient', ''), [
+                'reference' => $reference,
+            ])->url)
+        );
+    }
+
+    private function build_rate_provider(): RateProvider
+    {
+        $http = new CurlHttpClient();
+
+        return new RateProvider(
+            [new BinanceRateSource($http), new SyntheticRateSource($http)],
+            new TransientCache(),
+            60
+        );
+    }
+}
+```
+
+- [ ] **Шаг 8: Зарегистрировать шлюз в точке входа**
+
+В `solanapaykz.php` добавить подключения после `PaymentRequest.php`:
+
+```php
+require_once __DIR__ . '/includes/GatewaySettings.php';
+```
+
+А внутри проверки на наличие WooCommerce, вместо комментария «Платёжный шлюз
+подключается в задаче 8», добавить:
+
+```php
+    require_once __DIR__ . '/includes/OrderMeta.php';
+    require_once __DIR__ . '/includes/Gateway.php';
+
+    add_filter('woocommerce_payment_gateways', static function (array $gateways): array {
+        $gateways[] = Gateway::class;
+
+        return $gateways;
+    });
+```
+
+Классы `OrderMeta` и `Gateway` подключаются только когда WooCommerce на месте:
+они наследуют и принимают его типы, и без него вызовут фатальную ошибку.
+
+- [ ] **Шаг 9: Запустить весь набор**
+
+Запустить: `docker exec -w /var/www/html/wp-content/plugins/solanapaykz solanapaykz_shop php vendor/bin/phpunit`
+Ожидается: PASS, 130 прежних тестов плюс новые.
+
+- [ ] **Шаг 10: Проверить вручную на демо-магазине**
+
+Юнит-тесты не покрывают связывание с WooCommerce — проверяем руками.
+
+1. Убедиться, что плагин активен и сайт не сломан:
+```bash
+curl -s -o /dev/null -w "%{http_code}
+" https://shop.pagafox.kz/
+docker logs solanapaykz_shop 2>&1 | tail -5 | grep -i fatal || echo "фатальных ошибок нет"
+```
+Ожидается: 200 и отсутствие фатальных ошибок.
+
+2. Убедиться, что способ оплаты появился в списке:
+```bash
+cd /var/www/solanapaykz/demo-shop && source .env
+docker run --rm --network demo-shop_default --volumes-from solanapaykz_shop -u 33:33   -e WORDPRESS_DB_HOST=db -e WORDPRESS_DB_NAME=wordpress -e WORDPRESS_DB_USER=wordpress   -e WORDPRESS_DB_PASSWORD="$MARIADB_PASSWORD"   wordpress:cli wp eval 'foreach (WC()->payment_gateways()->payment_gateways() as $id => $g) { echo $id, " — ", $g->get_method_title(), PHP_EOL; }'
+```
+Ожидается: в списке есть `solanapaykz — SolanaPay-KZ`.
+
+3. Настроить шлюз через WP-CLI на тестовую сеть и проверить, что при неверном
+   адресе он остаётся недоступным, а при верном становится доступен:
+```bash
+docker run --rm --network demo-shop_default --volumes-from solanapaykz_shop -u 33:33   -e WORDPRESS_DB_HOST=db -e WORDPRESS_DB_NAME=wordpress -e WORDPRESS_DB_USER=wordpress   -e WORDPRESS_DB_PASSWORD="$MARIADB_PASSWORD"   wordpress:cli wp eval '
+    update_option("woocommerce_solanapaykz_settings", [
+      "enabled" => "yes", "title" => "Оплата криптовалютой (USDC)",
+      "recipient" => "zzzz", "cluster" => "devnet",
+      "rpc_url" => "https://api.devnet.solana.com", "token" => "USDC",
+      "markup_percent" => "0", "quote_ttl" => "900", "late_window" => "86400",
+    ]);
+    $g = new SolanaPayKZ\Gateway();
+    echo "с неверным адресом доступен: ", $g->is_available() ? "да" : "нет", PHP_EOL;'
+```
+Ожидается: «нет» — шлюз не показывается покупателю при неверных настройках.
+
+4. Повторить с верным адресом (любой валидный адрес Solana, например
+   `9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM`) — ожидается «да».
+
+Результаты всех четырёх проверок вписать в отчёт дословно.
+
+- [ ] **Шаг 11: Коммит и пуш**
+
+```bash
+cd /var/www/solanapaykz
+git add -A
+git commit -m "feat: настройки продавца и платёжный шлюз WooCommerce"
+git push -u origin feat/wc-gateway
+```
+
+---
+
+## Задача 9
+
+Расписывается после ревью задачи 8.
+
+- **Задача 9. Страница оплаты и жизненный цикл заказа.** QR-код в браузере
+  покупателя, опрос статуса каждые 5 секунд через AJAX, проверка по расписанию
+  каждые 5 минут, отмена через срок жизни котировки, проверка отменённых
+  заказов в течение настроенного окна, уведомление продавцу о позднем платеже.
 
 ## Самопроверка плана
 
