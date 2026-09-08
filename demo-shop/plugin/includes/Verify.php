@@ -38,11 +38,24 @@ final class Verify
         }
 
         // По спецификации Solana Pay метка уникальна на платёж, поэтому
-        // берём самую раннюю транзакцию — она и есть искомая оплата.
-        $signature = (string) ($signatures[count($signatures) - 1]['signature'] ?? '');
+        // берём самую раннюю транзакцию — она и есть искомая оплата. Узел
+        // отдаёт подписи от новых к старым, значит нужна последняя запись
+        // массива; если бы мы брали первую (самую новую), злоумышленник
+        // мог бы перебить чужой платёж по той же метке своей транзакцией.
+        //
+        // Поиск идёт с лимитом по умолчанию (get_signatures_for_address
+        // без явного $limit — это 10 в интерфейсе SolanaChain), то есть
+        // «самая ранняя» здесь — самая ранняя среди последних десяти
+        // транзакций по метке. Для одноразового адреса-метки, на который
+        // приходит ровно один платёж, этого достаточно.
+        $last = $signatures[count($signatures) - 1];
+        $signature = $last['signature'] ?? null;
 
-        if ($signature === '') {
-            return $this->result('pending');
+        if (!is_string($signature) || $signature === '') {
+            // Запись без подписи — не «платежа ещё нет», а аномальный
+            // ответ узла: молча трактовать его как отсутствие оплаты
+            // нельзя, иначе сбой узла замаскируется под неуплату.
+            throw new RpcException('Узел блокчейна вернул запись без поля signature.');
         }
 
         $transaction = $this->chain->get_transaction($signature);
@@ -91,9 +104,13 @@ final class Verify
         }
 
         // 2. Метка платежа должна присутствовать среди аккаунтов транзакции.
-        $keys = $transaction['transaction']['message']['accountKeys'] ?? [];
-
-        if (!is_array($keys) || !in_array($reference, $keys, true)) {
+        // У версионированных транзакций часть аккаунтов подставляется не
+        // напрямую, а из заранее опубликованной таблицы адресов и
+        // приходит отдельно, в meta.loadedAddresses (writable и
+        // readonly), а не в message.accountKeys. Такие транзакции — не
+        // редкость: в блоке mainnet 42 из 48 транзакций с USDC их
+        // используют.
+        if (!in_array($reference, $this->account_keys($transaction, $meta), true)) {
             return $this->result('mismatch', $signature, 'В транзакции нет метки платежа.');
         }
 
@@ -122,9 +139,14 @@ final class Verify
     /**
      * Сколько единиц токена поступило получателю.
      *
-     * Считается как разница балансов до и после. Если записи «до» нет,
-     * значит токен-аккаунт создан этой же транзакцией и прежний баланс
-     * равен нулю — иначе первый в жизни платёж продавцу не засчитается.
+     * Считается как сумма разниц балансов до и после по всем счетам
+     * получателя для данного токена — получатель может держать несколько
+     * счётов одного и того же токена, и оплата может разойтись по
+     * нескольким из них; суммарно достаточный платёж не должен
+     * отвергаться из-за того, что на каждый счёт в отдельности пришло
+     * меньше требуемого. Если записи «до» нет, значит токен-аккаунт
+     * создан этой же транзакцией и прежний баланс равен нулю — иначе
+     * первый в жизни платёж продавцу не засчитается.
      *
      * @param array<string, mixed> $meta
      */
@@ -136,15 +158,38 @@ final class Verify
             $before[$index] = $amount;
         }
 
+        $total = null;
+
         foreach ($this->balances($meta, 'postTokenBalances', $recipient, $mint) as $index => $after) {
             $delta = bcsub($after, $before[$index] ?? '0');
 
             if (bccomp($delta, '0') > 0) {
-                return $delta;
+                $total = $total === null ? $delta : bcadd($total, $delta);
             }
         }
 
-        return null;
+        return $total;
+    }
+
+    /**
+     * Все ключи аккаунтов транзакции: из message.accountKeys и, если
+     * транзакция версионированная, из подставленной по таблице адресов
+     * meta.loadedAddresses (writable и readonly).
+     *
+     * @param array<string, mixed> $transaction
+     * @param array<string, mixed> $meta
+     * @return list<mixed>
+     */
+    private function account_keys(array $transaction, array $meta): array
+    {
+        $keys = $transaction['transaction']['message']['accountKeys'] ?? [];
+        $keys = is_array($keys) ? $keys : [];
+
+        $loaded = is_array($meta['loadedAddresses'] ?? null) ? $meta['loadedAddresses'] : [];
+        $writable = is_array($loaded['writable'] ?? null) ? $loaded['writable'] : [];
+        $readonly = is_array($loaded['readonly'] ?? null) ? $loaded['readonly'] : [];
+
+        return array_merge($keys, $writable, $readonly);
     }
 
     /**

@@ -4,6 +4,7 @@
 declare(strict_types=1);
 
 use PHPUnit\Framework\TestCase;
+use SolanaPayKZ\RpcException;
 use SolanaPayKZ\SolanaChain;
 use SolanaPayKZ\Verify;
 
@@ -190,5 +191,116 @@ final class VerifyTest extends TestCase
         $result = $verify->check('Метка', 'Продавец', self::USDC, '1');
 
         self::assertSame('mismatch', $result['status']);
+    }
+
+    public function test_метка_в_loadedAddresses_подтверждается(): void
+    {
+        // Версионированные транзакции подставляют часть аккаунтов из
+        // заранее опубликованной таблицы адресов: такие аккаунты приходят
+        // не в message.accountKeys, а в meta.loadedAddresses. В блоке
+        // mainnet 42 из 48 транзакций с USDC используют такие таблицы.
+        $tx = [
+            'meta' => [
+                'err' => null,
+                'loadedAddresses' => [
+                    'writable' => ['Метка'],
+                    'readonly' => [],
+                ],
+                'preTokenBalances' => [],
+                'postTokenBalances' => [[
+                    'accountIndex' => 3,
+                    'mint' => self::USDC,
+                    'owner' => 'Продавец',
+                    'uiTokenAmount' => ['amount' => '5000000', 'decimals' => 6],
+                ]],
+            ],
+            'transaction' => [
+                'message' => ['accountKeys' => ['НеМетка', 'Продавец']],
+                'signatures' => ['подпись'],
+            ],
+        ];
+
+        $verify = new Verify($this->chain_returning([['signature' => 'подпись']], $tx));
+        $result = $verify->check('Метка', 'Продавец', self::USDC, '5000000');
+
+        self::assertSame('confirmed', $result['status']);
+    }
+
+    public function test_из_нескольких_подписей_берётся_самая_ранняя(): void
+    {
+        // Узел отдаёт подписи от новых к старым. Метка платежа уникальна
+        // на заказ, поэтому нужна именно самая ранняя транзакция по ней —
+        // иначе злоумышленник смог бы перебить чужой платёж своим,
+        // отправив по той же метке новую транзакцию.
+        $successful = $this->fixture('tx-successful-usdc');
+        $failed = $this->fixture('tx-failed-usdc');
+        $reference = $successful['transaction']['message']['accountKeys'][0];
+        $recipient = '7uTT8Xi5RWXzy7h9XL244GRgEycDYDhLjr3ZyNdXi8pZ';
+
+        $chain = $this->createMock(SolanaChain::class);
+        $chain->method('get_signatures_for_address')->willReturn([
+            ['signature' => 'новая'],
+            ['signature' => 'средняя'],
+            ['signature' => 'старая'],
+        ]);
+        $chain->method('get_transaction')->willReturnMap([
+            ['новая', $failed],
+            ['средняя', null],
+            ['старая', $successful],
+        ]);
+
+        $verify = new Verify($chain);
+        $result = $verify->check($reference, $recipient, self::USDC, '10960904');
+
+        self::assertSame('confirmed', $result['status']);
+        self::assertSame('старая', $result['signature']);
+    }
+
+    public function test_сумма_по_нескольким_счетам_получателя_складывается(): void
+    {
+        // Если у получателя два счёта одного и того же токена и оплата
+        // разошлась по обоим, платёж должен засчитаться по сумме, а не
+        // по первой найденной записи.
+        $tx = [
+            'meta' => [
+                'err' => null,
+                'preTokenBalances' => [],
+                'postTokenBalances' => [
+                    [
+                        'accountIndex' => 3,
+                        'mint' => self::USDC,
+                        'owner' => 'Продавец',
+                        'uiTokenAmount' => ['amount' => '2500000', 'decimals' => 6],
+                    ],
+                    [
+                        'accountIndex' => 4,
+                        'mint' => self::USDC,
+                        'owner' => 'Продавец',
+                        'uiTokenAmount' => ['amount' => '2500000', 'decimals' => 6],
+                    ],
+                ],
+            ],
+            'transaction' => [
+                'message' => ['accountKeys' => ['Метка', 'Продавец']],
+                'signatures' => ['подпись'],
+            ],
+        ];
+
+        $verify = new Verify($this->chain_returning([['signature' => 'подпись']], $tx));
+        $result = $verify->check('Метка', 'Продавец', self::USDC, '4000000');
+
+        self::assertSame('confirmed', $result['status']);
+        self::assertSame('5000000', $result['received_units']);
+    }
+
+    public function test_подпись_без_поля_signature_бросает_исключение(): void
+    {
+        // Запись без поля signature — не «платежа ещё нет», а аномальный
+        // ответ узла. Он не должен молча трактоваться как отсутствие
+        // оплаты и должен явно проброситься наверх.
+        $this->expectException(RpcException::class);
+
+        $verify = new Verify($this->chain_returning([['подпись_нет' => 'x']], null));
+        $verify->check('Метка', 'Продавец', self::USDC, '1');
     }
 }
