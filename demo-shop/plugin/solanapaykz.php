@@ -39,6 +39,8 @@ require_once __DIR__ . '/includes/RateProvider.php';
 require_once __DIR__ . '/includes/QuoteException.php';
 require_once __DIR__ . '/includes/Tokens.php';
 require_once __DIR__ . '/includes/Quote.php';
+require_once __DIR__ . '/includes/Base58.php';
+require_once __DIR__ . '/includes/PaymentRequest.php';
 
 const REQUIREMENTS = [
     'php' => '8.1',
