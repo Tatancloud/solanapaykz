@@ -428,6 +428,17 @@ describe('статические файлы', () => {
     expect(ответ.headers.get('content-type')).toContain('text/css');
     expect(ответ.body).toContain('.solanapaykz');
   });
+
+  it('отдаёт /assets/admin.js — перезагружает список заказов, восстановленный из bfcache браузера', async () => {
+    // Правка ревью: Cache-Control: no-store не гарантированно исключает
+    // страницу из back/forward cache — воспроизведено в настоящем Chrome
+    // (см. routes-admin.ts). pageshow/persisted — вторая линия обороны.
+    const ответ = await запрос('GET', '/assets/admin.js');
+    expect(ответ.status).toBe(200);
+    expect(ответ.headers.get('content-type')).toContain('javascript');
+    expect(ответ.body).toContain('pageshow');
+    expect(ответ.body).toContain('event.persisted');
+  });
 });
 
 describe('неизвестные маршруты', () => {
