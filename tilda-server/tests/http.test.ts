@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import type { PaymentRequest, Quote } from '@solanapaykz/core';
+import type { PaymentRequest, PaymentStatus, Quote } from '@solanapaykz/core';
+import type { PaymentCheckerClient } from '../src/checker.js';
 import type { Config } from '../src/config.js';
 import { openDatabase, type NewOrder, type Store } from '../src/db.js';
 import { createLog } from '../src/log.js';
@@ -55,8 +56,13 @@ function телоЗаказа(изменения: Record<string, string> = {}): 
  * Фейковый клиент SDK — как в tests/inbound.test.ts: без него тесты били бы
  * по сети (курс с Binance, RPC) и превратили бы секундный набор в
  * медленный.
+ *
+ * `checkPayment` нужен с задачи 7 (`GET /api/status/:token` сам запускает
+ * проверку платежа, см. src/http/routes-page.ts) — здесь всегда отвечает
+ * «платежа пока нет», ни один тест этого файла не про оплату, а про сам
+ * маршрут: реальную проверку платежа проверяют tests/checker.test.ts.
  */
-function фейковыйКлиент(): PaymentClient {
+function фейковыйКлиент(): PaymentClient & PaymentCheckerClient {
   let счётчик = 0;
   return {
     async createQuote({ amountKzt, token }): Promise<Quote> {
@@ -81,6 +87,9 @@ function фейковыйКлиент(): PaymentClient {
         reference: `метка-${счётчик}`,
         qrSvg: '<svg></svg>',
       };
+    },
+    async checkPayment(): Promise<PaymentStatus> {
+      return { status: 'pending' };
     },
   };
 }
@@ -324,6 +333,71 @@ describe('GET /api/status/:token', () => {
     const тело = JSON.parse(ответ.body);
     expect(тело.state).toBe('оплачен');
     expect(тело.secondsLeft).toBe(0);
+  });
+});
+
+describe('GET /api/status/:token — опрос не ждёт дольше тайм-аута', () => {
+  // Свой сервер с маленьким тайм-аутом опроса и медленной (не отвечающей
+  // «OK») отправкой уведомления: имитирует случай, когда заказ как раз
+  // подтвердился, а Tilda не отвечает — checkOrder изнутри честно
+  // перебирает попытки уведомления с паузами, а опрос не должен ждать
+  // его до конца (см. комментарий у ТАЙМАУТ_ОПРОСА_ПРОВЕРКИ_MS_ПО_УМОЛЧАНИЮ
+  // в src/http/routes-page.ts).
+  let каталог2: string;
+  let store2: Store;
+  let server2: Server;
+  let базовыйUrl2: string;
+
+  beforeEach(async () => {
+    каталог2 = mkdtempSync(join(tmpdir(), 'spkz-http-timeout-'));
+    store2 = openDatabase(join(каталог2, 'orders.sqlite'));
+
+    const клиентСПодтверждённымПлатежом: PaymentClient & PaymentCheckerClient = {
+      ...фейковыйКлиент(),
+      async checkPayment(): Promise<PaymentStatus> {
+        return { status: 'confirmed', signature: 'подпись-медленного-теста', amountPaid: '32.640000' };
+      },
+    };
+
+    const deps: ЗависимостиСервера = {
+      config,
+      store: store2,
+      client: клиентСПодтверждённымПлатежом,
+      log: createLog(() => {}),
+      // Отправка НИКОГДА не отвечает «OK» и намеренно медленная — опрос
+      // должен вернуться раньше, чем она вообще успеет ответить один раз.
+      отправка: async () => {
+        await new Promise((r) => setTimeout(r, 300));
+        return { status: 500, body: 'сервис недоступен' };
+      },
+      задержкиMs: [10, 10, 10, 10],
+      таймаутОпросаMs: 20,
+    };
+
+    server2 = createServer(deps);
+    await new Promise<void>((resolve) => server2.listen(0, '127.0.0.1', resolve));
+    const адрес = server2.address() as AddressInfo;
+    базовыйUrl2 = `http://127.0.0.1:${адрес.port}`;
+  });
+
+  afterEach(async () => {
+    await new Promise<void>((resolve) => server2.close(() => resolve()));
+    rmSync(каталог2, { recursive: true, force: true });
+  });
+
+  it('отвечает быстро с уже записанным «оплачен», не дожидаясь исхода уведомления', async () => {
+    const заказ = store2.createOrder({ ...образецНовогоЗаказа, token: '8'.repeat(32), tildaOrderId: '10868059:110' });
+
+    const начало = Date.now();
+    const ответ = await fetch(`${базовыйUrl2}/api/status/${заказ.token}`);
+    const тело = (await ответ.json()) as { state: string };
+    const затрачено = Date.now() - начало;
+
+    // Тайм-аут опроса — 20 мс, полный перебор попыток уведомления занял бы
+    // не меньше 300 мс (одна медленная отправка) — с большим запасом
+    // проверяем, что ответ не ждал этого целиком.
+    expect(затрачено).toBeLessThan(300);
+    expect(тело.state).toBe('оплачен');
   });
 });
 
