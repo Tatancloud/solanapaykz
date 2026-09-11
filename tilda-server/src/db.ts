@@ -79,14 +79,35 @@ export interface Order {
   customerEmail: string | null;
   description: string | null;
   productsJson: string | null;
+  /**
+   * Момент (Unix-секунды) последней неудачной попытки письма продавцу —
+   * `null`, если письмо ещё не пробовали отправлять или последняя попытка
+   * была успешной. Пишется и снимается через `Store.recordMailOutcome`
+   * (задача 8), не через `updateState`: письмо — не источник правды о
+   * платеже, и это разделение не даёт отметке о письме случайно задеть
+   * `state` или любое другое поле заказа.
+   *
+   * Хранится в базе, а не в памяти процесса: это ровно тот сигнал, ради
+   * которого делается вся эта отметка — продавец должен узнать о неудаче
+   * письма, даже если сервер успел перезапуститься между попыткой и тем,
+   * как список заказов открыли снова.
+   */
+  mailFailedAt: number | null;
+  /** Текст последней ошибки отправки письма продавцу — вместе с `mailFailedAt`, см. его комментарий. `null` при отсутствии сбоя. */
+  mailError: string | null;
 }
 
 /**
  * Данные для создания заказа — всё, кроме того, что проставляет само
  * хранилище: `id` (автоинкремент), начальное `state`, счётчик попыток
- * уведомления и исход последней.
+ * уведомления и исход последней, а также состояние письма продавцу —
+ * оно тоже всегда начинается «сбоя ещё не было» и меняется отдельным
+ * методом (`recordMailOutcome`), а не при создании заказа.
  */
-export type NewOrder = Omit<Order, 'id' | 'state' | 'paidAt' | 'notifyAttempts' | 'notifiedOk'>;
+export type NewOrder = Omit<
+  Order,
+  'id' | 'state' | 'paidAt' | 'notifyAttempts' | 'notifiedOk' | 'mailFailedAt' | 'mailError'
+>;
 
 /**
  * Заказ с таким номером Tilda уже есть в базе.
@@ -145,6 +166,32 @@ export interface Store {
    * молча, без единой записи в журнал.
    */
   markNotified(id: number, ok: boolean, attempt: number): void;
+  /**
+   * Отмечает исход последней попытки письма продавцу: `null` — успех,
+   * снимает прежний сбой; иначе — момент и текст ошибки. Не трогает
+   * `state` и никакое другое поле заказа — письмо не источник правды о
+   * платеже (см. `mailer.ts`), и это разделение гарантирует это на уровне
+   * SQL-запроса, а не только соглашением в коде вызывающей стороны.
+   */
+  recordMailOutcome(id: number, сбой: { at: number; message: string } | null): void;
+  /**
+   * Текущее поколение сессий администратора (`/admin`, задача 8). Токен
+   * сессии несёт номер поколения на момент выдачи; действителен, только
+   * пока это поколение не увеличилось.
+   */
+  sessionGeneration(): number;
+  /**
+   * Увеличивает поколение сессий на 1 и возвращает новое значение —
+   * вызывается выходом (`POST /admin/logout`). Все ранее выданные токены
+   * сразу перестают приниматься, даже если кука не была удалена на
+   * другом устройстве или вкладке (например, утекла) — иначе кнопка
+   * «выйти» лишь притворялась бы, что что-то делает, ровно в момент,
+   * когда ею пользуются встревоженные, а не по привычке.
+   *
+   * Хранится в базе, а не в памяти процесса: перезапуск сервера не должен
+   * обнулять счётчик и тем самым оживлять токены, которые уже были отозваны.
+   */
+  bumpSessionGeneration(): number;
 }
 
 const СХЕМА = `
@@ -173,9 +220,22 @@ CREATE TABLE IF NOT EXISTS orders (
   notified_ok     INTEGER NOT NULL DEFAULT 0,
   customer_email  TEXT,
   description     TEXT,
-  products_json   TEXT
+  products_json   TEXT,
+  mail_failed_at  INTEGER,
+  mail_error      TEXT
 );
 CREATE INDEX IF NOT EXISTS orders_state_created ON orders (state, created_at);
+
+-- Одна строка на весь сервер: текущее поколение сессий администратора
+-- (задача 8). CHECK(id = 1) не даёт завести вторую строку по ошибке —
+-- поколение одно на весь процесс, второе было бы бессмысленно и молча
+-- перестало бы на что-либо влиять.
+CREATE TABLE IF NOT EXISTS admin_session (
+  id         INTEGER NOT NULL CHECK (id = 1),
+  generation INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (id)
+);
+INSERT OR IGNORE INTO admin_session (id, generation) VALUES (1, 0);
 `;
 
 /** Сырая строка таблицы `orders` — имена колонок как в SQL, snake_case. */
@@ -205,6 +265,8 @@ interface СтрокаЗаказа {
   customer_email: string | null;
   description: string | null;
   products_json: string | null;
+  mail_failed_at: number | null;
+  mail_error: string | null;
 }
 
 function изСтроки(р: СтрокаЗаказа): Order {
@@ -234,6 +296,8 @@ function изСтроки(р: СтрокаЗаказа): Order {
     customerEmail: р.customer_email,
     description: р.description,
     productsJson: р.products_json,
+    mailFailedAt: р.mail_failed_at,
+    mailError: р.mail_error,
   };
 }
 
@@ -263,6 +327,8 @@ const КОЛОНКА: Record<Exclude<keyof Order, 'id'>, string> = {
   customerEmail: 'customer_email',
   description: 'description',
   productsJson: 'products_json',
+  mailFailedAt: 'mail_failed_at',
+  mailError: 'mail_error',
 };
 
 /**
@@ -340,8 +406,16 @@ export function этоДубльНомераTilda(е: unknown): boolean {
  * а не только числом). Боевой базы по-прежнему нет, поэтому и в этот раз
  * — просто отказ на несовпадении версии, без миграции существующего
  * файла.
+ *
+ * Версия 3 (была 2): добавлены колонки `mail_failed_at`/`mail_error`
+ * (видимость сбоя письма продавцу в списке заказов должна пережить
+ * перезапуск сервера — задача 8, правка ревью) и таблица `admin_session`
+ * с единственной строкой-счётчиком поколения сессий (чтобы выход из
+ * списка заказов отзывал уже выданные токены, а не только просил браузер
+ * забыть куку). Боевой базы по-прежнему нет — снова просто отказ на
+ * несовпадении версии, без миграции существующего файла.
  */
-const ВЕРСИЯ_СХЕМЫ = 2;
+const ВЕРСИЯ_СХЕМЫ = 3;
 
 /**
  * Открывает (создаёт при отсутствии) файл базы и возвращает хранилище
@@ -402,12 +476,14 @@ export function openDatabase(путь: string, busyTimeoutMs = 5000): Store {
       tilda_order_id, token, state, amount_kzt, amount_token, token_symbol,
       cluster, recipient, reference, rate, rate_source, payment_url,
       quote_json, created_at, expires_at, test_mode, tilda_signature, tx_signature, paid_at,
-      notify_attempts, notified_ok, customer_email, description, products_json
+      notify_attempts, notified_ok, customer_email, description, products_json,
+      mail_failed_at, mail_error
     ) VALUES (
       @tilda_order_id, @token, @state, @amount_kzt, @amount_token, @token_symbol,
       @cluster, @recipient, @reference, @rate, @rate_source, @payment_url,
       @quote_json, @created_at, @expires_at, @test_mode, @tilda_signature, @tx_signature, @paid_at,
-      @notify_attempts, @notified_ok, @customer_email, @description, @products_json
+      @notify_attempts, @notified_ok, @customer_email, @description, @products_json,
+      @mail_failed_at, @mail_error
     )
   `);
   const найтиПоId = db.prepare('SELECT * FROM orders WHERE id = ?');
@@ -459,6 +535,8 @@ export function openDatabase(путь: string, busyTimeoutMs = 5000): Store {
         customer_email: o.customerEmail,
         description: o.description,
         products_json: o.productsJson,
+        mail_failed_at: null,
+        mail_error: null,
       });
     } catch (е) {
       if (этоДубльНомераTilda(е)) {
@@ -539,6 +617,25 @@ export function openDatabase(путь: string, busyTimeoutMs = 5000): Store {
     ).run(attempt, okValue, okValue, id);
   }
 
+  const записатьИсходПисьма = db.prepare('UPDATE orders SET mail_failed_at = ?, mail_error = ? WHERE id = ?');
+
+  function recordMailOutcome(id: number, сбой: { at: number; message: string } | null): void {
+    записатьИсходПисьма.run(сбой ? сбой.at : null, сбой ? сбой.message : null, id);
+  }
+
+  const читатьПоколениеСессий = db.prepare('SELECT generation FROM admin_session WHERE id = 1');
+  const увеличитьПоколениеСессий = db.prepare('UPDATE admin_session SET generation = generation + 1 WHERE id = 1');
+
+  function sessionGeneration(): number {
+    const строка = читатьПоколениеСессий.get() as { generation: number };
+    return строка.generation;
+  }
+
+  function bumpSessionGeneration(): number {
+    увеличитьПоколениеСессий.run();
+    return sessionGeneration();
+  }
+
   return {
     createOrder,
     findByTildaOrderId,
@@ -547,5 +644,8 @@ export function openDatabase(путь: string, busyTimeoutMs = 5000): Store {
     listPending,
     updateState,
     markNotified,
+    recordMailOutcome,
+    sessionGeneration,
+    bumpSessionGeneration,
   };
 }

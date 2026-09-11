@@ -180,6 +180,65 @@ describe('Store', () => {
     expect(после?.notifiedOk).toBe(0);
   });
 
+  it('новый заказ создаётся без сбоя письма продавцу (mailFailedAt/mailError = null)', () => {
+    const о = store.createOrder(образец);
+    expect(о.mailFailedAt).toBeNull();
+    expect(о.mailError).toBeNull();
+  });
+
+  it('recordMailOutcome записывает сбой письма и не трогает state заказа', () => {
+    const о = store.createOrder(образец);
+    store.updateState(о.id, 'оплачен', { txSignature: 'подпись' });
+
+    store.recordMailOutcome(о.id, { at: 1_789_200_777, message: 'SMTP недоступен' });
+
+    const после = store.findByToken('ткн-1')!;
+    expect(после.mailFailedAt).toBe(1_789_200_777);
+    expect(после.mailError).toBe('SMTP недоступен');
+    expect(после.state).toBe('оплачен'); // не задето записью об исходе письма
+  });
+
+  it('recordMailOutcome(id, null) снимает ранее записанный сбой', () => {
+    const о = store.createOrder(образец);
+    store.recordMailOutcome(о.id, { at: 100, message: 'сбой' });
+    store.recordMailOutcome(о.id, null);
+
+    const после = store.findByToken('ткн-1')!;
+    expect(после.mailFailedAt).toBeNull();
+    expect(после.mailError).toBeNull();
+  });
+
+  it('сбой письма переживает повторное открытие того же файла базы («перезапуск сервера»)', () => {
+    const путь = join(каталог, 'mail-outcome.sqlite');
+    const первый = openDatabase(путь);
+    const о = первый.createOrder({ ...образец, tildaOrderId: 'm:1', token: 'ткн-перезапуск' });
+    первый.recordMailOutcome(о.id, { at: 100, message: 'нет связи с SMTP' });
+
+    const второй = openDatabase(путь);
+    const заново = второй.findByToken('ткн-перезапуск');
+    expect(заново?.mailError).toBe('нет связи с SMTP');
+    expect(заново?.mailFailedAt).toBe(100);
+  });
+
+  it('sessionGeneration начинается с 0, bumpSessionGeneration увеличивает и возвращает новое значение', () => {
+    expect(store.sessionGeneration()).toBe(0);
+    expect(store.bumpSessionGeneration()).toBe(1);
+    expect(store.sessionGeneration()).toBe(1);
+    expect(store.bumpSessionGeneration()).toBe(2);
+  });
+
+  it('поколение сессий переживает повторное открытие того же файла базы («перезапуск сервера»)', () => {
+    // Иначе перезапуск сервера ровно в момент, когда админ понадеялся на
+    // «выйти» после утечки куки, оживил бы старый токен обратно.
+    const путь = join(каталог, 'session-generation.sqlite');
+    const первый = openDatabase(путь);
+    первый.bumpSessionGeneration();
+    первый.bumpSessionGeneration();
+
+    const второй = openDatabase(путь);
+    expect(второй.sessionGeneration()).toBe(2);
+  });
+
   it('busyTimeoutMs заставляет проигравшего в гонке ждать освобождения блокировки, а не падать мгновенно', () => {
     // busy_timeout — свойство отдельного соединения, а не файла базы:
     // прочитать его через PRAGMA с ДРУГОГО соединения нельзя, оно всегда

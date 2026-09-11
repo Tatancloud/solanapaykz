@@ -15,11 +15,19 @@
  * - пароль сравнивается постоянным временем (`timingSafeEqual`);
  * - попытки входа ограничены — пять за пятнадцать минут на адрес,
  *   независимо от того, верным или неверным был очередной пароль;
- * - сессия — подписанная кука на 12 часов, ключ подписи — `adminPassword`
- *   из настроек (секрет уже существует и известен только серверу; отдельного
- *   секрета сессии заводить незачем, а утечка `adminPassword` и без того
- *   даёт вход напрямую, так что переиспользование не добавляет риска);
- * - кука — `HttpOnly`, `Secure`, `SameSite=Strict`.
+ * - сессия — подписанная кука на 12 часов. Ключ подписи — не сам
+ *   `adminPassword`, а отдельное значение, выведенное из него HMAC'ом с
+ *   постоянной меткой (`ключСессии`, ниже): у `adminPassword` уже есть своё
+ *   назначение — сравниваться с введённым паролем, — и не стоит давать
+ *   одному секрету второе, даже когда прямой риск от этого не растёт.
+ *   Полезный побочный эффект: смена пароля меняет и производный ключ, а
+ *   значит обесценивает все выданные раньше сессии сама по себе;
+ * - кука — `HttpOnly`, `Secure`, `SameSite=Strict`;
+ * - токен несёт номер поколения сессий (`Store.sessionGeneration`, задача
+ *   8, правка ревью). Выход (`POST /admin/logout`) увеличивает поколение в
+ *   базе — все ранее выданные токены, включая тот, что мог утечь и остаться
+ *   в чужом браузере, сразу перестают приниматься, а не только тот, что
+ *   кука на этом устройстве попросят забыть.
  *
  * Всё, что в разметку списка попадает из заказа (номер, суммы, состояние,
  * подпись транзакции), экранируется через `экранироватьHtml` — те же
@@ -30,7 +38,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Order } from '../db.js';
-import { сбойОтправки, ссылкаНаТранзакцию } from '../mailer.js';
+import { ссылкаНаТранзакцию } from '../mailer.js';
 import { экранироватьHtml } from './html.js';
 import { прочитатьТело, разобратьUrlencoded, ТелоСлишкомБольшое } from './routes-pay.js';
 import type { ЗависимостиСервера } from './server.js';
@@ -43,25 +51,44 @@ const СРОК_СЕССИИ_СЕК = 12 * 60 * 60;
 
 /* ---------------------------- сессия ---------------------------- */
 
-/** Подписанный токен сессии: `<истекает-unix-сек>.<hex-hmac>`. Разделитель безопасен: первая часть — только цифры. */
-function токенСессии(секрет: string, истекает: number): string {
-  const подпись = createHmac('sha256', секрет).update(String(истекает)).digest('hex');
-  return `${истекает}.${подпись}`;
+/**
+ * Ключ HMAC для подписи сессии — не сам `adminPassword`, а его HMAC с
+ * постоянной меткой `'сессия'`. Так у `adminPassword` остаётся одно
+ * назначение (сравниваться с введённым паролем), а не два, и смена пароля
+ * автоматически обесценивает все выданные раньше токены — оба свойства
+ * важны сами по себе, не только для устранения риска (см. заголовок файла).
+ */
+function ключСессии(adminPassword: string): Buffer {
+  return createHmac('sha256', adminPassword).update('сессия').digest();
 }
 
-function сессияДействительна(значение: string | undefined, секрет: string, сейчасСек: number): boolean {
+/** Подписанный токен сессии: `<истекает-unix-сек>.<поколение>.<hex-hmac>`. Оба числовых поля — только цифры, разделитель однозначен. */
+function токенСессии(ключ: Buffer, истекает: number, поколение: number): string {
+  const подпись = createHmac('sha256', ключ).update(`${истекает}.${поколение}`).digest('hex');
+  return `${истекает}.${поколение}.${подпись}`;
+}
+
+function сессияДействительна(
+  значение: string | undefined,
+  ключ: Buffer,
+  текущееПоколение: number,
+  сейчасСек: number,
+): boolean {
   if (!значение) return false;
-  const точка = значение.indexOf('.');
-  if (точка < 0) return false;
+  const части = значение.split('.');
+  if (части.length !== 3) return false;
+  const [истекаетСтрока, поколениеСтрока, подпись] = части as [string, string, string];
+  if (!/^\d+$/.test(истекаетСтрока) || !/^\d+$/.test(поколениеСтрока)) return false;
 
-  const истекаетСтрока = значение.slice(0, точка);
-  const подпись = значение.slice(точка + 1);
-  if (!/^\d+$/.test(истекаетСтрока)) return false;
-
-  const ожидаемая = createHmac('sha256', секрет).update(истекаетСтрока).digest('hex');
+  const ожидаемая = createHmac('sha256', ключ).update(`${истекаетСтрока}.${поколениеСтрока}`).digest('hex');
   const а = Buffer.from(подпись, 'utf8');
   const б = Buffer.from(ожидаемая, 'utf8');
   if (а.length !== б.length || !timingSafeEqual(а, б)) return false;
+
+  // Поколение сверяется ТОЛЬКО после того, как подпись подтвердила, что
+  // числа в токене не подделаны — иначе можно было бы прочитать чужое
+  // текущее поколение простым перебором значений в куке, не зная секрета.
+  if (Number(поколениеСтрока) !== текущееПоколение) return false;
 
   return Number(истекаетСтрока) > сейчасСек;
 }
@@ -79,7 +106,12 @@ function прочитатьКуку(req: IncomingMessage, имя: string): strin
 
 function естьСессия(req: IncomingMessage, deps: ЗависимостиСервера): boolean {
   const значение = прочитатьКуку(req, ИМЯ_КУКИ);
-  return сессияДействительна(значение, deps.config.adminPassword, Math.floor(Date.now() / 1000));
+  return сессияДействительна(
+    значение,
+    ключСессии(deps.config.adminPassword),
+    deps.store.sessionGeneration(),
+    Math.floor(Date.now() / 1000),
+  );
 }
 
 /** `Secure` — кука уходит только по HTTPS; `HttpOnly` — недоступна из JS на странице; `SameSite=Strict` — не уходит с чужого сайта. Всё три — по заданию. */
@@ -155,15 +187,16 @@ function транзакцияСсылкой(order: Order): string {
 }
 
 /**
- * Если недавняя отправка письма продавцу по этому заказу провалилась —
- * видимая строка об этом (см. `../mailer.ts`, `сбойОтправки`). Неудача
- * письма не меняет состояние заказа, но обязана быть заметна человеку,
- * иначе она пройдёт мимо: почта не источник правды о платеже, и без этой
- * строки некому напомнить продавцу вручную проверить заказ.
+ * Если последняя отправка письма продавцу по этому заказу провалилась —
+ * видимая строка об этом (`order.mailError`, пишется `Store.recordMailOutcome`
+ * из `../mailer.ts`). Неудача письма не меняет состояние заказа, но обязана
+ * быть заметна человеку: почта — основной способ продавца узнать об
+ * оплате, и без этой строки молчаливый провал отправки означал бы, что он
+ * не узнает вообще. Хранится в базе, а не в памяти процесса — переживает
+ * перезапуск сервера, ровно как и любой другой факт о заказе.
  */
 function строкаСбояПисьма(order: Order): string {
-  const сбой = сбойОтправки(order.token);
-  return сбой ? `Письмо не отправлено: ${экранироватьHtml(сбой.сообщение)}` : '';
+  return order.mailError ? `Письмо не отправлено: ${экранироватьHtml(order.mailError)}` : '';
 }
 
 function датаЗаказа(createdAtСек: number): string {
@@ -206,7 +239,7 @@ export interface AdminRoutes {
   список(req: IncomingMessage, res: ServerResponse, deps: ЗависимостиСервера): void;
   формаВхода(req: IncomingMessage, res: ServerResponse, deps: ЗависимостиСервера): void;
   вход(req: IncomingMessage, res: ServerResponse, deps: ЗависимостиСервера): Promise<void>;
-  выход(req: IncomingMessage, res: ServerResponse): void;
+  выход(req: IncomingMessage, res: ServerResponse, deps: ЗависимостиСервера): void;
 }
 
 /**
@@ -309,12 +342,16 @@ export function createAdminRoutes(): AdminRoutes {
 
     сброситьПопытки(ip);
     const истекаетСек = Math.floor(сейчасMs / 1000) + СРОК_СЕССИИ_СЕК;
-    const токен = токенСессии(deps.config.adminPassword, истекаетСек);
+    const токен = токенСессии(ключСессии(deps.config.adminPassword), истекаетСек, deps.store.sessionGeneration());
     res.writeHead(303, { location: '/admin', 'set-cookie': кукаВхода(токен) });
     res.end();
   }
 
-  function выход(req: IncomingMessage, res: ServerResponse): void {
+  function выход(req: IncomingMessage, res: ServerResponse, deps: ЗависимостиСервера): void {
+    // Увеличивает поколение в БАЗЕ, а не в памяти: перезапуск сервера не
+    // должен обнулять счётчик и тем самым оживлять токен, который уже был
+    // отозван этим выходом (см. заголовок файла и `Store.bumpSessionGeneration`).
+    deps.store.bumpSessionGeneration();
     res.writeHead(303, { location: '/admin/login', 'set-cookie': КУКА_ВЫХОДА });
     res.end();
   }
