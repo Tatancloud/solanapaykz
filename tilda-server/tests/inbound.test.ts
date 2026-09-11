@@ -216,12 +216,19 @@ describe('createPaymentFor', () => {
     expect(созданный.recipient).toBe('9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM');
     expect(созданный.customerEmail).toBe('k@example.kz');
     expect(созданный.description).toBe('Букет «Астана»');
+    expect(созданный.testMode).toBe(false);
     expect(JSON.parse(созданный.productsJson ?? 'null')).toEqual([
       { name: 'Букет', quantity: 1, price: 15000 },
     ]);
     // notify_url из запроса не хранится в заказе вовсе — Order его не несёт
     // (см. db.ts): у типа просто нет такого поля, это проверено компилятором,
     // а не отдельным assert.
+  });
+
+  it('признак тестового режима сохраняется в заказе — восстановить его позже неоткуда', async () => {
+    заказ = парс(телоЗаказа({ test_mode: '1' }));
+    const созданный = await createPaymentFor(заказ, deps);
+    expect(созданный.testMode).toBe(true);
   });
 
   it('уведомления всегда идут по config.tildaNotifyUrl, а не по notify_url из запроса', async () => {
@@ -288,6 +295,7 @@ describe('createPaymentFor', () => {
       quoteJson: '{}',
       createdAt: 1789200000,
       expiresAt: 1789200900,
+      testMode: заказ.testMode,
       tildaSignature: заказ.signature,
       txSignature: null,
       customerEmail: заказ.email,

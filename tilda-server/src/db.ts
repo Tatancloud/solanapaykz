@@ -47,6 +47,14 @@ export interface Order {
   createdAt: number;
   expiresAt: number;
   /**
+   * Признак тестового режима (`test_mode`) из заказа Tilda — входит в
+   * подпись, поэтому заверен. Заморожен при создании и хранится, потому что
+   * восстановить его позже неоткуда: валюта у нас константа (KZT), время
+   * можно взять свежее, а этот флаг — нет. Нужен уведомлению (задача 8):
+   * Tilda ждёт его обратно в том же виде, в каком прислала.
+   */
+  testMode: boolean;
+  /**
    * Подпись заказа от Tilda. Пишется при создании и больше не меняется —
    * единственное доказательство, что заказ с такой суммой действительно
    * пришёл от площадки, а не был подделан. Раньше делила один столбец с
@@ -130,6 +138,7 @@ CREATE TABLE IF NOT EXISTS orders (
   quote_json      TEXT    NOT NULL,
   created_at      INTEGER NOT NULL,
   expires_at      INTEGER NOT NULL,
+  test_mode       INTEGER NOT NULL DEFAULT 0,
   tilda_signature TEXT,
   tx_signature    TEXT,
   notify_attempts INTEGER NOT NULL DEFAULT 0,
@@ -159,6 +168,7 @@ interface СтрокаЗаказа {
   quote_json: string;
   created_at: number;
   expires_at: number;
+  test_mode: number;
   tilda_signature: string | null;
   tx_signature: string | null;
   notify_attempts: number;
@@ -186,6 +196,7 @@ function изСтроки(р: СтрокаЗаказа): Order {
     quoteJson: р.quote_json,
     createdAt: р.created_at,
     expiresAt: р.expires_at,
+    testMode: р.test_mode === 1,
     tildaSignature: р.tilda_signature,
     txSignature: р.tx_signature,
     notifyAttempts: р.notify_attempts,
@@ -213,6 +224,7 @@ const КОЛОНКА: Record<Exclude<keyof Order, 'id'>, string> = {
   quoteJson: 'quote_json',
   createdAt: 'created_at',
   expiresAt: 'expires_at',
+  testMode: 'test_mode',
   tildaSignature: 'tilda_signature',
   txSignature: 'tx_signature',
   notifyAttempts: 'notify_attempts',
@@ -315,12 +327,12 @@ export function openDatabase(путь: string, busyTimeoutMs = 5000): Store {
     INSERT INTO orders (
       tilda_order_id, token, state, amount_kzt, amount_token, token_symbol,
       cluster, recipient, reference, rate, rate_source, payment_url,
-      quote_json, created_at, expires_at, tilda_signature, tx_signature,
+      quote_json, created_at, expires_at, test_mode, tilda_signature, tx_signature,
       notify_attempts, notified_ok, customer_email, description, products_json
     ) VALUES (
       @tilda_order_id, @token, @state, @amount_kzt, @amount_token, @token_symbol,
       @cluster, @recipient, @reference, @rate, @rate_source, @payment_url,
-      @quote_json, @created_at, @expires_at, @tilda_signature, @tx_signature,
+      @quote_json, @created_at, @expires_at, @test_mode, @tilda_signature, @tx_signature,
       @notify_attempts, @notified_ok, @customer_email, @description, @products_json
     )
   `);
@@ -363,6 +375,7 @@ export function openDatabase(путь: string, busyTimeoutMs = 5000): Store {
         quote_json: o.quoteJson,
         created_at: o.createdAt,
         expires_at: o.expiresAt,
+        test_mode: o.testMode ? 1 : 0,
         tilda_signature: o.tildaSignature,
         tx_signature: o.txSignature,
         notify_attempts: 0,

@@ -266,6 +266,10 @@ export async function createPaymentFor(order: TildaOrder, deps: CreatePaymentFor
     // ISO-строки: переводим один раз здесь, при заморозке записи заказа.
     createdAt: Math.floor(Date.parse(quote.createdAt) / 1000),
     expiresAt: Math.floor(Date.parse(quote.expiresAt) / 1000),
+    // Заморожен здесь и хранится: восстановить его позже неоткуда (валюта —
+    // константа KZT, время можно взять свежее, а этот флаг — нет), а
+    // уведомление Tilda (задача 8) обязано вернуть его обратно.
+    testMode: order.testMode,
     // Подпись заказа Tilda — доказательство происхождения заказа, отдельный
     // столбец от подписи транзакции Solana (та появится только при оплате,
     // задача 7). Один столбец на обе означал бы, что подтверждение платежа

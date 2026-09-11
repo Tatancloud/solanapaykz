@@ -23,6 +23,7 @@ const образец: NewOrder = {
   quoteJson: '{}',
   createdAt: 1789200000,
   expiresAt: 1789200900,
+  testMode: false,
   tildaSignature: 'подпись',
   txSignature: null,
   customerEmail: 'k@example.kz',
@@ -45,6 +46,13 @@ describe('Store', () => {
     expect(создан.state).toBe('ожидает');
     expect(store.findByTildaOrderId('10868059:42')?.id).toBe(создан.id);
     expect(store.findByToken('ткн-1')?.id).toBe(создан.id);
+  });
+
+  it('сохраняет признак тестового режима — восстановить его позже неоткуда', () => {
+    const боевой = store.createOrder({ ...образец, tildaOrderId: 't:1', token: 'т-боевой', testMode: false });
+    const тестовый = store.createOrder({ ...образец, tildaOrderId: 't:2', token: 'т-тестовый', testMode: true });
+    expect(store.findByToken('т-боевой')?.testMode).toBe(false);
+    expect(store.findByToken('т-тестовый')?.testMode).toBe(true);
   });
 
   it('не заводит второй заказ с тем же номером Tilda', () => {
