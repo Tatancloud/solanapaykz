@@ -62,6 +62,28 @@ describe('parseTildaOrder', () => {
     const з = parseTildaOrder(телоЗаказа({ products: 'не json' }));
     expect(з.products).toBeNull();
   });
+
+  it('слишком длинное описание обрезается, а не сохраняется целиком', () => {
+    const з = parseTildaOrder(телоЗаказа({ description: 'а'.repeat(200_000) }));
+    expect(з.description).not.toBeNull();
+    expect(з.description?.length).toBe(255);
+  });
+
+  it('слишком длинный состав корзины трактуется как испорченный: становится null', () => {
+    const огромнаяКорзина = JSON.stringify(
+      Array.from({ length: 5000 }, (_, i) => ({ name: `товар-${i}`, quantity: 1, price: 100 })),
+    );
+    const з = parseTildaOrder(телоЗаказа({ products: огромнаяКорзина }));
+    expect(з.products).toBeNull();
+  });
+
+  it('нормализует подпись так же, как при сверке — иначе сохранённое значение с ней разойдётся', () => {
+    const тело = телоЗаказа();
+    const сИскажённойПодписью = { ...тело, signature: тело.signature.toUpperCase() + '  ' };
+    const з = parseTildaOrder(сИскажённойПодписью);
+    expect(з.signature).toBe(тело.signature);
+    expect(() => проверитьЗаказ(з, сИскажённойПодписью, секрет)).not.toThrow();
+  });
 });
 
 describe('проверитьЗаказ', () => {
