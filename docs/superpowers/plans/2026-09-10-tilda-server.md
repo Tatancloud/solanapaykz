@@ -595,7 +595,9 @@ git checkout main && git merge --no-ff feat/tilda-signature && git push origin m
   `cluster: 'mainnet' | 'devnet'`, `recipient: string`, `reference: string`,
   `rate: string`, `rateSource: string`, `paymentUrl: string`,
   `quoteJson: string`, `createdAt: number`, `expiresAt: number`,
-  `signature: string | null`, `notifyUrl: string | null`,
+  `tildaSignature: string | null` (подпись заказа от Tilda — для разбора
+  споров), `txSignature: string | null` (подпись транзакции Solana),
+  `notifyUrl: string | null`,
   `notifyAttempts: number`, `notifiedOk: 0 | 1`, `customerEmail: string | null`,
   `description: string | null`, `productsJson: string | null`.
 
@@ -637,7 +639,7 @@ const образец: NewOrder = {
   quoteJson: '{}',
   createdAt: 1789200000,
   expiresAt: 1789200900,
-  signature: 'подпись',
+  tildaSignature: 'подпись',
   notifyUrl: 'https://tilda.cc/notify/x',
   customerEmail: 'k@example.kz',
   description: 'Букет',
@@ -679,12 +681,17 @@ describe('Store', () => {
     expect(второй.findByTildaOrderId('10868059:42')).not.toBeNull();
   });
 
-  it('меняет состояние и сохраняет подпись транзакции', () => {
+  it('меняет состояние и сохраняет подпись транзакции, не трогая подпись Tilda', () => {
     const о = store.createOrder(образец);
-    store.updateState(о.id, 'оплачен', { signature: 'подпись-транзакции' });
+    store.updateState(о.id, 'оплачен', { txSignature: 'подпись-транзакции' });
     const после = store.findByToken('ткн-1');
     expect(после?.state).toBe('оплачен');
-    expect(после?.signature).toBe('подпись-транзакции');
+    expect(после?.txSignature).toBe('подпись-транзакции');
+    // Две подписи — разные вещи и разные столбцы: подпись заказа от Tilda
+    // доказывает, что заказ пришёл от неё, подпись транзакции указывает на
+    // платёж в блокчейне. Один столбец на обе означал бы, что оплата стирает
+    // доказательство происхождения заказа.
+    expect(после?.tildaSignature).toBe('подпись');
   });
 
   it('listPending отдаёт ожидающие, старые первыми, и не отдаёт завершённые', () => {
@@ -736,7 +743,8 @@ CREATE TABLE IF NOT EXISTS orders (
   quote_json      TEXT    NOT NULL,
   created_at      INTEGER NOT NULL,
   expires_at      INTEGER NOT NULL,
-  signature       TEXT,
+  tilda_signature TEXT,
+  tx_signature    TEXT,
   notify_url      TEXT,
   notify_attempts INTEGER NOT NULL DEFAULT 0,
   notified_ok     INTEGER NOT NULL DEFAULT 0,
@@ -1422,7 +1430,7 @@ it('подтверждённый платёж переводит заказ в �
   await checkOrder(о, { ...deps, client: клиентСПлатежом('подпись-1') });
   const после = store.findByToken(о.token);
   expect(после?.state).toBe('оплачен');
-  expect(после?.signature).toBe('подпись-1');
+  expect(после?.txSignature).toBe('подпись-1');
 });
 
 it('один платёж не порождает двух уведомлений', async () => {

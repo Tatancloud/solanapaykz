@@ -172,7 +172,7 @@ export interface PaymentClient {
 export interface CreatePaymentForDeps {
   store: Store;
   client: PaymentClient;
-  config: Pick<Config, 'token' | 'recipient'>;
+  config: Pick<Config, 'token' | 'recipient' | 'shopName'>;
 }
 
 /**
@@ -206,7 +206,11 @@ export async function createPaymentFor(order: TildaOrder, deps: CreatePaymentFor
   // вызывающему коду как есть.
   const quote = await deps.client.createQuote({ amountKzt: order.amountKzt, token: deps.config.token });
   const paymentRequest = await deps.client.createPaymentRequest(quote, {
-    label: 'Оплата заказа',
+    // Покупатель видит label в своём кошельке в момент подтверждения
+    // платежа: безликая метка вызывает подозрение — человек, который не
+    // понимает, кому платит, платёж отменяет. Название магазина, если
+    // продавец его задал в настройках, — понятнее общей фразы.
+    label: deps.config.shopName || 'Оплата заказа',
     message: `Заказ №${order.orderId}`,
   });
 
@@ -230,7 +234,12 @@ export async function createPaymentFor(order: TildaOrder, deps: CreatePaymentFor
     // ISO-строки: переводим один раз здесь, при заморозке записи заказа.
     createdAt: Math.floor(Date.parse(quote.createdAt) / 1000),
     expiresAt: Math.floor(Date.parse(quote.expiresAt) / 1000),
-    signature: order.signature,
+    // Подпись заказа Tilda — доказательство происхождения заказа, отдельный
+    // столбец от подписи транзакции Solana (та появится только при оплате,
+    // задача 7). Один столбец на обе означал бы, что подтверждение платежа
+    // стирает единственное доказательство, что заказ вообще пришёл от Tilda.
+    tildaSignature: order.signature,
+    txSignature: null,
     notifyUrl: order.notifyUrl,
     customerEmail: order.email,
     description: order.description,

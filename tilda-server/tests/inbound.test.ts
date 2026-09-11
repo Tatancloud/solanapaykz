@@ -98,15 +98,23 @@ describe('проверитьЗаказ', () => {
  * Считает вызовы, чтобы идемпотентность было видно по числу обращений, а не
  * только по совпадению полей результата.
  */
-function фейковыйКлиент(): PaymentClient & { вызововКотировки: number; вызововЗапроса: number } {
+function фейковыйКлиент(): PaymentClient & {
+  вызововКотировки: number;
+  вызововЗапроса: number;
+  последняяМетка: string | undefined;
+} {
   let котировка = 0;
   let запрос = 0;
+  let последняяМетка: string | undefined;
   return {
     get вызововКотировки() {
       return котировка;
     },
     get вызововЗапроса() {
       return запрос;
+    },
+    get последняяМетка() {
+      return последняяМетка;
     },
     async createQuote({ amountKzt, token }): Promise<Quote> {
       котировка += 1;
@@ -123,8 +131,9 @@ function фейковыйКлиент(): PaymentClient & { вызововКот�
         expiresAt: new Date(1789200900000).toISOString(),
       });
     },
-    async createPaymentRequest(quote): Promise<PaymentRequest> {
+    async createPaymentRequest(quote, options): Promise<PaymentRequest> {
       запрос += 1;
+      последняяМетка = options?.label;
       return {
         quote,
         url: `solana:пример-${запрос}`,
@@ -162,6 +171,7 @@ describe('createPaymentFor', () => {
       config: {
         token: 'USDC',
         recipient: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM',
+        shopName: '',
       },
     };
     заказ = парс(телоЗаказа());
@@ -205,6 +215,17 @@ describe('createPaymentFor', () => {
     ]);
   });
 
+  it('без названия магазина в настройках метка платежа — общая фраза', async () => {
+    await createPaymentFor(заказ, deps);
+    expect((deps.client as ReturnType<typeof фейковыйКлиент>).последняяМетка).toBe('Оплата заказа');
+  });
+
+  it('название магазина из настроек идёт меткой платежа: покупатель должен видеть, кому платит', async () => {
+    deps = { ...deps, config: { ...deps.config, shopName: 'Цветы Астана' } };
+    await createPaymentFor(заказ, deps);
+    expect((deps.client as ReturnType<typeof фейковыйКлиент>).последняяМетка).toBe('Цветы Астана');
+  });
+
   it('параллельная гонка: второй createOrder ловит DuplicateOrderError и перечитывает запись', async () => {
     // Настоящую гонку двух процессов в юнит-тесте не воспроизвести — здесь
     // имитируем её результат: к моменту первой проверки findByTildaOrderId
@@ -237,7 +258,8 @@ describe('createPaymentFor', () => {
       quoteJson: '{}',
       createdAt: 1789200000,
       expiresAt: 1789200900,
-      signature: заказ.signature,
+      tildaSignature: заказ.signature,
+      txSignature: null,
       notifyUrl: заказ.notifyUrl,
       customerEmail: заказ.email,
       description: заказ.description,

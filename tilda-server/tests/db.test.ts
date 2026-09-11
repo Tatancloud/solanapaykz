@@ -23,7 +23,8 @@ const образец: NewOrder = {
   quoteJson: '{}',
   createdAt: 1789200000,
   expiresAt: 1789200900,
-  signature: 'подпись',
+  tildaSignature: 'подпись',
+  txSignature: null,
   notifyUrl: 'https://tilda.cc/notify/x',
   customerEmail: 'k@example.kz',
   description: 'Букет',
@@ -65,12 +66,17 @@ describe('Store', () => {
     expect(второй.findByTildaOrderId('10868059:42')).not.toBeNull();
   });
 
-  it('меняет состояние и сохраняет подпись транзакции', () => {
+  it('меняет состояние и сохраняет подпись транзакции, не трогая подпись Tilda', () => {
     const о = store.createOrder(образец);
-    store.updateState(о.id, 'оплачен', { signature: 'подпись-транзакции' });
+    store.updateState(о.id, 'оплачен', { txSignature: 'подпись-транзакции' });
     const после = store.findByToken('ткн-1');
     expect(после?.state).toBe('оплачен');
-    expect(после?.signature).toBe('подпись-транзакции');
+    expect(после?.txSignature).toBe('подпись-транзакции');
+    // Две подписи — разные вещи и разные столбцы: подпись заказа от Tilda
+    // доказывает, что заказ пришёл от неё, подпись транзакции указывает на
+    // платёж в блокчейне. Один столбец на обе означал бы, что оплата стирает
+    // доказательство происхождения заказа.
+    expect(после?.tildaSignature).toBe('подпись');
   });
 
   it('listPending отдаёт ожидающие, старые первыми, и не отдаёт завершённые', () => {
