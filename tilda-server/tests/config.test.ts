@@ -66,4 +66,33 @@ describe('loadConfig', () => {
       loadConfig({ ...полные, smtp: { ...полные.smtp, hots: 'smtp.example.kz' } }),
     ).toThrow(/smtp/);
   });
+
+  it('принимает включительные границы наценки: 0 и 100', () => {
+    expect(loadConfig({ ...полные, markupPercent: 0 }).markupPercent).toBe(0);
+    expect(loadConfig({ ...полные, markupPercent: 100 }).markupPercent).toBe(100);
+  });
+
+  it('принимает включительные границы срока жизни курса: 60 и 3600', () => {
+    expect(loadConfig({ ...полные, quoteTtlSeconds: 60 }).quoteTtlSeconds).toBe(60);
+    expect(loadConfig({ ...полные, quoteTtlSeconds: 3600 }).quoteTtlSeconds).toBe(3600);
+  });
+
+  it('принимает включительные границы окна поздних платежей: 0 и 604800', () => {
+    expect(loadConfig({ ...полные, lateWindowSeconds: 0 }).lateWindowSeconds).toBe(0);
+    expect(loadConfig({ ...полные, lateWindowSeconds: 604800 }).lateWindowSeconds).toBe(604800);
+  });
+
+  it('принимает включительные границы порта: 1 и 65535', () => {
+    expect(loadConfig({ ...полные, listenPort: 1 }).listenPort).toBe(1);
+    expect(loadConfig({ ...полные, listenPort: 65535 }).listenPort).toBe(65535);
+  });
+
+  it('отвергает значения сразу за границами диапазонов', () => {
+    expect(() => loadConfig({ ...полные, quoteTtlSeconds: 59 })).toThrow(/quoteTtlSeconds/);
+    expect(() => loadConfig({ ...полные, quoteTtlSeconds: 3601 })).toThrow(/quoteTtlSeconds/);
+    expect(() => loadConfig({ ...полные, lateWindowSeconds: -1 })).toThrow(/lateWindowSeconds/);
+    expect(() => loadConfig({ ...полные, lateWindowSeconds: 604801 })).toThrow(/lateWindowSeconds/);
+    expect(() => loadConfig({ ...полные, listenPort: 0 })).toThrow(/listenPort/);
+    expect(() => loadConfig({ ...полные, listenPort: 65536 })).toThrow(/listenPort/);
+  });
 });

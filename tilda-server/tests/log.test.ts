@@ -12,6 +12,27 @@ describe('redactUrl', () => {
   it('не падает на мусоре и не возвращает его целиком', () => {
     expect(redactUrl('не-адрес-вовсе')).toBe('<адрес скрыт>');
   });
+
+  it('вырезает логин и пароль, зашитые прямо в адрес', () => {
+    expect(redactUrl('https://user:pass@mainnet.helius-rpc.com/rpc')).toBe(
+      'https://mainnet.helius-rpc.com',
+    );
+  });
+
+  it('не падает на пустой строке', () => {
+    expect(redactUrl('')).toBe('<адрес скрыт>');
+  });
+
+  it('не падает на схеме без хоста', () => {
+    expect(redactUrl('https://')).toBe('<адрес скрыт>');
+  });
+
+  it('не возвращает длинный мусор целиком', () => {
+    const мусор = 'x'.repeat(5000);
+    const результат = redactUrl(мусор);
+    expect(результат).toBe('<адрес скрыт>');
+    expect(результат.length).toBeLessThan(100);
+  });
 });
 
 describe('createLog', () => {
