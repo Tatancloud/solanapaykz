@@ -3,13 +3,32 @@
 // Отсчёт времени и опрос состояния заказа на странице оплаты. QR уже
 // нарисован сервером в разметку (см. src/http/routes-page.ts) — рисовать
 // здесь нечего, поэтому никакая библиотека QR не подключается.
+//
+// Данные читаются из data-атрибутов контейнера, а не из встроенного
+// <script>: страница отдаётся с Content-Security-Policy: default-src
+// 'self' без 'unsafe-inline', и встроенный скрипт с этой политикой браузер
+// молча не исполнил бы вовсе — ослаблять политику ради этого нельзя, она
+// стоит именно затем, чтобы встроенному коду взяться было неоткуда.
 (function () {
     'use strict';
 
-    var data = window.solanapaykzData;
+    var container = document.getElementById('solanapaykz');
 
-    if (!data) {
+    if (!container) {
         return;
+    }
+
+    var data = {
+        statusUrl: container.getAttribute('data-status-url'),
+        secondsLeft: parseInt(container.getAttribute('data-seconds-left'), 10),
+        intervalMs: parseInt(container.getAttribute('data-interval-ms'), 10)
+    };
+
+    if (!data.statusUrl || !isFinite(data.secondsLeft)) {
+        return;
+    }
+    if (!isFinite(data.intervalMs) || data.intervalMs <= 0) {
+        data.intervalMs = 5000;
     }
 
     var timerBox = document.getElementById('solanapaykz-timer');

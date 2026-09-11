@@ -193,6 +193,23 @@ describe('POST /tilda/pay', () => {
     const второй = await запрос('POST', '/tilda/pay', телоЗаказа());
     expect(второй.headers.get('location')).toBe(первый.headers.get('location'));
   });
+
+  it('слишком большое тело отвечает 413, а не рвёт соединение', async () => {
+    // Ревью проверило это сырым запросом на 10 МБ и получило разрыв
+    // связи: req.destroy() рвал TCP-соединение раньше, чем успевал уйти
+    // ответ 413. Здесь — тот же сценарий через fetch: если бы обрыв
+    // случился до ответа, fetch бросил бы сетевую ошибку вместо
+    // возврата объекта ответа с этим статусом.
+    const огромноеТело = 'description=' + 'а'.repeat(300_000);
+    const ответ = await fetch(базовыйUrl + '/tilda/pay', {
+      method: 'POST',
+      redirect: 'manual',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: огромноеТело,
+    });
+    expect(ответ.status).toBe(413);
+    expect(await ответ.text()).toContain('слишком велико');
+  });
 });
 
 describe('GET /pay/:token', () => {
@@ -260,6 +277,21 @@ describe('GET /pay/:token', () => {
     expect(ответ.headers.get('content-security-policy')).toBe("default-src 'self'");
     expect(ответ.headers.get('x-content-type-options')).toBe('nosniff');
   });
+
+  it('не содержит встроенного <script>: под CSP default-src \'self\' без unsafe-inline браузер его не исполнит', async () => {
+    // Реальный браузер это ловит, а fetch в Node — нет: он не применяет
+    // CSP и молча «выполнил» бы даже запрещённый политикой скрипт (найдено
+    // ревью в настоящем браузере). Данные для checkout.js передаются
+    // атрибутами контейнера, а не встроенным <script>, — тест не
+    // подтверждает исполнение в браузере, а лишь фиксирует, что инструмент,
+    // который его сломал в прошлый раз, снова не появился в разметке.
+    const заказ = store.createOrder({ ...образецНовогоЗаказа, token: '7'.repeat(32), tildaOrderId: '10868059:109' });
+    const ответ = await запрос('GET', `/pay/${заказ.token}`);
+    expect(ответ.body).not.toMatch(/<script>/);
+    expect(ответ.body).toContain('<script src="/assets/checkout.js"></script>');
+    expect(ответ.body).toContain('data-status-url="/api/status/');
+    expect(ответ.body).toMatch(/data-seconds-left="\d+"/);
+  });
 });
 
 describe('GET /api/status/:token', () => {
@@ -300,7 +332,7 @@ describe('статические файлы', () => {
     const ответ = await запрос('GET', '/assets/checkout.js');
     expect(ответ.status).toBe(200);
     expect(ответ.headers.get('content-type')).toContain('javascript');
-    expect(ответ.body).toContain('solanapaykzData');
+    expect(ответ.body).toContain('data-status-url');
   });
 
   it('отдаёт /assets/checkout.css', async () => {
