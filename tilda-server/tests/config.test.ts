@@ -53,4 +53,17 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ ...полные, markupPercent: -1 })).toThrow(/markupPercent/);
     expect(() => loadConfig({ ...полные, markupPercent: 101 })).toThrow(/markupPercent/);
   });
+
+  it('отвергает опечатку в имени поля верхнего уровня, а не молча берёт значение по умолчанию', () => {
+    const { markupPercent, ...безНаценки } = полные;
+    expect(() =>
+      loadConfig({ ...безНаценки, markupPercnt: 5 }),
+    ).toThrow(/markupPercnt/);
+  });
+
+  it('отвергает опечатку в имени поля внутри smtp', () => {
+    expect(() =>
+      loadConfig({ ...полные, smtp: { ...полные.smtp, hots: 'smtp.example.kz' } }),
+    ).toThrow(/smtp/);
+  });
 });

@@ -49,7 +49,30 @@ export class ConfigError extends Error {
   }
 }
 
-const МИНИМАЛЬНАЯ_ДЛИНА_СЕКРЕТА = 8;
+export const МИНИМАЛЬНАЯ_ДЛИНА_СЕКРЕТА = 8;
+
+/** Известные ключи верхнего уровня — опечатка вроде `markupPercnt` не должна молча превратиться в «поле не задано, беру значение по умолчанию». */
+const ИЗВЕСТНЫЕ_КЛЮЧИ = new Set<string>([
+  'recipient',
+  'rpcUrl',
+  'cluster',
+  'token',
+  'markupPercent',
+  'quoteTtlSeconds',
+  'lateWindowSeconds',
+  'orderSecret',
+  'notifySecret',
+  'tildaNotifyUrl',
+  'publicUrl',
+  'adminPassword',
+  'smtp',
+  'merchantEmail',
+  'databasePath',
+  'listenPort',
+]);
+
+/** Известные ключи внутри `smtp` — та же защита от опечаток на вложенном уровне. */
+const ИЗВЕСТНЫЕ_КЛЮЧИ_SMTP = new Set<string>(['host', 'port', 'user', 'pass', 'from']);
 
 /** Значения по умолчанию для необязательных полей. */
 const ПО_УМОЛЧАНИЮ = {
@@ -99,6 +122,13 @@ export function loadConfig(raw: unknown): Config {
 
   if (!этоОбъект(raw)) {
     throw new ConfigError(['настройки должны быть объектом']);
+  }
+
+  // --- неизвестные ключи верхнего уровня ---
+  for (const ключ of Object.keys(raw)) {
+    if (!ИЗВЕСТНЫЕ_КЛЮЧИ.has(ключ)) {
+      проблемы.push(`неизвестное поле «${ключ}»: проверьте опечатку в имени`);
+    }
   }
 
   // --- recipient ---
@@ -193,6 +223,11 @@ export function loadConfig(raw: unknown): Config {
   } else {
     const s = raw.smtp;
     const smtpПроблемы: string[] = [];
+    for (const ключ of Object.keys(s)) {
+      if (!ИЗВЕСТНЫЕ_КЛЮЧИ_SMTP.has(ключ)) {
+        smtpПроблемы.push(`smtp.${ключ} (неизвестное поле)`);
+      }
+    }
     if (!непустаяСтрока(s.host)) smtpПроблемы.push('smtp.host');
     if (!проверитьЦелоеВДиапазоне(s.port, 1, 65535)) smtpПроблемы.push('smtp.port');
     if (!непустаяСтрока(s.user)) smtpПроблемы.push('smtp.user');
