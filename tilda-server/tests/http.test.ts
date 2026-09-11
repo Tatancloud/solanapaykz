@@ -33,6 +33,8 @@ const config: Config = {
   merchantEmail: 'merchant@example.kz',
   databasePath: ':memory:',
   listenPort: 0,
+  listenHost: '127.0.0.1',
+  trustedProxyAddresses: ['127.0.0.1', '::1', '::ffff:127.0.0.1'],
 };
 
 /** Тело заказа Tilda, подписанное тестовым секретом — как в tests/inbound.test.ts. */

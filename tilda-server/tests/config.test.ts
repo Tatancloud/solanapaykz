@@ -23,6 +23,7 @@ describe('loadConfig', () => {
     expect(c.markupPercent).toBe(0);
     expect(c.quoteTtlSeconds).toBe(900);
     expect(c.lateWindowSeconds).toBe(86400);
+    expect(c.trustedProxyAddresses).toEqual(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
   });
 
   it('перечисляет ВСЕ недостающие поля разом, а не первое', () => {
@@ -94,5 +95,66 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ ...полные, lateWindowSeconds: 604801 })).toThrow(/lateWindowSeconds/);
     expect(() => loadConfig({ ...полные, listenPort: 0 })).toThrow(/listenPort/);
     expect(() => loadConfig({ ...полные, listenPort: 65536 })).toThrow(/listenPort/);
+  });
+
+  describe('recipient — защита от известных системных адресов (задача 9, находка ревью)', () => {
+    // Деньги, отправленные на встроенную программу Solana, никому не
+    // достанутся и не восстановятся — это не «неверный формат» (который
+    // без выхода в сеть не проверить), а конкретно защита от того, что в
+    // настройках останется плейсхолдер или системный адрес. Найдено на
+    // собственном опыте: при первом развёртывании этого сервера в
+    // config.json остался System Program как временная заглушка.
+    it('отвергает System Program', () => {
+      expect(() => loadConfig({ ...полные, recipient: '11111111111111111111111111111111' })).toThrow(
+        /системный адрес/,
+      );
+    });
+
+    it('отвергает SPL Token Program', () => {
+      expect(() =>
+        loadConfig({ ...полные, recipient: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA' }),
+      ).toThrow(/системный адрес/);
+    });
+
+    it('отвергает произвольный адрес из одного повторённого символа', () => {
+      expect(() => loadConfig({ ...полные, recipient: 'a'.repeat(32) })).toThrow(/системный адрес/);
+    });
+
+    it('принимает обычный (не системный) адрес кошелька', () => {
+      expect(loadConfig(полные).recipient).toBe('9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM');
+    });
+  });
+
+  describe('listenHost', () => {
+    it('по умолчанию — 127.0.0.1', () => {
+      expect(loadConfig(полные).listenHost).toBe('127.0.0.1');
+    });
+
+    it('принимает 0.0.0.0 — оправдано, когда изоляцию обеспечивает Docker (см. docker-compose.yml)', () => {
+      expect(loadConfig({ ...полные, listenHost: '0.0.0.0' }).listenHost).toBe('0.0.0.0');
+    });
+
+    it('отвергает пустую строку', () => {
+      expect(() => loadConfig({ ...полные, listenHost: '' })).toThrow(/listenHost/);
+    });
+  });
+
+  describe('trustedProxyAddresses', () => {
+    it('принимает список адресов и заменяет им значение по умолчанию', () => {
+      const c = loadConfig({ ...полные, trustedProxyAddresses: ['172.21.0.1'] });
+      expect(c.trustedProxyAddresses).toEqual(['172.21.0.1']);
+    });
+
+    it('отвергает не-массив', () => {
+      expect(() => loadConfig({ ...полные, trustedProxyAddresses: '127.0.0.1' })).toThrow(
+        /trustedProxyAddresses/,
+      );
+    });
+
+    it('отвергает массив с пустой строкой', () => {
+      expect(() => loadConfig({ ...полные, trustedProxyAddresses: ['127.0.0.1', ''] })).toThrow(
+        /trustedProxyAddresses/,
+      );
+    });
   });
 });
