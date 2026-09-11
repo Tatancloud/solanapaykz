@@ -45,6 +45,19 @@ export function verifySignature(
   signature: string,
   secret: string,
 ): boolean {
+  // Типы TypeScript здесь ничего не гарантируют: это разбор тела HTTP-
+  // запроса, а поле `signature` там может просто отсутствовать — в функцию
+  // придёт `undefined`. Одно такое письмо не должно ронять приём заказов у
+  // всего магазина, поэтому границу с внешним миром проверяем в рантайме,
+  // а не доверяем аннотации.
+  if (typeof signature !== 'string') {
+    return false;
+  }
+
+  if (typeof fields !== 'object' || fields === null || Array.isArray(fields)) {
+    return false;
+  }
+
   let ожидаемая: string;
 
   try {
