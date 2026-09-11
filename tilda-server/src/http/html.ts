@@ -136,21 +136,27 @@ export function страницаОплаты(order: Order, секундОста�
     : '';
   const товары = составКорзиныHtml(order.productsJson);
 
-  // Данные для checkout.js: только то, что не является денежным решением
-  // покупателя и не раскрывает лишнего — адрес получателя и метка платежа
-  // сюда не идут вовсе (см. страница404/JSON у /api/status).
-  const данные = {
-    statusUrl: `/api/status/${order.token}`,
-    secondsLeft: секундОсталось,
-    intervalMs: 5000,
-  };
-  // Вставляется внутрь <script>: на случай, если в данных когда-нибудь
-  // появится строка с «</script», вырезаем «<» отдельно от обычного JSON —
-  // тот же приём, что JSON_HEX_TAG в PHP-плагине.
-  const json = JSON.stringify(данные).replace(/</g, '\\u003c');
+  // Данные для checkout.js идут через data-атрибуты контейнера, а не
+  // встроенным <script>: страница отдаётся с `Content-Security-Policy:
+  // default-src 'self'` (без 'unsafe-inline'), и встроенный скрипт этой
+  // политикой блокируется целиком — браузер молча откажется его
+  // исполнять, checkout.js так и не увидит своих данных, а покупатель,
+  // который уже заплатил, не узнает об этом, пока не обновит страницу
+  // вручную. `fetch` в тестах (Node) политику не применяет и эту ошибку
+  // не ловит — обнаружено ревью в настоящем браузере. Внешний
+  // `<script src="/assets/checkout.js">` под той же политикой разрешён:
+  // это тот же источник ('self'), и это не встроенный код.
+  //
+  // Ни суммы, ни адреса получателя, ни метки платежа сюда не идёт —
+  // только то, что не является денежным решением покупателя (см. также
+  // JSON у /api/status).
+  const атрибутыДанных =
+    `data-status-url="${экранироватьHtml(`/api/status/${order.token}`)}" ` +
+    `data-seconds-left="${секундОсталось}" ` +
+    `data-interval-ms="5000"`;
 
   const body = `
-<section class="solanapaykz" id="solanapaykz">
+<section class="solanapaykz" id="solanapaykz" ${атрибутыДанных}>
   <h1>Оплата заказа</h1>
   ${описание}
   ${товары}
@@ -172,7 +178,6 @@ export function страницаОплаты(order: Order, секундОста�
     </p>
   </noscript>
 </section>
-<script>window.solanapaykzData = ${json};</script>
 <script src="/assets/checkout.js"></script>`;
 
   return обёртка('Оплата заказа', body);
