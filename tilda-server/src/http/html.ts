@@ -1,0 +1,217 @@
+/**
+ * Разметка страниц покупателя: страница оплаты, страница итога и общий
+ * шаблон 404.
+ *
+ * Единственная содержательная опасность файла: описание заказа и состав
+ * корзины приходят из НЕ заверенной части запроса Tilda (см. заголовок
+ * `tilda/inbound.ts`) и правятся покупателем прямо в его браузере перед
+ * отправкой. Всё, что из заказа попадает в разметку, обязано пройти через
+ * `экранироватьHtml` — включая значения внутри атрибутов (`href`), а не
+ * только текст между тегами.
+ */
+import type { Order, OrderState } from '../db.js';
+
+/** Экранирует текст для безопасной вставки в HTML между тегами и в атрибуты. */
+export function экранироватьHtml(текст: string): string {
+  const ЗАМЕНЫ: Record<string, string> = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  };
+  return текст.replace(/[&<>"']/g, (символ) => ЗАМЕНЫ[символ] ?? символ);
+}
+
+/** Человекочитаемый текст для покупателя по состоянию заказа. */
+export function текстСостояния(state: OrderState): string {
+  switch (state) {
+    case 'ожидает':
+      return 'Ожидаем оплату.';
+    case 'оплачен':
+      return 'Оплата получена. Спасибо!';
+    case 'уведомлён':
+      return 'Оплата получена, продавец уведомлён. Спасибо!';
+    case 'не сошлось':
+      return 'Платёж найден, но не сошёлся с суммой заказа. Магазин свяжется с вами.';
+    case 'поздний':
+      return 'Платёж получен после истечения срока действия цены. Магазин свяжется с вами.';
+    case 'просрочен':
+      return 'Срок оплаты истёк, платёж не найден. Оформите заказ заново.';
+  }
+}
+
+/**
+ * CSS-класс статуса для `checkout.js` и `checkout.css`. Отдельно от самого
+ * `OrderState`: тот может содержать пробел («не сошлось»), а это не годится
+ * одним токеном имени класса.
+ */
+export function классСостояния(state: OrderState): string {
+  switch (state) {
+    case 'ожидает':
+      return 'pending';
+    case 'оплачен':
+    case 'уведомлён':
+      return 'paid';
+    case 'не сошлось':
+      return 'mismatch';
+    case 'поздний':
+      return 'late';
+    case 'просрочен':
+      return 'expired';
+  }
+}
+
+/** Одна позиция состава корзины после разбора и экранирования. */
+interface СтрокаТовара {
+  name: string;
+  quantity: string;
+}
+
+/**
+ * Состав корзины, сохранённый заказом, в виде списка для показа.
+ *
+ * Поле вне подписи (см. заголовок файла) — испорченный JSON или неожиданная
+ * форма элемента не должны ронять всю страницу оплаты, поэтому при любой
+ * странности список просто не показывается.
+ */
+function разобратьТоварыДляПоказа(productsJson: string | null): СтрокаТовара[] {
+  if (!productsJson) return [];
+  let разобранное: unknown;
+  try {
+    разобранное = JSON.parse(productsJson);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(разобранное)) return [];
+
+  return разобранное.map((элемент): СтрокаТовара => {
+    const т = (элемент ?? {}) as Record<string, unknown>;
+    const имя = typeof т.name === 'string' && т.name.length > 0 ? т.name : 'Товар';
+    const количество =
+      typeof т.quantity === 'number' || typeof т.quantity === 'string' ? String(т.quantity) : '1';
+    return { name: имя, quantity: количество };
+  });
+}
+
+function составКорзиныHtml(productsJson: string | null): string {
+  const товары = разобратьТоварыДляПоказа(productsJson);
+  if (товары.length === 0) return '';
+
+  const строки = товары
+    .map((т) => `<li>${экранироватьHtml(т.name)} × ${экранироватьHtml(т.quantity)}</li>`)
+    .join('');
+
+  return `<ul class="solanapaykz__products">${строки}</ul>`;
+}
+
+function обёртка(title: string, body: string): string {
+  return `<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${экранироватьHtml(title)}</title>
+<link rel="stylesheet" href="/assets/checkout.css">
+</head>
+<body>
+${body}
+</body>
+</html>
+`;
+}
+
+/**
+ * Страница оплаты для заказа, ещё ожидающего платежа: сумма, QR и блок
+ * опроса статуса.
+ *
+ * QR передаётся уже готовым SVG (см. `routes-page.ts`) — здесь он просто
+ * вставляется как разметка, без экранирования: это не пользовательский
+ * ввод, а строка, которую сама же наша серверная библиотека QR построила
+ * из уже сохранённой платёжной ссылки.
+ */
+export function страницаОплаты(order: Order, секундОсталось: number, qrSvg: string): string {
+  const описание = order.description
+    ? `<p class="solanapaykz__description">${экранироватьHtml(order.description)}</p>`
+    : '';
+  const товары = составКорзиныHtml(order.productsJson);
+
+  // Данные для checkout.js: только то, что не является денежным решением
+  // покупателя и не раскрывает лишнего — адрес получателя и метка платежа
+  // сюда не идут вовсе (см. страница404/JSON у /api/status).
+  const данные = {
+    statusUrl: `/api/status/${order.token}`,
+    secondsLeft: секундОсталось,
+    intervalMs: 5000,
+  };
+  // Вставляется внутрь <script>: на случай, если в данных когда-нибудь
+  // появится строка с «</script», вырезаем «<» отдельно от обычного JSON —
+  // тот же приём, что JSON_HEX_TAG в PHP-плагине.
+  const json = JSON.stringify(данные).replace(/</g, '\\u003c');
+
+  const body = `
+<section class="solanapaykz" id="solanapaykz">
+  <h1>Оплата заказа</h1>
+  ${описание}
+  ${товары}
+  <p class="solanapaykz__amount">
+    К оплате: <strong>${экранироватьHtml(order.amountToken)} ${экранироватьHtml(order.tokenSymbol)}</strong>
+    <span class="solanapaykz__kzt">(${экранироватьHtml(order.amountKzt)} ₸ по курсу ${экранироватьHtml(order.rate)})</span>
+  </p>
+  <div class="solanapaykz__qr" id="solanapaykz-qr">${qrSvg}</div>
+  <p class="solanapaykz__hint">Отсканируйте код кошельком Solana. Деньги придут продавцу напрямую.</p>
+  <p class="solanapaykz__timer" id="solanapaykz-timer" aria-live="polite"></p>
+  <p class="solanapaykz__status" id="solanapaykz-status" role="status" aria-live="polite">Ожидаем оплату…</p>
+  <p class="solanapaykz__link">
+    <a href="${экранироватьHtml(order.paymentUrl)}">Открыть в кошельке на этом устройстве</a>
+  </p>
+  <noscript>
+    <p class="solanapaykz__hint">
+      В браузере отключён JavaScript: код QR виден и без него, но статус оплаты не обновится
+      сам. Оплатите по ссылке выше и обновите страницу вручную позже.
+    </p>
+  </noscript>
+</section>
+<script>window.solanapaykzData = ${json};</script>
+<script src="/assets/checkout.js"></script>`;
+
+  return обёртка('Оплата заказа', body);
+}
+
+/**
+ * Страница с сообщением о состоянии заказа, без QR и без ссылки на
+ * кошелёк — общая часть для итоговой страницы и для отказа показать QR
+ * из-за собственной ошибки сервера (например, не построился QR-код).
+ */
+export function страницаСообщения(order: Order, сообщение: string, cssКласс = 'error'): string {
+  const описание = order.description
+    ? `<p class="solanapaykz__description">${экранироватьHtml(order.description)}</p>`
+    : '';
+
+  const body = `
+<section class="solanapaykz" id="solanapaykz">
+  <h1>Оплата заказа</h1>
+  ${описание}
+  <p class="solanapaykz__status solanapaykz__status--${экранироватьHtml(cssКласс)}" role="status">
+    ${экранироватьHtml(сообщение)}
+  </p>
+</section>`;
+
+  return обёртка('Оплата заказа', body);
+}
+
+/**
+ * Страница итога для заказа, который больше не ждёт оплаты (оплачен,
+ * отменён, разбирается вручную и т. п.).
+ *
+ * Без QR и без ссылки на кошелёк намеренно: показывать их здесь — это
+ * приглашение заплатить второй раз.
+ */
+export function страницаИтога(order: Order): string {
+  return страницаСообщения(order, текстСостояния(order.state), классСостояния(order.state));
+}
+
+/** Тело ответа 404 — одинаковое для несуществующего и чужого ключа страницы. */
+export function страница404(): string {
+  return обёртка('Страница не найдена', '<p>Страница не найдена.</p>');
+}

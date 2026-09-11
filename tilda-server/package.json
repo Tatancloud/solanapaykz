@@ -13,11 +13,13 @@
   },
   "dependencies": {
     "@solanapaykz/core": "file:..",
-    "nodemailer": "6.9.16"
+    "nodemailer": "6.9.16",
+    "qrcode": "1.5.4"
   },
   "devDependencies": {
     "@types/node": "22.10.2",
     "@types/nodemailer": "6.4.17",
+    "@types/qrcode": "1.5.5",
     "typescript": "5.7.2",
     "vitest": "3.2.7"
   }
