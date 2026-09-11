@@ -7,30 +7,14 @@
  * ошибок округления, это ограничение всего проекта, а не прихоть этого
  * файла.
  *
- * Почему `createRequire`, а не обычный `import { DatabaseSync } from
- * 'node:sqlite'`:
  * `node:sqlite` в Node 22 остаётся экспериментальным модулем, доступным
- * только под флагом `--experimental-sqlite`. Флаг честно доходит до
- * тестового процесса (проверено отдельно: прямой `require('node:sqlite')`
- * и обычный `node --experimental-sqlite` работают). Но тестовый раннер
- * (vitest 2.1.8 → vite-node 2.1.8) не знает об этом модуле статически:
- * список «встроенных без резолва» модулей у vite-node захардкожен и
- * `node:sqlite` в него не попал (исправлено в vite-node 3.x, добавлен
- * туда позже, чем вышла версия, закреплённая в package.json этого
- * проекта). Поэтому `import { DatabaseSync } from 'node:sqlite'` в тесте
- * падает ещё до запуска: vite-node пытается зарезолвить `sqlite` как
- * обычный пакет из node_modules и не находит его. `createRequire` — это
- * обычный синхронный CJS `require`, который резолв модулей у vite-node
- * не проходит вовсе, поэтому загрузка работает одинаково что в тестах,
- * что в проде (`node --experimental-sqlite dist/http/server.js`).
+ * только под флагом `--experimental-sqlite` (передаётся тестовому
+ * процессу через `poolOptions.threads.execArgv` в vitest.config.ts).
  */
 
-import { createRequire } from 'node:module';
-import type { SupportedValueType } from 'node:sqlite';
+import { DatabaseSync, type SupportedValueType } from 'node:sqlite';
 import type { Cluster, TokenSymbol } from './config.js';
 
-const require = createRequire(import.meta.url);
-const { DatabaseSync } = require('node:sqlite') as typeof import('node:sqlite');
 type БазаSQLite = InstanceType<typeof DatabaseSync>;
 
 export type OrderState = 'ожидает' | 'оплачен' | 'уведомлён' | 'не сошлось' | 'поздний' | 'просрочен';
@@ -97,11 +81,15 @@ export interface Store {
   /** Последние заказы, новые первыми. */
   listRecent(limit: number): Order[];
   /**
-   * Заказы, требующие внимания фонового обходчика: «ожидает» и
-   * «просрочен», старые первыми (чтобы дольше всех ждущие обрабатывались
-   * в первую очередь).
+   * Заказы, требующие внимания фонового обходчика: «ожидает» без
+   * ограничения по времени плюс «просрочен», но только те, что ещё
+   * укладываются в окно поздних платежей (`createdAt + lateWindowSeconds
+   * >= now`) — старые первыми. Безнадёжно просроченные заказы (окно уже
+   * истекло) в выборку не попадают: иначе они навсегда занимают место в
+   * `limit`, и фоновый обход, идущий от старых к новым, перестаёт
+   * доходить до свежих заказов.
    */
-  listPending(limit: number): Order[];
+  listPending(limit: number, lateWindowSeconds: number, now: number): Order[];
   updateState(id: number, state: OrderState, fields?: Partial<Order>): void;
   /** Фиксирует попытку уведомления продавца: её номер и исход. */
   markNotified(id: number, ok: boolean, attempt: number): void;
@@ -254,15 +242,18 @@ export function openDatabase(путь: string): Store {
   const найтиПоНомеруTilda = db.prepare('SELECT * FROM orders WHERE tilda_order_id = ?');
   const найтиПоТокену = db.prepare('SELECT * FROM orders WHERE token = ?');
   const свежие = db.prepare('SELECT * FROM orders ORDER BY created_at DESC LIMIT ?');
-  // «просрочен» отбирается наравне с «ожидает» без отдельного окна по
-  // времени здесь: openDatabase получает только путь к файлу, без Config,
-  // поэтому lateWindowSeconds этому запросу не известен — этим окном
-  // управляет вызывающий код (задача 5/6), переводя заказ из «просрочен»
-  // в конечное состояние, когда окно поздних платежей истекло. Подробнее
-  // см. отчёт по задаче.
+  // «просрочен» ограничен окном поздних платежей прямо в запросе, а не
+  // проверкой у вызывающего: фоновый обход берёт фиксированные `limit`
+  // штук, старые первыми. Если безнадёжно просроченные заказы оставались
+  // бы в выборке навсегда, они забивали бы собой всё окно `limit`, и
+  // новые заказы молча переставали бы проверяться — без единой записи в
+  // журнал. Ровно эта ошибка уже находилась в похожем месте (плагин
+  // WooCommerce) и чинилась тем же способом — исключением безнадёжных
+  // заказов из выборки.
   const ожидающие = db.prepare(`
     SELECT * FROM orders
-    WHERE state = 'ожидает' OR state = 'просрочен'
+    WHERE state = 'ожидает'
+       OR (state = 'просрочен' AND created_at + ? >= ?)
     ORDER BY created_at ASC
     LIMIT ?
   `);
@@ -322,8 +313,8 @@ export function openDatabase(путь: string): Store {
     return строки.map(изСтроки);
   }
 
-  function listPending(limit: number): Order[] {
-    const строки = ожидающие.all(limit) as СтрокаЗаказа[];
+  function listPending(limit: number, lateWindowSeconds: number, now: number): Order[] {
+    const строки = ожидающие.all(lateWindowSeconds, now, limit) as СтрокаЗаказа[];
     return строки.map(изСтроки);
   }
 
