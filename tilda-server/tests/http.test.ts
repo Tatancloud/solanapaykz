@@ -375,7 +375,7 @@ describe('GET /api/status/:token — опрос не ждёт дольше та�
       store: store2,
       client: клиентСМедленнымУзлом,
       log: createLog(() => {}),
-      таймаутОпросаMs: 20,
+      тест: { таймаутОпросаMs: 20 },
     };
 
     server2 = createServer(deps);

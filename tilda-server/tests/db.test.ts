@@ -86,13 +86,20 @@ describe('Store', () => {
     expect(после?.tildaSignature).toBe('подпись');
   });
 
+  it('paidAt пусто у нового заказа и сохраняется при переходе в «оплачен»', () => {
+    const о = store.createOrder(образец);
+    expect(о.paidAt).toBeNull();
+    store.updateState(о.id, 'оплачен', { txSignature: 'подпись-транзакции', paidAt: 12345 });
+    expect(store.findByToken('ткн-1')?.paidAt).toBe(12345);
+  });
+
   it('listPending отдаёт ожидающие, старые первыми, и не отдаёт завершённые', () => {
     store.createOrder({ ...образец, tildaOrderId: 'a:1', token: 'т1', createdAt: 300 });
     store.createOrder({ ...образец, tildaOrderId: 'a:2', token: 'т2', createdAt: 100 });
     const третий = store.createOrder({ ...образец, tildaOrderId: 'a:3', token: 'т3', createdAt: 200 });
     store.updateState(третий.id, 'уведомлён');
 
-    const список = store.listPending(10, 86400, 1_000_000);
+    const список = store.listPending(10, 86400, 86400, 1_000_000);
     expect(список.map((o) => o.tildaOrderId)).toEqual(['a:2', 'a:1']);
   });
 
@@ -107,8 +114,32 @@ describe('Store', () => {
     const древний = store.createOrder({ ...образец, tildaOrderId: 'b:2', token: 'тб2', createdAt: 100 });
     store.updateState(древний.id, 'просрочен');
 
-    const список = store.listPending(10, 500, 1200);
+    const список = store.listPending(10, 500, 86400, 1200);
     expect(список.map((o) => o.tildaOrderId)).toEqual(['b:1']);
+  });
+
+  it('listPending отдаёт оплаченный неуведомленный заказ в пределах окна повтора и не отдаёт уведомлённый', () => {
+    const неуведомлённый = store.createOrder({ ...образец, tildaOrderId: 'c:1', token: 'тс1', createdAt: 100 });
+    store.updateState(неуведомлённый.id, 'оплачен', { txSignature: 'подпись', paidAt: 100 });
+
+    const уведомлённый = store.createOrder({ ...образец, tildaOrderId: 'c:2', token: 'тс2', createdAt: 200 });
+    store.updateState(уведомлённый.id, 'оплачен', { txSignature: 'подпись', paidAt: 200 });
+    store.markNotified(уведомлённый.id, true, 1);
+    store.updateState(уведомлённый.id, 'уведомлён');
+
+    const список = store.listPending(10, 86400, 86400, 1000);
+    expect(список.map((o) => o.tildaOrderId)).toEqual(['c:1']);
+  });
+
+  it('listPending не отдаёт оплаченный неуведомленный заказ, если окно повтора уведомления истекло', () => {
+    // окно — 500 секунд, «сейчас» — 1200: как и с «просрочен» выше, заказ,
+    // по которому Tilda никогда не ответит «OK», не должен занимать место
+    // в limit фонового обхода вечно.
+    const заказ = store.createOrder({ ...образец, tildaOrderId: 'c:3', token: 'тс3', createdAt: 100 });
+    store.updateState(заказ.id, 'оплачен', { txSignature: 'подпись', paidAt: 100 });
+
+    const список = store.listPending(10, 86400, 500, 1200);
+    expect(список).toEqual([]);
   });
 
   it('считает попытки уведомления и помнит исход последней', () => {

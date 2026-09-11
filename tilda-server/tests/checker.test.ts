@@ -3,14 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { PaymentStatus } from '@solanapaykz/core';
-import {
-  checkOrder,
-  startChecker,
-  обходОдинРаз,
-  type CheckerDeps,
-  type PaymentCheckerClient,
-  type WalkDeps,
-} from '../src/checker.js';
+import { checkOrder, startChecker, обходОдинРаз, type CheckerDeps, type PaymentCheckerClient } from '../src/checker.js';
 import type { Config } from '../src/config.js';
 import { openDatabase, type NewOrder, type Order, type Store } from '../src/db.js';
 import { createLog } from '../src/log.js';
@@ -77,6 +70,13 @@ function клиентОжидающий(): PaymentCheckerClient {
   };
 }
 
+/** Клиент, который никогда не отвечает — имитация зависшего RPC. */
+function клиентКоторыйВисит(): PaymentCheckerClient {
+  return {
+    checkPayment: () => new Promise(() => {}),
+  };
+}
+
 /** Клиент с уже подтверждённым платежом по заданной подписью транзакции. */
 function клиентСПлатежом(подпись: string): PaymentCheckerClient {
   return {
@@ -97,15 +97,27 @@ function счётчикОтправок(): { отправка: Отправка;
 }
 
 /**
- * `checkOrder` запускает уведомление Tilda, но не ждёт его (см. checker.ts,
- * случай «оплачен» в `применитьРешение`) — иначе опрос из вкладки
- * покупателя завис бы на время всех повторов `notifyTilda` (найдено
- * проверкой в настоящем браузере). Тестам, которым нужно увидеть состояние
- * заказа ПОСЛЕ того, как эта фоновая отправка завершится, приходится явно
- * пропустить вперёд микрозадачи и минимальный таймер.
+ * `checkOrder` запускает уведомление Tilda для только что подтверждённого
+ * платежа, но не ждёт его (см. checker.ts, случай «оплачен» в
+ * `применитьРешение`) — иначе опрос из вкладки покупателя завис бы на время
+ * всех повторов `notifyTilda` (найдено проверкой в настоящем браузере).
+ * Тестам, которым нужно увидеть итог ПОСЛЕ того, как эта фоновая отправка
+ * завершится, приходится дождаться его явно — не фиксированной паузой
+ * (сколько именно нужно ждать, не гарантировано и зависит от загрузки
+ * процесса — фиксированные 10 мс однажды уже не хватило), а опросом
+ * фактического результата с потолком по времени на случай, если он и
+ * правда никогда не наступит.
  */
-function дождатьсяФоновыхЗадач(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 10));
+async function дождатьсяЗавершенияОтправки(store: Store, token: string, таймаутMs = 2000): Promise<void> {
+  const конец = Date.now() + таймаутMs;
+  for (;;) {
+    const заказ = store.findByToken(token);
+    if (заказ && (заказ.notifiedOk === 1 || заказ.notifyAttempts >= 5)) return;
+    if (Date.now() > конец) {
+      throw new Error('дождатьсяЗавершенияОтправки: уведомление не завершилось за отведённое время');
+    }
+    await new Promise((r) => setTimeout(r, 2));
+  }
 }
 
 describe('checkOrder', () => {
@@ -123,13 +135,15 @@ describe('checkOrder', () => {
       store,
       client: клиентОжидающий(),
       log: createLog((строка) => журнал.push(строка)),
-      задержкиMs: [1, 1, 1, 1],
-      // По умолчанию отправка ничего не подтверждает: часть тестов этого
-      // блока доводит заказ до «оплачен», что запускает notifyTilda
-      // изнутри checkOrder, — без подмены она бы била по настоящей сети на
-      // tildaNotifyUrl. Отдельные тесты про сам факт и счёт уведомлений
-      // подменяют это своим (успешным) отправителем явно.
-      отправка: async () => ({ status: 503, body: 'сервис недоступен' }),
+      тест: {
+        задержкиMs: [1, 1, 1, 1],
+        // По умолчанию отправка ничего не подтверждает: часть тестов этого
+        // блока доводит заказ до «оплачен», что запускает notifyTilda
+        // изнутри checkOrder, — без подмены она бы била по настоящей сети
+        // на tildaNotifyUrl. Отдельные тесты про сам факт и счёт
+        // уведомлений подменяют это своим (успешным) отправителем явно.
+        отправка: async () => ({ status: 503, body: 'сервис недоступен' }),
+      },
     };
   });
 
@@ -144,6 +158,31 @@ describe('checkOrder', () => {
     expect(store.findByToken(о.token)?.state).toBe('ожидает');
   });
 
+  it('зависший узел не держит блокировку вечно — следующая проверка проходит как обычно', async () => {
+    const о = store.createOrder(образец);
+    const депыСМаленькимТаймаутом: CheckerDeps = {
+      ...deps,
+      client: клиентКоторыйВисит(),
+      тест: { ...deps.тест, таймаутПроверкиПлатежаMs: 20 },
+    };
+
+    const начало = Date.now();
+    const решение = await checkOrder(о, депыСМаленькимТаймаутом);
+    expect(Date.now() - начало).toBeLessThan(1000);
+    expect(решение.action).toBe('ждать');
+    expect(store.findByToken(о.token)?.state).toBe('ожидает');
+
+    // Лок снят (checkOrder вернулся) — следующая проверка тем же заказом
+    // с работающим клиентом должна реально дойти до checkPayment, а не
+    // застрять на «уже проверяется другим вызовом» навсегда.
+    const решение2 = await checkOrder(store.findByToken(о.token)!, {
+      ...deps,
+      client: клиентСПлатежом('подпись-после-зависания'),
+    });
+    expect(решение2.action).toBe('оплачен');
+    await дождатьсяЗавершенияОтправки(store, о.token); // не оставляем фоновую отправку висеть после теста
+  });
+
   it('расхождение сети в настройках и в заказе не трогает заказ', async () => {
     const о = store.createOrder({ ...образец, cluster: 'mainnet' });
     const решение = await checkOrder(о, { ...deps, config: { ...config, cluster: 'devnet' } });
@@ -154,28 +193,52 @@ describe('checkOrder', () => {
     expect(журнал.some((строка) => строка.toLowerCase().includes('сеть'))).toBe(true);
   });
 
+  it('расхождение адреса получателя в настройках и в заказе не трогает заказ', async () => {
+    // Продавец сменил кошелёк в настройках после создания заказа: адрес в
+    // заказе (старый, тот, что на QR у покупателя) и в настройках (новый)
+    // разошлись. Это ошибка конфигурации, а не платёж, который нужно
+    // проверять чужим адресом, — заказ не трогаем.
+    const о = store.createOrder(образец);
+    let checkPaymentВызван = false;
+    const депы: CheckerDeps = {
+      ...deps,
+      client: {
+        async checkPayment() {
+          checkPaymentВызван = true;
+          return { status: 'pending' };
+        },
+      },
+      config: { ...config, recipient: 'ДругойАдресКошелькаПослеСменыНастроек' },
+    };
+
+    const решение = await checkOrder(о, депы);
+
+    expect(решение.action).toBe('ждать');
+    expect(checkPaymentВызван).toBe(false);
+    expect(store.findByToken(о.token)?.state).toBe('ожидает');
+    expect(журнал.some((строка) => строка.toLowerCase().includes('адрес'))).toBe(true);
+  });
+
   it('подтверждённый платёж переводит заказ в «оплачен» и сохраняет подпись — сразу, не дожидаясь уведомления', async () => {
     const о = store.createOrder(образец);
     await checkOrder(о, { ...deps, client: клиентСПлатежом('подпись-1') });
     // Проверяем ровно то, что успевает случиться СИНХРОННО с записью
     // решения: checkOrder возвращается сразу после этого, не дожидаясь
-    // уведомления Tilda (см. checker.ts) — если бы состояние здесь
-    // зависело от исхода отправки, этот тест либо не мог бы пройти без
-    // дождатьсяФоновыхЗадач(), либо (при неуспешной отправке) не увидел бы
-    // «оплачен» вовсе.
+    // уведомления Tilda (см. checker.ts).
     const после = store.findByToken(о.token);
     expect(после?.state).toBe('оплачен');
     expect(после?.txSignature).toBe('подпись-1');
-    await дождатьсяФоновыхЗадач(); // не оставляем фоновую отправку висеть после теста
+    expect(после?.paidAt).not.toBeNull();
+    await дождатьсяЗавершенияОтправки(store, о.token); // не оставляем фоновую отправку висеть после теста
   });
 
   it('подтверждённый платёж отправляет ровно одно уведомление Tilda и переводит заказ в «уведомлён»', async () => {
     const { отправка } = счётчикОтправок();
     const о = store.createOrder(образец);
-    await checkOrder(о, { ...deps, client: клиентСПлатежом('подпись-1'), отправка });
+    await checkOrder(о, { ...deps, client: клиентСПлатежом('подпись-1'), тест: { ...deps.тест, отправка } });
     // Уведомление запускается, но не ожидается (см. checker.ts) — итоговое
     // состояние появляется в базе чуть позже возврата checkOrder.
-    await дождатьсяФоновыхЗадач();
+    await дождатьсяЗавершенияОтправки(store, о.token);
     const после = store.findByToken(о.token);
     expect(после?.state).toBe('уведомлён');
     expect(после?.notifiedOk).toBe(1);
@@ -188,13 +251,17 @@ describe('checkOrder', () => {
     // текущее (нулевое) значение один раз и не увидела бы дальнейший счёт.
     const счётчик = счётчикОтправок();
     const о = store.createOrder(образец);
-    await checkOrder(о, { ...deps, client: клиентСПлатежом('подпись-1'), отправка: счётчик.отправка });
+    await checkOrder(о, {
+      ...deps,
+      client: клиентСПлатежом('подпись-1'),
+      тест: { ...deps.тест, отправка: счётчик.отправка },
+    });
     await checkOrder(store.findByToken(о.token)!, {
       ...deps,
       client: клиентСПлатежом('подпись-1'),
-      отправка: счётчик.отправка,
+      тест: { ...deps.тест, отправка: счётчик.отправка },
     });
-    await дождатьсяФоновыхЗадач();
+    await дождатьсяЗавершенияОтправки(store, о.token);
     expect(счётчик.значение).toBe(1);
   });
 
@@ -203,8 +270,8 @@ describe('checkOrder', () => {
     // отпустят в конце теста. Если бы вторая проверка того же заказа
     // ждала ИСХОДА первой отправки, чтобы решить, слать ли повторно, —
     // она застряла бы здесь навсегда. Она не должна ждать исход вовсе:
-    // решение принимается по состоянию заказа («оплачен»/«уведомлён» вне
-    // белого списка decide()), которое записано в базу ДО первого вызова
+    // решение принимается по состоянию заказа («оплачен» вне белого
+    // списка decide()), которое записано в базу ДО первого вызова
     // notifyTilda, то есть до того, как эта отправка вообще началась.
     let вызовПроверкиПлатежа = 0;
     let вызовОтправки = 0;
@@ -222,18 +289,22 @@ describe('checkOrder', () => {
     };
 
     const о = store.createOrder(образец);
-    await checkOrder(о, { ...deps, client: клиент, отправка: зависающаяОтправка });
+    await checkOrder(о, { ...deps, client: клиент, тест: { ...deps.тест, отправка: зависающаяОтправка } });
 
     // Отправка от первого вызова всё ещё висит (мы её не отпустили), но
     // заказ уже «оплачен» в базе — второй вызов обязан остановиться на
     // этом, не трогая ни блокчейн, ни отправку повторно.
-    await checkOrder(store.findByToken(о.token)!, { ...deps, client: клиент, отправка: зависающаяОтправка });
+    await checkOrder(store.findByToken(о.token)!, {
+      ...deps,
+      client: клиент,
+      тест: { ...deps.тест, отправка: зависающаяОтправка },
+    });
 
     expect(вызовПроверкиПлатежа).toBe(1);
     expect(вызовОтправки).toBe(1);
 
     отпустить?.();
-    await дождатьсяФоновыхЗадач();
+    await дождатьсяЗавершенияОтправки(store, о.token);
   });
 
   it('несовпадение суммы переводит в «не сошлось» и не уведомляет Tilda', async () => {
@@ -244,7 +315,7 @@ describe('checkOrder', () => {
       },
     };
     const о = store.createOrder(образец);
-    await checkOrder(о, { ...deps, client: клиентСНесовпадением, отправка });
+    await checkOrder(о, { ...deps, client: клиентСНесовпадением, тест: { ...deps.тест, отправка } });
     const после = store.findByToken(о.token);
     expect(после?.state).toBe('не сошлось');
     expect(после?.txSignature).toBe('подпись-2');
@@ -269,7 +340,62 @@ describe('checkOrder', () => {
     // второй, встретив занятый лок, сразу отвечает «ждать», не трогая RPC.
     expect(вызовов).toBe(1);
     expect([а.action, б.action].sort()).toEqual(['ждать', 'оплачен']);
-    await дождатьсяФоновыхЗадач(); // не оставляем фоновую отправку висеть после теста
+    await дождатьсяЗавершенияОтправки(store, о.token); // не оставляем фоновую отправку висеть после теста
+  });
+
+  describe('оплаченный, но ещё не уведомлённый заказ', () => {
+    function создатьОплаченныйНеуведомлённый(paidAt: number): Order {
+      const о = store.createOrder(образец);
+      store.updateState(о.id, 'оплачен', { txSignature: 'подпись-предыдущей-попытки', paidAt });
+      return store.findByToken(о.token)!;
+    }
+
+    it('повторно уведомляет Tilda, не трогая блокчейн повторно', async () => {
+      const now = Math.floor(Date.now() / 1000);
+      const заказ = создатьОплаченныйНеуведомлённый(now - 10);
+      let checkPaymentВызван = false;
+      const { отправка } = счётчикОтправок();
+
+      const решение = await checkOrder(заказ, {
+        ...deps,
+        client: {
+          async checkPayment() {
+            checkPaymentВызван = true;
+            return { status: 'pending' };
+          },
+        },
+        тест: { ...deps.тест, отправка },
+      });
+
+      expect(checkPaymentВызван).toBe(false);
+      expect(решение.action).toBe('ждать');
+      const после = store.findByToken(заказ.token);
+      expect(после?.state).toBe('уведомлён');
+    });
+
+    it('вне окна повтора не уведомляет и пишет в журнал уровня error об окончательном провале', async () => {
+      const now = Math.floor(Date.now() / 1000);
+      // paidAt на двое суток раньше окна в сутки — окно точно истекло.
+      const заказ = создатьОплаченныйНеуведомлённый(now - 2 * 86400);
+      const { отправка } = счётчикОтправок();
+
+      const решение = await checkOrder(заказ, {
+        ...deps,
+        client: клиентОжидающий(),
+        тест: { ...deps.тест, отправка, окноПовтораУведомленияSeconds: 86400 },
+      });
+
+      expect(решение.action).toBe('ждать');
+      const после = store.findByToken(заказ.token);
+      expect(после?.state).toBe('оплачен');
+      expect(после?.notifiedOk).toBe(0);
+
+      const записьОшибки = журнал.find((строка) => {
+        const запись = JSON.parse(строка) as { level: string; msg: string };
+        return запись.level === 'error' && запись.msg.includes('автоматические попытки прекращены');
+      });
+      expect(записьОшибки).toBeDefined();
+    });
   });
 });
 
@@ -277,7 +403,7 @@ describe('обходОдинРаз', () => {
   let каталог: string;
   let store: Store;
   let журнал: string[];
-  let deps: WalkDeps;
+  let deps: CheckerDeps;
 
   beforeEach(() => {
     каталог = mkdtempSync(join(tmpdir(), 'spkz-checker-walk-'));
@@ -302,7 +428,7 @@ describe('обходОдинРаз', () => {
     store.updateState(закрытый.id, 'уведомлён');
 
     const обойдённые: string[] = [];
-    await обходОдинРаз({ ...deps, наЗаказ: (o: Order) => void обойдённые.push(o.tildaOrderId) });
+    await обходОдинРаз({ ...deps, тест: { наЗаказ: (o: Order) => void обойдённые.push(o.tildaOrderId) } });
 
     expect(обойдённые).toEqual(['a:2', 'a:1']);
   });
@@ -314,9 +440,11 @@ describe('обходОдинРаз', () => {
     const обойдённые: string[] = [];
     await обходОдинРаз({
       ...deps,
-      наЗаказ: (o: Order) => {
-        обойдённые.push(o.tildaOrderId);
-        if (o.tildaOrderId === 'b:1') throw new Error('узел недоступен');
+      тест: {
+        наЗаказ: (o: Order) => {
+          обойдённые.push(o.tildaOrderId);
+          if (o.tildaOrderId === 'b:1') throw new Error('узел недоступен');
+        },
       },
     });
 
@@ -328,13 +456,30 @@ describe('обходОдинРаз', () => {
     await обходОдинРаз({
       ...deps,
       client: клиентСПлатежом('подпись-обхода'),
-      // Без этого notifyTilda внутри checkOrder попыталась бы настоящий
-      // сетевой запрос на tildaNotifyUrl и честно ждала бы тайм-аут.
-      отправка: async () => ({ status: 200, body: 'OK' }),
-      задержкиMs: [1, 1, 1, 1],
+      тест: {
+        // Без этого notifyTilda внутри checkOrder попыталась бы настоящий
+        // сетевой запрос на tildaNotifyUrl и честно ждала бы тайм-аут.
+        отправка: async () => ({ status: 200, body: 'OK' }),
+        задержкиMs: [1, 1, 1, 1],
+      },
     });
     // checkOrder внутри обхода запускает уведомление, но не ждёт его.
-    await дождатьсяФоновыхЗадач();
+    await дождатьсяЗавершенияОтправки(store, о.token);
+    expect(store.findByToken(о.token)?.state).toBe('уведомлён');
+  });
+
+  it('подбирает оплаченный неуведомленный заказ в пределах окна и доводит уведомление', async () => {
+    const о = store.createOrder(образец);
+    store.updateState(о.id, 'оплачен', {
+      txSignature: 'подпись',
+      paidAt: Math.floor(Date.now() / 1000) - 10,
+    });
+
+    await обходОдинРаз({
+      ...deps,
+      тест: { отправка: async () => ({ status: 200, body: 'OK' }), задержкиMs: [1, 1, 1, 1] },
+    });
+
     expect(store.findByToken(о.token)?.state).toBe('уведомлён');
   });
 });
@@ -342,7 +487,7 @@ describe('обходОдинРаз', () => {
 describe('startChecker', () => {
   let каталог: string;
   let store: Store;
-  let deps: WalkDeps;
+  let deps: CheckerDeps;
 
   beforeEach(() => {
     vi.useFakeTimers();
@@ -365,8 +510,10 @@ describe('startChecker', () => {
     let проходов = 0;
     const стоп = startChecker({
       ...deps,
-      наЗаказ: () => {
-        проходов += 1;
+      тест: {
+        наЗаказ: () => {
+          проходов += 1;
+        },
       },
     });
 
