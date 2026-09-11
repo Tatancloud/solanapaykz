@@ -124,8 +124,9 @@ describe('Store', () => {
 
     const уведомлённый = store.createOrder({ ...образец, tildaOrderId: 'c:2', token: 'тс2', createdAt: 200 });
     store.updateState(уведомлённый.id, 'оплачен', { txSignature: 'подпись', paidAt: 200 });
+    // markNotified(true, ...) сам переводит заказ в «уведомлён» —
+    // отдельный updateState не нужен, см. тест атомарности ниже.
     store.markNotified(уведомлённый.id, true, 1);
-    store.updateState(уведомлённый.id, 'уведомлён');
 
     const список = store.listPending(10, 86400, 86400, 1000);
     expect(список.map((o) => o.tildaOrderId)).toEqual(['c:1']);
@@ -149,6 +150,34 @@ describe('Store', () => {
     const после = store.findByToken('ткн-1');
     expect(после?.notifyAttempts).toBe(2);
     expect(после?.notifiedOk).toBe(1);
+  });
+
+  it('markNotified при успехе одной записью переводит заказ в «уведомлён»', () => {
+    // Раздельные markNotified + updateState оставляли бы окно между двумя
+    // записями — падение процесса ровно в нём оставляло бы заказ
+    // уведомлённым (notifiedOk=1), но не переведённым в state='уведомлён':
+    // такая комбинация не проходит ни в decide(), ни в ветку довоза
+    // уведомления (там нужен notifiedOk=0), и заказ выпадал бы из
+    // автоматики молча.
+    const о = store.createOrder(образец);
+    store.updateState(о.id, 'оплачен', { txSignature: 'подпись', paidAt: 100 });
+
+    store.markNotified(о.id, true, 1);
+
+    const после = store.findByToken('ткн-1');
+    expect(после?.state).toBe('уведомлён');
+    expect(после?.notifiedOk).toBe(1);
+  });
+
+  it('markNotified при неуспехе не трогает состояние заказа', () => {
+    const о = store.createOrder(образец);
+    store.updateState(о.id, 'оплачен', { txSignature: 'подпись', paidAt: 100 });
+
+    store.markNotified(о.id, false, 1);
+
+    const после = store.findByToken('ткн-1');
+    expect(после?.state).toBe('оплачен');
+    expect(после?.notifiedOk).toBe(0);
   });
 
   it('busyTimeoutMs заставляет проигравшего в гонке ждать освобождения блокировки, а не падать мгновенно', () => {
