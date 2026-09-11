@@ -146,7 +146,7 @@ async function обработатьЗапрос(
   }
 
   if (метод === 'POST' && url.pathname === '/admin/logout') {
-    admin.выход(req, res);
+    admin.выход(req, res, deps);
     return;
   }
 

@@ -230,15 +230,35 @@ describe('POST /admin/logout', () => {
   });
 
   it('без куки (клиент, честно удаливший её по Max-Age=0) список снова недоступен', async () => {
-    // Кука — подписанный самодостаточный токен без серверного списка
-    // отзыва: клиент, который проигнорирует Max-Age=0 и специально
-    // пришлёт старое значение снова, всё ещё будет им «залогинен» до
-    // истечения 12 часов — это ограничение подписанных кук без
-    // серверного хранилища сессий, а не брешь в проверке этой подписи.
-    // Проверяем гарантированное: обычный клиент, честно уронивший куку
-    // после Max-Age=0, доступа не получает.
     const ответ = await запрос('GET', '/admin');
     expect(ответ.status).toBe(303);
+  });
+
+  it('после выхода СТАРЫЙ токен (например, утёкший и специально присланный снова) тоже отклоняется', async () => {
+    // Выход увеличивает поколение сессий в базе (Store.bumpSessionGeneration) —
+    // токен несёт номер поколения на момент выдачи, и старое поколение
+    // проверку больше не проходит, даже если кука не была удалена нигде,
+    // кроме как логическим Max-Age=0 (см. заголовок routes-admin.ts).
+    const вход = await запрос('POST', '/admin/login', { тело: { password: config.adminPassword } });
+    const кука = кукаИзОтвета(вход.headers);
+
+    await запрос('POST', '/admin/logout', { кука });
+
+    const попыткаСоСтаройКукой = await запрос('GET', '/admin', { кука });
+    expect(попыткаСоСтаройКукой.status).toBe(303);
+    expect(попыткаСоСтаройКукой.headers.get('location')).toBe('/admin/login');
+  });
+
+  it('выход не мешает войти заново тем же паролем', async () => {
+    const первыйВход = await запрос('POST', '/admin/login', { тело: { password: config.adminPassword } });
+    await запрос('POST', '/admin/logout', { кука: кукаИзОтвета(первыйВход.headers) });
+
+    const второйВход = await запрос('POST', '/admin/login', { тело: { password: config.adminPassword } });
+    expect(второйВход.status).toBe(303);
+    expect(второйВход.headers.get('location')).toBe('/admin');
+
+    const списокСНовойСессией = await запрос('GET', '/admin', { кука: кукаИзОтвета(второйВход.headers) });
+    expect(списокСНовойСессией.status).toBe(200);
   });
 });
 
@@ -297,7 +317,7 @@ describe('GET /admin — с валидной сессией', () => {
     expect(ответ.body).not.toContain(образец.token);
   });
 
-  it('видна неудача отправки письма продавцу, но состояние заказа не меняется', async () => {
+  it('видна неудача отправки письма продавцу, но состояние заказа не меняется, и переживает перезапуск сервера', async () => {
     const { sendMerchantMail } = await import('../src/mailer.js');
     const о = store.createOrder({ ...образец, tildaOrderId: '10868059:200', token: 'c'.repeat(32) });
     store.updateState(о.id, 'оплачен', { txSignature: 'подпись-х' });
@@ -308,11 +328,21 @@ describe('GET /admin — с валидной сессией', () => {
       { action: 'оплачен', signature: 'подпись-х', note: 'Платёж получен.' },
       {
         config: { smtp: config.smtp, merchantEmail: config.merchantEmail },
+        store,
         log: createLog(() => {}),
         тест: { отправка: async () => { throw new Error('SMTP недоступен'); } },
       },
     );
     expect(успех).toBe(false);
+
+    // «Перезапуск сервера»: открываем тот же файл базы заново отдельным
+    // Store, как это делает процесс при рестарте (openDatabase в
+    // http/server.ts бутстрапе). Сбой письма — в базе, а не в памяти
+    // процесса, поэтому виден и здесь, а не только через переменную `store`
+    // текущего теста.
+    const путьКБазе = join(каталог, 'orders.sqlite');
+    const storeПослеПерезапуска = openDatabase(путьКБазе);
+    expect(storeПослеПерезапуска.findByTildaOrderId('10868059:200')!.mailError).toBe('SMTP недоступен');
 
     const ответ = await запросСВходом('GET', '/admin');
     expect(ответ.body).toContain('Письмо не отправлено');

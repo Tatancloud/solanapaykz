@@ -1,12 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import type { Decision } from '../src/decision.js';
-import type { NewOrder, Order } from '../src/db.js';
+import type { NewOrder, Order, Store } from '../src/db.js';
 import { createLog } from '../src/log.js';
-import { сбойОтправки, ссылкаНаТранзакцию, sendMerchantMail, type MailerDeps, type ПисьмоОпции } from '../src/mailer.js';
+import { ссылкаНаТранзакцию, sendMerchantMail, type MailerDeps, type ПисьмоОпции } from '../src/mailer.js';
 
 /** Полный заказ — то, что уже лежит в базе (см. tests/db.test.ts, tests/http.test.ts). */
 function заказ(изменения: Partial<Order> = {}): Order {
-  const базовый: NewOrder & { id: number; state: Order['state']; paidAt: number | null; notifyAttempts: number; notifiedOk: 0 | 1 } = {
+  const базовый: NewOrder & {
+    id: number;
+    state: Order['state'];
+    paidAt: number | null;
+    notifyAttempts: number;
+    notifiedOk: 0 | 1;
+    mailFailedAt: number | null;
+    mailError: string | null;
+  } = {
     id: 1,
     tildaOrderId: '10868059:42',
     token: 'a'.repeat(32),
@@ -32,6 +40,8 @@ function заказ(изменения: Partial<Order> = {}): Order {
     customerEmail: 'k@example.kz',
     description: 'Букет «Астана»',
     productsJson: null,
+    mailFailedAt: null,
+    mailError: null,
   };
   return { ...базовый, ...изменения };
 }
@@ -61,10 +71,24 @@ function поймать(): { письма: ПисьмоОпции[]; отпра�
   };
 }
 
+/** Подменяет ту единственную операцию над базой, которую видит mailer.ts — `recordMailOutcome`. Настоящей SQLite не нужно: sendMerchantMail не читает и не создаёт заказы. */
+function фейковыйStore(): { store: MailerDeps['store']; вызовы: Array<{ id: number; сбой: Parameters<Store['recordMailOutcome']>[1] }> } {
+  const вызовы: Array<{ id: number; сбой: Parameters<Store['recordMailOutcome']>[1] }> = [];
+  return {
+    store: {
+      recordMailOutcome: (id, сбой) => {
+        вызовы.push({ id, сбой });
+      },
+    },
+    вызовы,
+  };
+}
+
 describe('sendMerchantMail', () => {
   it('возвращает true и отправляет письмо с адресом продавца при успехе', async () => {
     const { письма, тест } = поймать();
-    const успех = await sendMerchantMail(заказ(), решениеОплачен, { config, log: createLog(() => {}), тест });
+    const { store } = фейковыйStore();
+    const успех = await sendMerchantMail(заказ(), решениеОплачен, { config, store, log: createLog(() => {}), тест });
     expect(успех).toBe(true);
     expect(письма).toHaveLength(1);
     expect(письма[0]!.from).toBe(config.smtp.from);
@@ -73,8 +97,9 @@ describe('sendMerchantMail', () => {
 
   it('письмо содержит номер заказа, обе суммы, курс с источником, ссылку на транзакцию и состояние', async () => {
     const { письма, тест } = поймать();
+    const { store } = фейковыйStore();
     const о = заказ();
-    await sendMerchantMail(о, решениеОплачен, { config, log: createLog(() => {}), тест });
+    await sendMerchantMail(о, решениеОплачен, { config, store, log: createLog(() => {}), тест });
     const текст = письма[0]!.text;
 
     expect(текст).toContain('10868059:42');
@@ -89,35 +114,39 @@ describe('sendMerchantMail', () => {
 
   it('не содержит секретов настроек: пароль SMTP, секрет заказа, секрет уведомления, пароль админа', async () => {
     const { письма, тест } = поймать();
-    await sendMerchantMail(заказ(), решениеОплачен, { config, log: createLog(() => {}), тест });
+    const { store } = фейковыйStore();
+    await sendMerchantMail(заказ(), решениеОплачен, { config, store, log: createLog(() => {}), тест });
     const всё = письма[0]!.text + письма[0]!.html + письма[0]!.subject;
     expect(всё).not.toContain('секрет-smtp-пароля');
   });
 
   it('не содержит адреса узла Solana целиком: письму узел не передаётся вовсе', async () => {
     const { письма, тест } = поймать();
-    await sendMerchantMail(заказ(), решениеОплачен, { config, log: createLog(() => {}), тест });
+    const { store } = фейковыйStore();
+    await sendMerchantMail(заказ(), решениеОплачен, { config, store, log: createLog(() => {}), тест });
     const всё = письма[0]!.text + письма[0]!.html;
     expect(всё).not.toMatch(/api\.devnet\.solana\.com|rpcUrl/i);
   });
 
   it('не содержит ключа страницы оплаты (order.token)', async () => {
     const { письма, тест } = поймать();
+    const { store } = фейковыйStore();
     const о = заказ();
-    await sendMerchantMail(о, решениеОплачен, { config, log: createLog(() => {}), тест });
+    await sendMerchantMail(о, решениеОплачен, { config, store, log: createLog(() => {}), тест });
     const всё = письма[0]!.text + письма[0]!.html;
     expect(всё).not.toContain(о.token);
   });
 
   it('HTML-версия экранирует состояние заказа, даже если оно необычной формы', async () => {
     const { письма, тест } = поймать();
+    const { store } = фейковыйStore();
     // Состояние — не пользовательский ввод, но защита от разметки не должна
     // зависеть от того, что источник считается «своим»: правило то же, что
     // и в http/html.ts.
     await sendMerchantMail(
       заказ({ state: '<script>alert(1)</script>' as Order['state'] }),
       решениеОплачен,
-      { config, log: createLog(() => {}), тест },
+      { config, store, log: createLog(() => {}), тест },
     );
     expect(письма[0]!.html).not.toContain('<script>alert(1)</script>');
     expect(письма[0]!.html).toContain('&lt;script&gt;');
@@ -125,22 +154,24 @@ describe('sendMerchantMail', () => {
 
   it('для решения «не сошлось» включает причину расхождения', async () => {
     const { письма, тест } = поймать();
+    const { store } = фейковыйStore();
     const решение: Decision = {
       action: 'не сошлось',
       signature: 'подпись-х',
       reason: 'сумма меньше требуемой',
       note: 'Найдена транзакция подпись-х, но она не прошла проверку: сумма меньше требуемой.',
     };
-    await sendMerchantMail(заказ({ state: 'не сошлось' }), решение, { config, log: createLog(() => {}), тест });
+    await sendMerchantMail(заказ({ state: 'не сошлось' }), решение, { config, store, log: createLog(() => {}), тест });
     expect(письма[0]!.text).toContain('сумма меньше требуемой');
   });
 
   it('без подписи транзакции пишет «платёж ещё не подтверждён», а не пустоту или ссылку', async () => {
     const { письма, тест } = поймать();
+    const { store } = фейковыйStore();
     await sendMerchantMail(
       заказ({ txSignature: null, state: 'ожидает' }),
       { action: 'ждать', note: 'Платёж пока не найден.' },
-      { config, log: createLog(() => {}), тест },
+      { config, store, log: createLog(() => {}), тест },
     );
     expect(письма[0]!.text).toContain('платёж ещё не подтверждён');
     expect(письма[0]!.html).not.toContain('explorer.solana.com');
@@ -148,8 +179,10 @@ describe('sendMerchantMail', () => {
 
   it('при неудаче отправки возвращает false и не бросает исключение наружу', async () => {
     const журнал: string[] = [];
+    const { store } = фейковыйStore();
     const успех = await sendMerchantMail(заказ(), решениеОплачен, {
       config,
+      store,
       log: createLog((строка) => журнал.push(строка)),
       тест: { отправка: async () => { throw new Error('SMTP недоступен'); } },
     });
@@ -159,8 +192,10 @@ describe('sendMerchantMail', () => {
 
   it('неудача отправки не попадает в журнал вместе с содержимым письма (секретов там и так нет, но проверяем факт, а не тело)', async () => {
     const журнал: string[] = [];
+    const { store } = фейковыйStore();
     await sendMerchantMail(заказ(), решениеОплачен, {
       config,
+      store,
       log: createLog((строка) => журнал.push(строка)),
       тест: { отправка: async () => { throw new Error('SMTP недоступен: секрет-smtp-пароля'); } },
     });
@@ -171,18 +206,35 @@ describe('sendMerchantMail', () => {
     expect(журнал.join('\n')).not.toContain(config.merchantEmail);
   });
 
-  it('после неуспеха сбойОтправки(token) отражает сбой; после следующего успеха — исчезает', async () => {
-    const о = заказ({ token: 'b'.repeat(32) });
+  it('при неудаче записывает сбой в базу через recordMailOutcome(order.id, {at, message})', async () => {
+    const { вызовы, store } = фейковыйStore();
+    const о = заказ({ id: 42 });
     await sendMerchantMail(о, решениеОплачен, {
       config,
+      store,
       log: createLog(() => {}),
       тест: { отправка: async () => { throw new Error('нет связи с SMTP'); } },
     });
-    expect(сбойОтправки(о.token)?.сообщение).toBe('нет связи с SMTP');
+    expect(вызовы).toHaveLength(1);
+    expect(вызовы[0]!.id).toBe(42);
+    expect(вызовы[0]!.сбой).toMatchObject({ message: 'нет связи с SMTP' });
+    expect(typeof вызовы[0]!.сбой?.at).toBe('number');
+  });
 
+  it('при успехе записывает в базу снятие сбоя — recordMailOutcome(order.id, null)', async () => {
+    const { вызовы, store } = фейковыйStore();
     const { тест } = поймать();
-    await sendMerchantMail(о, решениеОплачен, { config, log: createLog(() => {}), тест });
-    expect(сбойОтправки(о.token)).toBeUndefined();
+    const о = заказ({ id: 7 });
+    await sendMerchantMail(о, решениеОплачен, { config, store, log: createLog(() => {}), тест });
+    expect(вызовы).toEqual([{ id: 7, сбой: null }]);
+  });
+
+  it('не имеет доступа ни к чему из Store, кроме recordMailOutcome — доступ ограничен на уровне типа', async () => {
+    // Не рантайм-тест (TS не проверяется в vitest), а фиксация контракта:
+    // если бы deps.store требовал больше методов, этот файл перестал бы
+    // собираться — фейковый store ниже реализует ровно один метод.
+    const { store } = фейковыйStore();
+    expect(Object.keys(store)).toEqual(['recordMailOutcome']);
   });
 });
 
