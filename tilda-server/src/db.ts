@@ -64,6 +64,16 @@ export interface Order {
   tildaSignature: string | null;
   /** Подпись транзакции Solana — пусто до оплаты, заполняется при подтверждении. */
   txSignature: string | null;
+  /**
+   * Момент (Unix-секунды), когда заказ впервые перешёл в «оплачен» —
+   * пусто до этого. Нужен, чтобы ограничить повторные попытки уведомить
+   * Tilda по времени, а не по числу (`listPending` ниже): без своей
+   * метки для этого момента пришлось бы отсчитывать окно повтора от
+   * `createdAt`, а заказ может стать «оплачен» почти на исходе своего
+   * собственного окна поздних платежей — тогда на повторы уведомления не
+   * осталось бы времени вовсе.
+   */
+  paidAt: number | null;
   notifyAttempts: number;
   notifiedOk: 0 | 1;
   customerEmail: string | null;
@@ -76,7 +86,7 @@ export interface Order {
  * хранилище: `id` (автоинкремент), начальное `state`, счётчик попыток
  * уведомления и исход последней.
  */
-export type NewOrder = Omit<Order, 'id' | 'state' | 'notifyAttempts' | 'notifiedOk'>;
+export type NewOrder = Omit<Order, 'id' | 'state' | 'paidAt' | 'notifyAttempts' | 'notifiedOk'>;
 
 /**
  * Заказ с таким номером Tilda уже есть в базе.
@@ -106,15 +116,23 @@ export interface Store {
   /** Последние заказы, новые первыми. */
   listRecent(limit: number): Order[];
   /**
-   * Заказы, требующие внимания фонового обходчика: «ожидает» без
-   * ограничения по времени плюс «просрочен», но только те, что ещё
-   * укладываются в окно поздних платежей (`createdAt + lateWindowSeconds
-   * >= now`) — старые первыми. Безнадёжно просроченные заказы (окно уже
-   * истекло) в выборку не попадают: иначе они навсегда занимают место в
-   * `limit`, и фоновый обход, идущий от старых к новым, перестаёт
-   * доходить до свежих заказов.
+   * Заказы, требующие внимания фонового обходчика — старые первыми:
+   * - «ожидает» без ограничения по времени;
+   * - «просрочен», но только пока не вышло окно поздних платежей
+   *   (`createdAt + lateWindowSeconds >= now`);
+   * - «оплачен» с ещё не доставленным уведомлением Tilda
+   *   (`notifiedOk = 0`), но только пока не вышло окно повторных попыток
+   *   уведомления (`paidAt + notifyRetryWindowSeconds >= now`) — иначе
+   *   заказ, по которому Tilda никогда не ответит «OK», занимал бы место
+   *   в выборке вечно.
+   *
+   * Во всех трёх случаях безнадёжные заказы (окно уже истекло) в выборку
+   * не попадают: иначе они навсегда занимают место в `limit`, и фоновый
+   * обход, идущий от старых к новым, перестаёт доходить до свежих
+   * заказов — ровно эта ошибка уже находилась в похожем месте (плагин
+   * WooCommerce).
    */
-  listPending(limit: number, lateWindowSeconds: number, now: number): Order[];
+  listPending(limit: number, lateWindowSeconds: number, notifyRetryWindowSeconds: number, now: number): Order[];
   updateState(id: number, state: OrderState, fields?: Partial<Order>): void;
   /** Фиксирует попытку уведомления продавца: её номер и исход. */
   markNotified(id: number, ok: boolean, attempt: number): void;
@@ -141,6 +159,7 @@ CREATE TABLE IF NOT EXISTS orders (
   test_mode       INTEGER NOT NULL DEFAULT 0,
   tilda_signature TEXT,
   tx_signature    TEXT,
+  paid_at         INTEGER,
   notify_attempts INTEGER NOT NULL DEFAULT 0,
   notified_ok     INTEGER NOT NULL DEFAULT 0,
   customer_email  TEXT,
@@ -171,6 +190,7 @@ interface СтрокаЗаказа {
   test_mode: number;
   tilda_signature: string | null;
   tx_signature: string | null;
+  paid_at: number | null;
   notify_attempts: number;
   notified_ok: number;
   customer_email: string | null;
@@ -199,6 +219,7 @@ function изСтроки(р: СтрокаЗаказа): Order {
     testMode: р.test_mode === 1,
     tildaSignature: р.tilda_signature,
     txSignature: р.tx_signature,
+    paidAt: р.paid_at,
     notifyAttempts: р.notify_attempts,
     notifiedOk: р.notified_ok === 1 ? 1 : 0,
     customerEmail: р.customer_email,
@@ -227,6 +248,7 @@ const КОЛОНКА: Record<Exclude<keyof Order, 'id'>, string> = {
   testMode: 'test_mode',
   tildaSignature: 'tilda_signature',
   txSignature: 'tx_signature',
+  paidAt: 'paid_at',
   notifyAttempts: 'notify_attempts',
   notifiedOk: 'notified_ok',
   customerEmail: 'customer_email',
@@ -303,8 +325,14 @@ export function этоДубльНомераTilda(е: unknown): boolean {
  * несовпадении версий сервер обязан отказаться с понятным сообщением, а
  * не молча повредить данные или упасть в случайном месте. Если версия
  * когда-нибудь изменится, здесь же нужна и миграция.
+ *
+ * Версия 2 (была 1): добавлена колонка `paid_at` (задача 7, ревью —
+ * повторные попытки уведомить Tilda ограничены временем с момента оплаты,
+ * а не только числом). Боевой базы по-прежнему нет, поэтому и в этот раз
+ * — просто отказ на несовпадении версии, без миграции существующего
+ * файла.
  */
-const ВЕРСИЯ_СХЕМЫ = 1;
+const ВЕРСИЯ_СХЕМЫ = 2;
 
 /**
  * Открывает (создаёт при отсутствии) файл базы и возвращает хранилище
@@ -364,12 +392,12 @@ export function openDatabase(путь: string, busyTimeoutMs = 5000): Store {
     INSERT INTO orders (
       tilda_order_id, token, state, amount_kzt, amount_token, token_symbol,
       cluster, recipient, reference, rate, rate_source, payment_url,
-      quote_json, created_at, expires_at, test_mode, tilda_signature, tx_signature,
+      quote_json, created_at, expires_at, test_mode, tilda_signature, tx_signature, paid_at,
       notify_attempts, notified_ok, customer_email, description, products_json
     ) VALUES (
       @tilda_order_id, @token, @state, @amount_kzt, @amount_token, @token_symbol,
       @cluster, @recipient, @reference, @rate, @rate_source, @payment_url,
-      @quote_json, @created_at, @expires_at, @test_mode, @tilda_signature, @tx_signature,
+      @quote_json, @created_at, @expires_at, @test_mode, @tilda_signature, @tx_signature, @paid_at,
       @notify_attempts, @notified_ok, @customer_email, @description, @products_json
     )
   `);
@@ -389,6 +417,7 @@ export function openDatabase(путь: string, busyTimeoutMs = 5000): Store {
     SELECT * FROM orders
     WHERE state = 'ожидает'
        OR (state = 'просрочен' AND created_at + ? >= ?)
+       OR (state = 'оплачен' AND notified_ok = 0 AND paid_at IS NOT NULL AND paid_at + ? >= ?)
     ORDER BY created_at ASC
     LIMIT ?
   `);
@@ -415,6 +444,7 @@ export function openDatabase(путь: string, busyTimeoutMs = 5000): Store {
         test_mode: o.testMode ? 1 : 0,
         tilda_signature: o.tildaSignature,
         tx_signature: o.txSignature,
+        paid_at: null,
         notify_attempts: 0,
         notified_ok: 0,
         customer_email: o.customerEmail,
@@ -449,8 +479,19 @@ export function openDatabase(путь: string, busyTimeoutMs = 5000): Store {
     return строки.map(изСтроки);
   }
 
-  function listPending(limit: number, lateWindowSeconds: number, now: number): Order[] {
-    const строки = ожидающие.all(lateWindowSeconds, now, limit) as СтрокаЗаказа[];
+  function listPending(
+    limit: number,
+    lateWindowSeconds: number,
+    notifyRetryWindowSeconds: number,
+    now: number,
+  ): Order[] {
+    const строки = ожидающие.all(
+      lateWindowSeconds,
+      now,
+      notifyRetryWindowSeconds,
+      now,
+      limit,
+    ) as СтрокаЗаказа[];
     return строки.map(изСтроки);
   }
 
