@@ -125,6 +125,20 @@ describe('loadConfig', () => {
     });
   });
 
+  describe('listenHost', () => {
+    it('по умолчанию — 127.0.0.1', () => {
+      expect(loadConfig(полные).listenHost).toBe('127.0.0.1');
+    });
+
+    it('принимает 0.0.0.0 — оправдано, когда изоляцию обеспечивает Docker (см. docker-compose.yml)', () => {
+      expect(loadConfig({ ...полные, listenHost: '0.0.0.0' }).listenHost).toBe('0.0.0.0');
+    });
+
+    it('отвергает пустую строку', () => {
+      expect(() => loadConfig({ ...полные, listenHost: '' })).toThrow(/listenHost/);
+    });
+  });
+
   describe('trustedProxyAddresses', () => {
     it('принимает список адресов и заменяет им значение по умолчанию', () => {
       const c = loadConfig({ ...полные, trustedProxyAddresses: ['172.21.0.1'] });

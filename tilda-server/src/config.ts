@@ -45,6 +45,18 @@ export interface Config {
   databasePath: string;
   listenPort: number;
   /**
+   * Адрес, на котором слушает сам процесс — по умолчанию `127.0.0.1`
+   * (loopback): снаружи процесса это единственная защита от прямого
+   * обращения в обход nginx (TLS, лимиты). Значение `0.0.0.0` оправдано
+   * ТОЛЬКО когда изоляцию от внешней сети берёт на себя что-то другое —
+   * например, `docker-compose.yml` этого проекта публикует порт наружу
+   * исключительно на `127.0.0.1` ХОСТА, а внутри контейнерной сети моста
+   * процесс обязан слушать `0.0.0.0`, иначе трафик, пришедший через
+   * проброс порта Docker (он приходит на адрес контейнера в этой сети, а
+   * не на его loopback), до процесса не дойдёт вовсе.
+   */
+  listenHost: string;
+  /**
    * Адреса, с которых доверяем заголовку `X-Forwarded-For` при подсчёте
    * попыток входа в `/admin` (см. `http/routes-admin.ts`). По умолчанию —
    * только loopback (`127.0.0.1`, `::1`, `::ffff:127.0.0.1`): процесс и
@@ -127,6 +139,7 @@ const ИЗВЕСТНЫЕ_КЛЮЧИ = new Set<string>([
   'merchantEmail',
   'databasePath',
   'listenPort',
+  'listenHost',
   'trustedProxyAddresses',
 ]);
 
@@ -142,6 +155,7 @@ const ПО_УМОЛЧАНИЮ = {
   quoteTtlSeconds: 900,
   lateWindowSeconds: 86400,
   listenPort: 8080,
+  listenHost: '127.0.0.1',
   trustedProxyAddresses: ['127.0.0.1', '::1', '::ffff:127.0.0.1'] as string[],
 };
 
@@ -350,6 +364,16 @@ export function loadConfig(raw: unknown): Config {
     }
   }
 
+  // --- listenHost ---
+  let listenHost: string = ПО_УМОЛЧАНИЮ.listenHost;
+  if (raw.listenHost !== undefined) {
+    if (непустаяСтрока(raw.listenHost)) {
+      listenHost = raw.listenHost;
+    } else {
+      проблемы.push('listenHost: непустая строка (адрес интерфейса, обычно 127.0.0.1 или 0.0.0.0)');
+    }
+  }
+
   // --- trustedProxyAddresses ---
   let trustedProxyAddresses: string[] = ПО_УМОЛЧАНИЮ.trustedProxyAddresses;
   if (raw.trustedProxyAddresses !== undefined) {
@@ -385,6 +409,7 @@ export function loadConfig(raw: unknown): Config {
     merchantEmail: raw.merchantEmail as string,
     databasePath: raw.databasePath as string,
     listenPort,
+    listenHost,
     trustedProxyAddresses,
   };
 }

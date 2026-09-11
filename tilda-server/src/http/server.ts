@@ -241,16 +241,18 @@ export async function запуститьСервер(): Promise<{ server: http.S
   const server = createServer({ config, store, client, log });
   const остановитьОбход = startChecker({ config, store, client, log });
 
-  // Только loopback — по конструкции: обратный прокси (nginx) сидит на том
-  // же хосте (см. заголовок `routes-admin.ts` про доверенный адрес прокси
-  // для счётчика попыток входа). В Docker-развёртывании (`docker-compose.yml`)
-  // это работает благодаря `network_mode: host` — иначе прокси со стороны
-  // контейнера пришёл бы не с loopback, а с адреса моста Docker.
+  // По умолчанию только loopback (см. `config.listenHost`) — обратный
+  // прокси (nginx) достаёт до процесса либо с того же хоста напрямую, либо
+  // через Docker (`docker-compose.yml`: порт публикуется наружу только на
+  // `127.0.0.1` хоста, а внутри своей сети моста процесс слушает `0.0.0.0`,
+  // см. комментарий у `Config.listenHost` в `../config.ts`). Изоляция от
+  // внешней сети в обоих случаях обеспечивается СНАРУЖИ процесса — либо
+  // самим loopback-биндом, либо публикацией порта только на loopback хоста.
   await new Promise<void>((res, rej) => {
-    server.listen(config.listenPort, '127.0.0.1', () => res());
+    server.listen(config.listenPort, config.listenHost, () => res());
     server.once('error', rej);
   });
-  log.info('Сервер запущен', { port: config.listenPort });
+  log.info('Сервер запущен', { port: config.listenPort, host: config.listenHost });
 
   let остановлен = false;
   async function остановить(): Promise<void> {

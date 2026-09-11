@@ -30,6 +30,7 @@ const config: Config = {
   merchantEmail: 'merchant@example.kz',
   databasePath: ':memory:',
   listenPort: 0,
+  listenHost: '127.0.0.1',
   trustedProxyAddresses: ['127.0.0.1', '::1', '::ffff:127.0.0.1'],
 };
 
@@ -222,5 +223,53 @@ describe('POST /tilda/webhook — реальная заявка', () => {
     await вебхук(телоЗаявки({ tranid: '1' }));
     await вебхук(телоЗаявки({ tranid: '2' }));
     expect(store.listRecent(10)).toHaveLength(2);
+  });
+});
+
+describe('POST /tilda/webhook — разбор суммы терпимый (путь не проверен настоящим заказом Tilda)', () => {
+  it('берёт сумму из payment как JSON-объекта корзины ({ amount: ... })', async () => {
+    const { Payment: _payment, ...безPayment } = телоЗаявки();
+    const ответ = await вебхук({ ...безPayment, payment: JSON.stringify({ amount: 25000, orderid: 7 }) });
+    expect(ответ.status).toBe(200);
+    expect(store.findByTildaOrderId('482910')?.amountKzt).toBe('25000');
+  });
+
+  it('payment как JSON со строковым amount тоже подходит', async () => {
+    const { Payment: _payment, ...безPayment } = телоЗаявки();
+    const ответ = await вебхук({ ...безPayment, payment: JSON.stringify({ amount: '12345.50' }) });
+    expect(ответ.status).toBe(200);
+    expect(store.findByTildaOrderId('482910')?.amountKzt).toBe('12345.50');
+  });
+
+  it('JSON в payment имеет приоритет над полем Payment, если оба присутствуют', async () => {
+    const ответ = await вебхук({ ...телоЗаявки({ Payment: '1' }), payment: JSON.stringify({ amount: 9999 }) });
+    expect(ответ.status).toBe(200);
+    expect(store.findByTildaOrderId('482910')?.amountKzt).toBe('9999');
+  });
+
+  it('если payment не JSON или без amount — падает обратно на поле Payment', async () => {
+    const ответ = await вебхук({ ...телоЗаявки(), payment: 'не json вовсе' });
+    expect(ответ.status).toBe(200);
+    expect(store.findByTildaOrderId('482910')?.amountKzt).toBe('15000');
+  });
+
+  it('падает обратно на голое поле amount, если Payment/payment отсутствуют', async () => {
+    const { Payment: _payment, ...безPayment } = телоЗаявки();
+    const ответ = await вебхук({ ...безPayment, amount: '7777' });
+    expect(ответ.status).toBe(200);
+    expect(store.findByTildaOrderId('482910')?.amountKzt).toBe('7777');
+  });
+
+  it('когда ни один вариант не подошёл — отказывает и пишет ВСЁ тело запроса в журнал для разбора', async () => {
+    const { Payment: _payment, ...безPayment } = телоЗаявки();
+    const ответ = await вебхук({ ...безPayment, payment: JSON.stringify({ totalcost: 15000 }) });
+    expect(ответ.status).toBe(400);
+    expect(store.findByTildaOrderId('482910')).toBeNull();
+
+    const записьСТелом = журнал.find((строка) => строка.includes('телоЗапроса'));
+    expect(записьСТелом).toBeDefined();
+    // "totalcost" — то самое поле из тела, которого не было в известных
+    // вариантах; оно обязано быть видно в журнале, а не потеряно.
+    expect(записьСТелом).toContain('totalcost');
   });
 });
