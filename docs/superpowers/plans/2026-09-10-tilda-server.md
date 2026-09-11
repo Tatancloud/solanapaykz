@@ -580,8 +580,12 @@ git checkout main && git merge --no-ff feat/tilda-signature && git push origin m
   - `findByTildaOrderId(id: string): Order | null`;
   - `findByToken(token: string): Order | null`;
   - `listRecent(limit: number): Order[]` — новые первыми;
-  - `listPending(limit: number): Order[]` — только `ожидает` и `просрочен`
-    в пределах окна поздних платежей, старые первыми;
+  - `listPending(limit: number, lateWindowSeconds: number, now: number): Order[]`
+    — `ожидает` без ограничения по времени плюс `просрочен`, у которых
+    `created_at + lateWindowSeconds >= now`; старые первыми. Окно отсекается
+    **в запросе**, а не вызывающим: фоновый обход берёт по 30 заказов, и если
+    мёртвые записи остаются в выборке навсегда, они занимают всё окно, а новые
+    заказы перестают проверяться — молча. Это находка ревью плагина;
   - `updateState(id: number, state: OrderState, fields?: Partial<Order>): void`;
   - `markNotified(id: number, ok: boolean, attempt: number): void`.
 - Отдаёт: `type OrderState = 'ожидает' | 'оплачен' | 'уведомлён' | 'не сошлось' | 'поздний' | 'просрочен'`.

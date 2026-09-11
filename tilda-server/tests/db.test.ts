@@ -78,8 +78,23 @@ describe('Store', () => {
     const третий = store.createOrder({ ...образец, tildaOrderId: 'a:3', token: 'т3', createdAt: 200 });
     store.updateState(третий.id, 'уведомлён');
 
-    const список = store.listPending(10);
+    const список = store.listPending(10, 86400, 1_000_000);
     expect(список.map((o) => o.tildaOrderId)).toEqual(['a:2', 'a:1']);
+  });
+
+  it('listPending не отдаёт просроченный заказ, если окно поздних платежей уже истекло', () => {
+    // окно — 500 секунд, «сейчас» — 1200: свежий (createdAt 1000) ещё
+    // укладывается (1000 + 500 = 1500 >= 1200), древний (createdAt 100) —
+    // нет (100 + 500 = 600 < 1200) и не должен попасть в выборку, иначе
+    // безнадёжные заказы навсегда занимали бы место в limit фонового
+    // обхода и новые заказы молча переставали бы проверяться.
+    const свежий = store.createOrder({ ...образец, tildaOrderId: 'b:1', token: 'тб1', createdAt: 1000 });
+    store.updateState(свежий.id, 'просрочен');
+    const древний = store.createOrder({ ...образец, tildaOrderId: 'b:2', token: 'тб2', createdAt: 100 });
+    store.updateState(древний.id, 'просрочен');
+
+    const список = store.listPending(10, 500, 1200);
+    expect(список.map((o) => o.tildaOrderId)).toEqual(['b:1']);
   });
 
   it('считает попытки уведомления и помнит исход последней', () => {
