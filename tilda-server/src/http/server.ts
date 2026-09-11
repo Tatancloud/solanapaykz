@@ -9,25 +9,42 @@ import { readFileSync } from 'node:fs';
 import http from 'node:http';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { PaymentCheckerClient } from '../checker.js';
 import type { Config } from '../config.js';
 import type { Store } from '../db.js';
 import type { Log } from '../log.js';
 import type { PaymentClient } from '../tilda/inbound.js';
+import type { Отправка } from '../tilda/notify.js';
 import { страница404 } from './html.js';
 import { обработатьTildaPay } from './routes-pay.js';
 import { обработатьСтатус, обработатьСтраницуОплаты } from './routes-page.js';
 
 /**
  * Всё, что нужно маршрутам: полные настройки (подпись, секреты), хранилище
- * заказов и клиент SDK, реализующий минимальный интерфейс `PaymentClient`
- * (задача 5) — не весь `SolanaPayKZ`, чтобы в тестах его было чем подменить
- * без сети и RPC.
+ * заказов и клиент SDK — не весь `SolanaPayKZ`, чтобы в тестах его было чем
+ * подменить без сети и RPC. `PaymentClient` (задача 5) даёт котировку и
+ * платёжный запрос для `/tilda/pay`; `PaymentCheckerClient` (задача 7) —
+ * проверку платежа для `/api/status/:token`, который теперь сам запускает
+ * проверку на каждый опрос из вкладки покупателя.
  */
 export interface ЗависимостиСервера {
   config: Config;
   store: Store;
-  client: PaymentClient;
+  client: PaymentClient & PaymentCheckerClient;
   log: Log;
+  /** Только для тестов: подменяет реальную отправку HTTP внутри `notifyTilda` (см. `checker.ts`). */
+  отправка?: Отправка;
+  /** Только для тестов: паузы между попытками уведомления (см. `tilda/notify.ts`). */
+  задержкиMs?: readonly number[];
+  /**
+   * Сколько максимум ждать `checkOrder` на одном опросе, прежде чем
+   * ответить по текущей записи в базе, не дожидаясь его возврата (см.
+   * `routes-page.ts`). По умолчанию 8 секунд — этого достаточно тестам,
+   * которым нужно значение поменьше, чтобы не ждать реальные паузы
+   * `tilda/notify.ts`; в бою тоже может понадобиться другое число, если
+   * тайм-аут самого RPC-узла настроен нетипично.
+   */
+  таймаутОпросаMs?: number;
 }
 
 // dist/http/server.js и src/http/server.ts лежат на одной глубине от корня
@@ -115,7 +132,7 @@ async function обработатьЗапрос(
 
     const совпадениеСтатуса = ПУТЬ_СТАТУСА.exec(url.pathname);
     if (совпадениеСтатуса) {
-      обработатьСтатус(совпадениеСтатуса[1]!, res, deps);
+      await обработатьСтатус(совпадениеСтатуса[1]!, res, deps);
       return;
     }
   }
