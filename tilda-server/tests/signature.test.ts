@@ -83,4 +83,21 @@ describe('verifySignature', () => {
     const подпись = signFields(поля, секрет);
     expect(verifySignature(поля, подпись.toUpperCase(), секрет)).toBe(true);
   });
+
+  it('отсутствующее поле подписи в разобранном запросе даёт отказ, а не падение', () => {
+    // Тело HTTP-запроса не типизировано: поле signature может просто
+    // отсутствовать, и на границе с внешним миром сюда приходит undefined,
+    // а не гарантированная типом строка.
+    expect(verifySignature(поля, undefined as unknown as string, секрет)).toBe(false);
+    expect(verifySignature(поля, null as unknown as string, секрет)).toBe(false);
+    expect(verifySignature(поля, 123 as unknown as string, секрет)).toBe(false);
+  });
+
+  it('битые данные заказа из разобранного запроса дают отказ, а не падение', () => {
+    // Тот же случай для fields: за границей HTTP-запроса это не обязательно
+    // объект — там может оказаться null, массив или что угодно ещё.
+    expect(verifySignature(null as unknown as Record<string, string>, signFields(поля, секрет), секрет)).toBe(false);
+    expect(verifySignature([] as unknown as Record<string, string>, signFields(поля, секрет), секрет)).toBe(false);
+    expect(verifySignature('строка' as unknown as Record<string, string>, signFields(поля, секрет), секрет)).toBe(false);
+  });
 });
