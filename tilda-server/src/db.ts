@@ -134,7 +134,16 @@ export interface Store {
    */
   listPending(limit: number, lateWindowSeconds: number, notifyRetryWindowSeconds: number, now: number): Order[];
   updateState(id: number, state: OrderState, fields?: Partial<Order>): void;
-  /** Фиксирует попытку уведомления продавца: её номер и исход. */
+  /**
+   * Фиксирует попытку уведомления продавца: её номер и исход. Успех
+   * (`ok`) в ОДНОЙ атомарной записи переводит заказ и в `notifiedOk = 1`,
+   * и в `state = 'уведомлён'` — раздельные `markNotified` + `updateState`
+   * оставляли бы окно между двумя записями, и падение процесса ровно в
+   * нём оставило бы заказ уведомлённым, но не переведённым в `уведомлён`:
+   * такая комбинация не проходит ни в `decide()`, ни в ветку довоза
+   * (`notifiedOk = 1` там не подходит), и заказ выпадал бы из автоматики
+   * молча, без единой записи в журнал.
+   */
   markNotified(id: number, ok: boolean, attempt: number): void;
 }
 
@@ -514,11 +523,20 @@ export function openDatabase(путь: string, busyTimeoutMs = 5000): Store {
   }
 
   function markNotified(id: number, ok: boolean, attempt: number): void {
-    db.prepare('UPDATE orders SET notify_attempts = ?, notified_ok = ? WHERE id = ?').run(
-      attempt,
-      ok ? 1 : 0,
-      id,
-    );
+    // `state` меняется тем же UPDATE, а не отдельным вызовом: см.
+    // комментарий у объявления в интерфейсе `Store` — раздельная запись
+    // оставляла бы окно, в которое мог упасть процесс. `okValue`
+    // подставляется дважды — и как значение `notified_ok`, и как условие
+    // в CASE, — оба раза одним и тем же параметром, второй раз погоды не
+    // делает: при `ok = false` CASE оставляет `state` как есть.
+    const okValue = ok ? 1 : 0;
+    db.prepare(
+      `UPDATE orders
+       SET notify_attempts = ?,
+           notified_ok = ?,
+           state = CASE WHEN ? = 1 THEN 'уведомлён' ELSE state END
+       WHERE id = ?`,
+    ).run(attempt, okValue, okValue, id);
   }
 
   return {
