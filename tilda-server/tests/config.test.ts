@@ -10,7 +10,7 @@ const полные = {
   notifySecret: 'секрет-уведомления',
   tildaNotifyUrl: 'https://tilda.cc/payment/notify/xxx',
   publicUrl: 'https://pay.kabyldau.digital',
-  adminPassword: 'пароль',
+  adminPassword: 'длинный-пароль-админа',
   smtp: { host: 'smtp.example.kz', port: 465, user: 'u', pass: 'p', from: 'shop@example.kz' },
   merchantEmail: 'merchant@example.kz',
   databasePath: '/data/orders.sqlite',
