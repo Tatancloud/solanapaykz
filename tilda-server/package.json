@@ -1,0 +1,22 @@
+{
+  "name": "@solanapaykz/tilda-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.5.0" },
+  "scripts": {
+    "test": "vitest run",
+    "build": "tsc -p tsconfig.json",
+    "start": "node --experimental-sqlite dist/http/server.js"
+  },
+  "dependencies": {
+    "@solanapaykz/core": "file:..",
+    "nodemailer": "6.9.16"
+  },
+  "devDependencies": {
+    "@types/node": "22.10.2",
+    "@types/nodemailer": "6.4.17",
+    "typescript": "5.7.2",
+    "vitest": "2.1.8"
+  }
+}
