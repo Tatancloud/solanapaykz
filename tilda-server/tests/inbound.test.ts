@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Quote, PaymentRequest } from '@solanapaykz/core';
 import { openDatabase, type Store } from '../src/db.js';
+import { createLog } from '../src/log.js';
 import { signFields } from '../src/signature.js';
 import {
   AmountError,
@@ -161,10 +162,12 @@ describe('createPaymentFor', () => {
   let store: Store;
   let deps: CreatePaymentForDeps;
   let заказ: TildaOrder;
+  let журнал: string[];
 
   beforeEach(() => {
     каталог = mkdtempSync(join(tmpdir(), 'spkz-inbound-'));
     store = openDatabase(join(каталог, 'orders.sqlite'));
+    журнал = [];
     deps = {
       store,
       client: фейковыйКлиент(),
@@ -172,7 +175,11 @@ describe('createPaymentFor', () => {
         token: 'USDC',
         recipient: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM',
         shopName: '',
+        // Совпадает с notify_url в телоЗаказа() по умолчанию — предупреждение
+        // о рассинхроне не должно сработать на «нормальном» заказе.
+        tildaNotifyUrl: 'https://tilda.cc/payment/notify/abc',
       },
+      log: createLog((строка) => журнал.push(строка)),
     };
     заказ = парс(телоЗаказа());
   });
@@ -208,11 +215,34 @@ describe('createPaymentFor', () => {
     expect(созданный.tokenSymbol).toBe('USDC');
     expect(созданный.recipient).toBe('9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM');
     expect(созданный.customerEmail).toBe('k@example.kz');
-    expect(созданный.notifyUrl).toBe('https://tilda.cc/payment/notify/abc');
     expect(созданный.description).toBe('Букет «Астана»');
     expect(JSON.parse(созданный.productsJson ?? 'null')).toEqual([
       { name: 'Букет', quantity: 1, price: 15000 },
     ]);
+    // notify_url из запроса не хранится в заказе вовсе — Order его не несёт
+    // (см. db.ts): у типа просто нет такого поля, это проверено компилятором,
+    // а не отдельным assert.
+  });
+
+  it('уведомления всегда идут по config.tildaNotifyUrl, а не по notify_url из запроса', async () => {
+    заказ = парс(телоЗаказа({ notify_url: 'https://evil.example/steal?token=x' }));
+    await createPaymentFor(заказ, deps);
+    // Несовпадение — сигнал для журнала (продавец мог сменить настройки в
+    // Tilda), но не денежное решение: адрес всё равно берётся из конфига.
+    const строка = журнал.find((с) => с.includes('notify_url'));
+    expect(строка).toBeDefined();
+    // Схема и хост остаются (как у любого URL в журнале — см. log.ts), а
+    // путь и параметры — нет: значение самого поля попало бы в путь/query
+    // ровно там, где живёт что угодно, что покупатель туда вписал.
+    expect(строка).toContain('https://evil.example');
+    expect(строка).not.toContain('/steal');
+    expect(строка).not.toContain('token=x');
+  });
+
+  it('совпадающий с настройками notify_url не пишет предупреждение', async () => {
+    // По умолчанию телоЗаказа().notify_url совпадает с deps.config.tildaNotifyUrl.
+    await createPaymentFor(заказ, deps);
+    expect(журнал.some((с) => с.includes('notify_url'))).toBe(false);
   });
 
   it('без названия магазина в настройках метка платежа — общая фраза', async () => {
@@ -260,7 +290,6 @@ describe('createPaymentFor', () => {
       expiresAt: 1789200900,
       tildaSignature: заказ.signature,
       txSignature: null,
-      notifyUrl: заказ.notifyUrl,
       customerEmail: заказ.email,
       description: заказ.description,
       productsJson: '[]',

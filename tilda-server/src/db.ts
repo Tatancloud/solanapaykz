@@ -19,6 +19,15 @@ type БазаSQLite = InstanceType<typeof DatabaseSync>;
 
 export type OrderState = 'ожидает' | 'оплачен' | 'уведомлён' | 'не сошлось' | 'поздний' | 'просрочен';
 
+/**
+ * Заказ намеренно НЕ хранит адрес уведомлений из запроса Tilda
+ * (`notify_url`). Это поле вне подписи (см. заголовок `tilda/inbound.ts`) —
+ * покупатель правит POST-форму в своём браузере, и адрес, подставленный им,
+ * получил бы от нас POST с признаком `paid` и подписью под секретом
+ * уведомлений: готовое поддельное подтверждение оплаты. Уведомления всегда
+ * идут по `config.tildaNotifyUrl` — он обязателен, проверен на `https://` и
+ * фиксирован для интеграции, а не приходит с каждым заказом.
+ */
 export interface Order {
   id: number;
   tildaOrderId: string;
@@ -47,7 +56,6 @@ export interface Order {
   tildaSignature: string | null;
   /** Подпись транзакции Solana — пусто до оплаты, заполняется при подтверждении. */
   txSignature: string | null;
-  notifyUrl: string | null;
   notifyAttempts: number;
   notifiedOk: 0 | 1;
   customerEmail: string | null;
@@ -124,7 +132,6 @@ CREATE TABLE IF NOT EXISTS orders (
   expires_at      INTEGER NOT NULL,
   tilda_signature TEXT,
   tx_signature    TEXT,
-  notify_url      TEXT,
   notify_attempts INTEGER NOT NULL DEFAULT 0,
   notified_ok     INTEGER NOT NULL DEFAULT 0,
   customer_email  TEXT,
@@ -154,7 +161,6 @@ interface СтрокаЗаказа {
   expires_at: number;
   tilda_signature: string | null;
   tx_signature: string | null;
-  notify_url: string | null;
   notify_attempts: number;
   notified_ok: number;
   customer_email: string | null;
@@ -182,7 +188,6 @@ function изСтроки(р: СтрокаЗаказа): Order {
     expiresAt: р.expires_at,
     tildaSignature: р.tilda_signature,
     txSignature: р.tx_signature,
-    notifyUrl: р.notify_url,
     notifyAttempts: р.notify_attempts,
     notifiedOk: р.notified_ok === 1 ? 1 : 0,
     customerEmail: р.customer_email,
@@ -210,7 +215,6 @@ const КОЛОНКА: Record<Exclude<keyof Order, 'id'>, string> = {
   expiresAt: 'expires_at',
   tildaSignature: 'tilda_signature',
   txSignature: 'tx_signature',
-  notifyUrl: 'notify_url',
   notifyAttempts: 'notify_attempts',
   notifiedOk: 'notified_ok',
   customerEmail: 'customer_email',
@@ -311,12 +315,12 @@ export function openDatabase(путь: string, busyTimeoutMs = 5000): Store {
     INSERT INTO orders (
       tilda_order_id, token, state, amount_kzt, amount_token, token_symbol,
       cluster, recipient, reference, rate, rate_source, payment_url,
-      quote_json, created_at, expires_at, tilda_signature, tx_signature, notify_url,
+      quote_json, created_at, expires_at, tilda_signature, tx_signature,
       notify_attempts, notified_ok, customer_email, description, products_json
     ) VALUES (
       @tilda_order_id, @token, @state, @amount_kzt, @amount_token, @token_symbol,
       @cluster, @recipient, @reference, @rate, @rate_source, @payment_url,
-      @quote_json, @created_at, @expires_at, @tilda_signature, @tx_signature, @notify_url,
+      @quote_json, @created_at, @expires_at, @tilda_signature, @tx_signature,
       @notify_attempts, @notified_ok, @customer_email, @description, @products_json
     )
   `);
@@ -361,7 +365,6 @@ export function openDatabase(путь: string, busyTimeoutMs = 5000): Store {
         expires_at: o.expiresAt,
         tilda_signature: o.tildaSignature,
         tx_signature: o.txSignature,
-        notify_url: o.notifyUrl,
         notify_attempts: 0,
         notified_ok: 0,
         customer_email: o.customerEmail,

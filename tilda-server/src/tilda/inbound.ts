@@ -10,6 +10,18 @@
  * `notify_url`, `success_url`, `failure_url` — НЕ заверено. Эти поля можно
  * показать покупателю и сохранить вместе с заказом, но по ним нельзя
  * принимать ни одно денежное решение: ни сумму, ни валюту, ни монету.
+ *
+ * Отдельно: `notify_url` из запроса не используется НИКОГДА, даже для
+ * диагностики без подстановки в реальную отправку. Найдено ревью: если
+ * слать по нему уведомление об оплате, покупатель может подставить свой
+ * адрес, честно заплатить — и получить от нас POST с признаком `paid`,
+ * подписанный секретом уведомлений, то есть готовое поддельное
+ * подтверждение оплаты для продавца, пока Tilda ничего не помечает.
+ * Уведомления всегда идут по `config.tildaNotifyUrl` — обязательному,
+ * проверенному на `https://` и фиксированному для интеграции адресу из
+ * настроек, а не из запроса. Несовпадение `notify_url` в запросе с
+ * `config.tildaNotifyUrl` — не денежное решение, а повод для строки в
+ * журнал: возможно, продавец сменил адрес в Tilda, а настройки ещё старые.
  */
 import { randomBytes } from 'node:crypto';
 import type {
@@ -20,6 +32,7 @@ import type {
 } from '@solanapaykz/core';
 import type { Config } from '../config.js';
 import { DuplicateOrderError, type NewOrder, type Order, type Store } from '../db.js';
+import type { Log } from '../log.js';
 import { verifySignature } from '../signature.js';
 
 /** Разобранный (но ещё не проверенный) заказ Tilda. */
@@ -172,7 +185,8 @@ export interface PaymentClient {
 export interface CreatePaymentForDeps {
   store: Store;
   client: PaymentClient;
-  config: Pick<Config, 'token' | 'recipient' | 'shopName'>;
+  config: Pick<Config, 'token' | 'recipient' | 'shopName' | 'tildaNotifyUrl'>;
+  log: Log;
 }
 
 /**
@@ -195,6 +209,24 @@ export interface CreatePaymentForDeps {
  * повторной попытки вставки.
  */
 export async function createPaymentFor(order: TildaOrder, deps: CreatePaymentForDeps): Promise<Order> {
+  // Диагностика, а не решение: notify_url из запроса никогда не идёт в
+  // отправку (см. заголовок файла) — уведомления шлются по
+  // config.tildaNotifyUrl. Несовпадение здесь почти всегда безобидно
+  // (продавец сменил адрес в Tilda, настройки ещё старые), но полезно
+  // узнать раньше, чем начнут молча копиться необъяснимые сбои
+  // уведомлений. Проверяется на каждый запрос, а не только при создании
+  // заказа — сигнал о рассинхроне настроек актуален и на повторных.
+  if (order.notifyUrl && order.notifyUrl !== deps.config.tildaNotifyUrl) {
+    deps.log.warn(
+      'notify_url в заказе Tilda отличается от настроенного config.tildaNotifyUrl — запрос игнорируется',
+      {
+        tildaOrderId: order.orderId,
+        notifyUrlИзЗапроса: order.notifyUrl,
+        notifyUrlНастроенный: deps.config.tildaNotifyUrl,
+      },
+    );
+  }
+
   const существующий = deps.store.findByTildaOrderId(order.orderId);
   if (существующий) {
     return существующий;
@@ -240,7 +272,9 @@ export async function createPaymentFor(order: TildaOrder, deps: CreatePaymentFor
     // стирает единственное доказательство, что заказ вообще пришёл от Tilda.
     tildaSignature: order.signature,
     txSignature: null,
-    notifyUrl: order.notifyUrl,
+    // notify_url из запроса НЕ хранится в заказе — см. заголовок файла и
+    // комментарий у Order в db.ts: это неподписанное поле, а хранение
+    // открывало бы дорогу поддельным уведомлениям об оплате.
     customerEmail: order.email,
     description: order.description,
     productsJson: order.products ? JSON.stringify(order.products) : null,

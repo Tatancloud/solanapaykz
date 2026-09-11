@@ -25,7 +25,6 @@ const образец: NewOrder = {
   expiresAt: 1789200900,
   tildaSignature: 'подпись',
   txSignature: null,
-  notifyUrl: 'https://tilda.cc/notify/x',
   customerEmail: 'k@example.kz',
   description: 'Букет',
   productsJson: '[]',
