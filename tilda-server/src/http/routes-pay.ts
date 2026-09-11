@@ -26,7 +26,8 @@ import type { ЗависимостиСервера } from './server.js';
  */
 const МАКСИМАЛЬНЫЙ_РАЗМЕР_ТЕЛА_БАЙТ = 200_000;
 
-class ТелоСлишкомБольшое extends Error {}
+/** Тоже читает и разбирает тело `POST` — переиспользуются `routes-admin.ts` для `/admin/login`. */
+export class ТелоСлишкомБольшое extends Error {}
 
 /**
  * Читает тело запроса в память с потолком размера.
@@ -40,7 +41,7 @@ class ТелоСлишкомБольшое extends Error {}
  * `res.end()`, закрывает соединение — гарантируя порядок «сначала ответ,
  * потом обрыв».
  */
-function прочитатьТело(req: IncomingMessage): Promise<string> {
+export function прочитатьТело(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     const части: Buffer[] = [];
     let размер = 0;
@@ -66,7 +67,7 @@ function прочитатьТело(req: IncomingMessage): Promise<string> {
 }
 
 /** Тело формы `application/x-www-form-urlencoded` в плоский объект строк. */
-function разобратьUrlencoded(тело: string): Record<string, string> {
+export function разобратьUrlencoded(тело: string): Record<string, string> {
   const поля: Record<string, string> = {};
   for (const [ключ, значение] of new URLSearchParams(тело)) {
     поля[ключ] = значение;

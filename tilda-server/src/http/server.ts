@@ -16,6 +16,7 @@ import type { Log } from '../log.js';
 import type { PaymentClient } from '../tilda/inbound.js';
 import type { Отправка } from '../tilda/notify.js';
 import { страница404 } from './html.js';
+import { createAdminRoutes } from './routes-admin.js';
 import { обработатьTildaPay } from './routes-pay.js';
 import { обработатьСтатус, обработатьСтраницуОплаты } from './routes-page.js';
 
@@ -90,12 +91,18 @@ function отдатьСтатическийФайл(res: http.ServerResponse, и
 }
 
 export function createServer(deps: ЗависимостиСервера): http.Server {
+  // Один счётчик попыток входа на сервер, не на запрос — см. заголовок
+  // `routes-admin.ts`. Фабрика вызывается здесь, а не на верхнем уровне
+  // модуля: тесты создают сервер заново на каждый прогон (см. `http.test.ts`,
+  // `admin.test.ts`), и каждому должен достаться свой, ещё пустой счётчик.
+  const admin = createAdminRoutes();
+
   return http.createServer((req, res) => {
     for (const [имя, значение] of Object.entries(ЗАГОЛОВКИ_БЕЗОПАСНОСТИ)) {
       res.setHeader(имя, значение);
     }
 
-    void обработатьЗапрос(req, res, deps).catch((е) => {
+    void обработатьЗапрос(req, res, deps, admin).catch((е) => {
       deps.log.error('Необработанная ошибка при обработке HTTP-запроса', {
         сообщение: (е as Error).message,
       });
@@ -113,12 +120,33 @@ async function обработатьЗапрос(
   req: http.IncomingMessage,
   res: http.ServerResponse,
   deps: ЗависимостиСервера,
+  admin: ReturnType<typeof createAdminRoutes>,
 ): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://localhost');
   const метод = req.method ?? 'GET';
 
   if (метод === 'POST' && url.pathname === '/tilda/pay') {
     await обработатьTildaPay(req, res, deps);
+    return;
+  }
+
+  if (метод === 'GET' && url.pathname === '/admin') {
+    admin.список(req, res, deps);
+    return;
+  }
+
+  if (метод === 'GET' && url.pathname === '/admin/login') {
+    admin.формаВхода(req, res, deps);
+    return;
+  }
+
+  if (метод === 'POST' && url.pathname === '/admin/login') {
+    await admin.вход(req, res, deps);
+    return;
+  }
+
+  if (метод === 'POST' && url.pathname === '/admin/logout') {
+    admin.выход(req, res);
     return;
   }
 
