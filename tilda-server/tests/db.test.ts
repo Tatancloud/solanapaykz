@@ -23,9 +23,9 @@ const образец: NewOrder = {
   quoteJson: '{}',
   createdAt: 1789200000,
   expiresAt: 1789200900,
+  testMode: false,
   tildaSignature: 'подпись',
   txSignature: null,
-  notifyUrl: 'https://tilda.cc/notify/x',
   customerEmail: 'k@example.kz',
   description: 'Букет',
   productsJson: '[]',
@@ -46,6 +46,13 @@ describe('Store', () => {
     expect(создан.state).toBe('ожидает');
     expect(store.findByTildaOrderId('10868059:42')?.id).toBe(создан.id);
     expect(store.findByToken('ткн-1')?.id).toBe(создан.id);
+  });
+
+  it('сохраняет признак тестового режима — восстановить его позже неоткуда', () => {
+    const боевой = store.createOrder({ ...образец, tildaOrderId: 't:1', token: 'т-боевой', testMode: false });
+    const тестовый = store.createOrder({ ...образец, tildaOrderId: 't:2', token: 'т-тестовый', testMode: true });
+    expect(store.findByToken('т-боевой')?.testMode).toBe(false);
+    expect(store.findByToken('т-тестовый')?.testMode).toBe(true);
   });
 
   it('не заводит второй заказ с тем же номером Tilda', () => {
@@ -179,5 +186,25 @@ describe('Store', () => {
     expect((поймана as { errcode?: number }).errcode).toBe(5);
     expect((поймана as Error).message).not.toContain('orders.tilda_order_id');
     expect(этоДубльНомераTilda(поймана)).toBe(false);
+  });
+
+  it('отказывается открывать базу другой версии схемы, а не падает молча на первой вставке', () => {
+    // CREATE TABLE IF NOT EXISTS на файле с чужой версией ничего не делает —
+    // без явной проверки версии сервер бы упал на первой же вставке в
+    // несуществующую колонку, без единого внятного сообщения о причине.
+    const путь = join(каталог, 'чужая-версия.sqlite');
+    const чужая = new DatabaseSync(путь);
+    чужая.exec('PRAGMA user_version = 999');
+    чужая.close();
+
+    expect(() => openDatabase(путь)).toThrow(/версией схемы/);
+  });
+
+  it('открывает новый файл (версия 0) и повторно — свою же версию — без ошибок', () => {
+    const путь = join(каталог, 'своя-версия.sqlite');
+    expect(() => openDatabase(путь)).not.toThrow();
+    // Повторное открытие того же файла — версия уже проставлена и совпадает
+    // с ожидаемой, это штатный случай (перезапуск сервера), а не отказ.
+    expect(() => openDatabase(путь)).not.toThrow();
   });
 });

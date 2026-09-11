@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Quote, PaymentRequest } from '@solanapaykz/core';
 import { openDatabase, type Store } from '../src/db.js';
+import { createLog } from '../src/log.js';
 import { signFields } from '../src/signature.js';
 import {
   AmountError,
@@ -61,6 +62,28 @@ describe('parseTildaOrder', () => {
     const з = parseTildaOrder(телоЗаказа({ products: 'не json' }));
     expect(з.products).toBeNull();
   });
+
+  it('слишком длинное описание обрезается, а не сохраняется целиком', () => {
+    const з = parseTildaOrder(телоЗаказа({ description: 'а'.repeat(200_000) }));
+    expect(з.description).not.toBeNull();
+    expect(з.description?.length).toBe(255);
+  });
+
+  it('слишком длинный состав корзины трактуется как испорченный: становится null', () => {
+    const огромнаяКорзина = JSON.stringify(
+      Array.from({ length: 5000 }, (_, i) => ({ name: `товар-${i}`, quantity: 1, price: 100 })),
+    );
+    const з = parseTildaOrder(телоЗаказа({ products: огромнаяКорзина }));
+    expect(з.products).toBeNull();
+  });
+
+  it('нормализует подпись так же, как при сверке — иначе сохранённое значение с ней разойдётся', () => {
+    const тело = телоЗаказа();
+    const сИскажённойПодписью = { ...тело, signature: тело.signature.toUpperCase() + '  ' };
+    const з = parseTildaOrder(сИскажённойПодписью);
+    expect(з.signature).toBe(тело.signature);
+    expect(() => проверитьЗаказ(з, сИскажённойПодписью, секрет)).not.toThrow();
+  });
 });
 
 describe('проверитьЗаказ', () => {
@@ -72,6 +95,17 @@ describe('проверитьЗаказ', () => {
     const тело = телоЗаказа();
     const подделка = { ...тело, amount: '1' };
     expect(() => проверитьЗаказ(парс(подделка), подделка, секрет)).toThrow(SignatureError);
+  });
+
+  it('отвергает order, разобранный не из проверяемого body: сверяет все пять подписанных полей', () => {
+    const тело = телоЗаказа();
+    const заказ = парс(тело);
+    // Подпись у тела верна (её никто не трогал) — до этого места дошли бы
+    // старые проверки. Несовпадение вносит вызывающий код, передав чужой
+    // order: это ошибка на его стороне, а не подделка запроса, но найти её
+    // нужно так же надёжно.
+    const чужойЗаказ = { ...заказ, amountKzt: '1' };
+    expect(() => проверитьЗаказ(чужойЗаказ, тело, секрет)).toThrow(SignatureError);
   });
 
   it('отвергает чужую валюту: считать в неё мы не умеем', () => {
@@ -88,6 +122,23 @@ describe('проверитьЗаказ', () => {
 
   it('отвергает сумму с посторонними символами', () => {
     const тело = телоЗаказа({ amount: '15 000,00' });
+    expect(() => проверитьЗаказ(парс(тело), тело, секрет)).toThrow(AmountError);
+  });
+
+  it('принимает сумму ровно с двумя знаками после точки', () => {
+    const тело = телоЗаказа({ amount: '15000.50' });
+    expect(() => проверитьЗаказ(парс(тело), тело, секрет)).not.toThrow();
+  });
+
+  it('отвергает сумму точнее тиына: SDK хранит тенге с точностью до двух знаков', () => {
+    for (const сумма of ['0.0000001', '15000.000000000000001']) {
+      const тело = телоЗаказа({ amount: сумма });
+      expect(() => проверитьЗаказ(парс(тело), тело, секрет)).toThrow(AmountError);
+    }
+  });
+
+  it('отвергает сумму выше разумного потолка: иначе ссылка на оплату получается с суммой Infinity', () => {
+    const тело = телоЗаказа({ amount: '9'.repeat(400) });
     expect(() => проверитьЗаказ(парс(тело), тело, секрет)).toThrow(AmountError);
   });
 });
@@ -161,10 +212,12 @@ describe('createPaymentFor', () => {
   let store: Store;
   let deps: CreatePaymentForDeps;
   let заказ: TildaOrder;
+  let журнал: string[];
 
   beforeEach(() => {
     каталог = mkdtempSync(join(tmpdir(), 'spkz-inbound-'));
     store = openDatabase(join(каталог, 'orders.sqlite'));
+    журнал = [];
     deps = {
       store,
       client: фейковыйКлиент(),
@@ -172,7 +225,11 @@ describe('createPaymentFor', () => {
         token: 'USDC',
         recipient: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM',
         shopName: '',
+        // Совпадает с notify_url в телоЗаказа() по умолчанию — предупреждение
+        // о рассинхроне не должно сработать на «нормальном» заказе.
+        tildaNotifyUrl: 'https://tilda.cc/payment/notify/abc',
       },
+      log: createLog((строка) => журнал.push(строка)),
     };
     заказ = парс(телоЗаказа());
   });
@@ -208,11 +265,41 @@ describe('createPaymentFor', () => {
     expect(созданный.tokenSymbol).toBe('USDC');
     expect(созданный.recipient).toBe('9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM');
     expect(созданный.customerEmail).toBe('k@example.kz');
-    expect(созданный.notifyUrl).toBe('https://tilda.cc/payment/notify/abc');
     expect(созданный.description).toBe('Букет «Астана»');
+    expect(созданный.testMode).toBe(false);
     expect(JSON.parse(созданный.productsJson ?? 'null')).toEqual([
       { name: 'Букет', quantity: 1, price: 15000 },
     ]);
+    // notify_url из запроса не хранится в заказе вовсе — Order его не несёт
+    // (см. db.ts): у типа просто нет такого поля, это проверено компилятором,
+    // а не отдельным assert.
+  });
+
+  it('признак тестового режима сохраняется в заказе — восстановить его позже неоткуда', async () => {
+    заказ = парс(телоЗаказа({ test_mode: '1' }));
+    const созданный = await createPaymentFor(заказ, deps);
+    expect(созданный.testMode).toBe(true);
+  });
+
+  it('уведомления всегда идут по config.tildaNotifyUrl, а не по notify_url из запроса', async () => {
+    заказ = парс(телоЗаказа({ notify_url: 'https://evil.example/steal?token=x' }));
+    await createPaymentFor(заказ, deps);
+    // Несовпадение — сигнал для журнала (продавец мог сменить настройки в
+    // Tilda), но не денежное решение: адрес всё равно берётся из конфига.
+    const строка = журнал.find((с) => с.includes('notify_url'));
+    expect(строка).toBeDefined();
+    // Схема и хост остаются (как у любого URL в журнале — см. log.ts), а
+    // путь и параметры — нет: значение самого поля попало бы в путь/query
+    // ровно там, где живёт что угодно, что покупатель туда вписал.
+    expect(строка).toContain('https://evil.example');
+    expect(строка).not.toContain('/steal');
+    expect(строка).not.toContain('token=x');
+  });
+
+  it('совпадающий с настройками notify_url не пишет предупреждение', async () => {
+    // По умолчанию телоЗаказа().notify_url совпадает с deps.config.tildaNotifyUrl.
+    await createPaymentFor(заказ, deps);
+    expect(журнал.some((с) => с.includes('notify_url'))).toBe(false);
   });
 
   it('без названия магазина в настройках метка платежа — общая фраза', async () => {
@@ -258,9 +345,9 @@ describe('createPaymentFor', () => {
       quoteJson: '{}',
       createdAt: 1789200000,
       expiresAt: 1789200900,
+      testMode: заказ.testMode,
       tildaSignature: заказ.signature,
       txSignature: null,
-      notifyUrl: заказ.notifyUrl,
       customerEmail: заказ.email,
       description: заказ.description,
       productsJson: '[]',

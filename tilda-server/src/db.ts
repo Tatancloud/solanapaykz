@@ -19,6 +19,15 @@ type БазаSQLite = InstanceType<typeof DatabaseSync>;
 
 export type OrderState = 'ожидает' | 'оплачен' | 'уведомлён' | 'не сошлось' | 'поздний' | 'просрочен';
 
+/**
+ * Заказ намеренно НЕ хранит адрес уведомлений из запроса Tilda
+ * (`notify_url`). Это поле вне подписи (см. заголовок `tilda/inbound.ts`) —
+ * покупатель правит POST-форму в своём браузере, и адрес, подставленный им,
+ * получил бы от нас POST с признаком `paid` и подписью под секретом
+ * уведомлений: готовое поддельное подтверждение оплаты. Уведомления всегда
+ * идут по `config.tildaNotifyUrl` — он обязателен, проверен на `https://` и
+ * фиксирован для интеграции, а не приходит с каждым заказом.
+ */
 export interface Order {
   id: number;
   tildaOrderId: string;
@@ -38,6 +47,14 @@ export interface Order {
   createdAt: number;
   expiresAt: number;
   /**
+   * Признак тестового режима (`test_mode`) из заказа Tilda — входит в
+   * подпись, поэтому заверен. Заморожен при создании и хранится, потому что
+   * восстановить его позже неоткуда: валюта у нас константа (KZT), время
+   * можно взять свежее, а этот флаг — нет. Нужен уведомлению (задача 8):
+   * Tilda ждёт его обратно в том же виде, в каком прислала.
+   */
+  testMode: boolean;
+  /**
    * Подпись заказа от Tilda. Пишется при создании и больше не меняется —
    * единственное доказательство, что заказ с такой суммой действительно
    * пришёл от площадки, а не был подделан. Раньше делила один столбец с
@@ -47,7 +64,6 @@ export interface Order {
   tildaSignature: string | null;
   /** Подпись транзакции Solana — пусто до оплаты, заполняется при подтверждении. */
   txSignature: string | null;
-  notifyUrl: string | null;
   notifyAttempts: number;
   notifiedOk: 0 | 1;
   customerEmail: string | null;
@@ -122,9 +138,9 @@ CREATE TABLE IF NOT EXISTS orders (
   quote_json      TEXT    NOT NULL,
   created_at      INTEGER NOT NULL,
   expires_at      INTEGER NOT NULL,
+  test_mode       INTEGER NOT NULL DEFAULT 0,
   tilda_signature TEXT,
   tx_signature    TEXT,
-  notify_url      TEXT,
   notify_attempts INTEGER NOT NULL DEFAULT 0,
   notified_ok     INTEGER NOT NULL DEFAULT 0,
   customer_email  TEXT,
@@ -152,9 +168,9 @@ interface СтрокаЗаказа {
   quote_json: string;
   created_at: number;
   expires_at: number;
+  test_mode: number;
   tilda_signature: string | null;
   tx_signature: string | null;
-  notify_url: string | null;
   notify_attempts: number;
   notified_ok: number;
   customer_email: string | null;
@@ -180,9 +196,9 @@ function изСтроки(р: СтрокаЗаказа): Order {
     quoteJson: р.quote_json,
     createdAt: р.created_at,
     expiresAt: р.expires_at,
+    testMode: р.test_mode === 1,
     tildaSignature: р.tilda_signature,
     txSignature: р.tx_signature,
-    notifyUrl: р.notify_url,
     notifyAttempts: р.notify_attempts,
     notifiedOk: р.notified_ok === 1 ? 1 : 0,
     customerEmail: р.customer_email,
@@ -208,9 +224,9 @@ const КОЛОНКА: Record<Exclude<keyof Order, 'id'>, string> = {
   quoteJson: 'quote_json',
   createdAt: 'created_at',
   expiresAt: 'expires_at',
+  testMode: 'test_mode',
   tildaSignature: 'tilda_signature',
   txSignature: 'tx_signature',
-  notifyUrl: 'notify_url',
   notifyAttempts: 'notify_attempts',
   notifiedOk: 'notified_ok',
   customerEmail: 'customer_email',
@@ -273,6 +289,24 @@ export function этоДубльНомераTilda(е: unknown): boolean {
 }
 
 /**
+ * Версия схемы `orders`, записывается в `PRAGMA user_version` файла базы.
+ *
+ * `CREATE TABLE IF NOT EXISTS` на файле со старой схемой молча ничего не
+ * делает — новые колонки не появляются, а вставка падает позже, на первой
+ * попытке записи в несуществующую колонку, без единого внятного сообщения
+ * о причине (воспроизведено ревью). `user_version` — штатное поле
+ * заголовка файла SQLite специально под это: `openDatabase` сверяет его
+ * при открытии и отказывается сразу, если версия чужая, вместо того чтобы
+ * упасть на первой вставке.
+ *
+ * Боевой базы с заказами пока нет, поэтому миграции не реализованы — при
+ * несовпадении версий сервер обязан отказаться с понятным сообщением, а
+ * не молча повредить данные или упасть в случайном месте. Если версия
+ * когда-нибудь изменится, здесь же нужна и миграция.
+ */
+const ВЕРСИЯ_СХЕМЫ = 1;
+
+/**
  * Открывает (создаёт при отсутствии) файл базы и возвращает хранилище
  * заказов.
  *
@@ -305,18 +339,37 @@ export function openDatabase(путь: string, busyTimeoutMs = 5000): Store {
   // таблица заказов обрастёт связанными таблицами.
   db.exec('PRAGMA journal_mode = WAL');
   db.exec('PRAGMA foreign_keys = ON');
+
+  // Версия 0 — свежий файл (SQLite сам проставляет 0, если её никто не
+  // задавал): создаём схему и клеймим версию. Любая другая версия, кроме
+  // ожидаемой, — несовместимая база; открывать её поверх было бы молчаливой
+  // порчей данных, поэтому отказываемся сразу и закрываем соединение, а не
+  // ждём падения на первой вставке.
+  const { user_version: версияБазы } = db.prepare('PRAGMA user_version').get() as {
+    user_version: number;
+  };
+  if (версияБазы !== 0 && версияБазы !== ВЕРСИЯ_СХЕМЫ) {
+    db.close();
+    throw new Error(
+      `База данных «${путь}» создана версией схемы ${версияБазы}, а сервер ожидает версию ` +
+        `${ВЕРСИЯ_СХЕМЫ}. Миграций пока нет: обновите сервер и базу согласованно, не открывайте ` +
+        'несовместимые версии одну поверх другой.',
+    );
+  }
+
   db.exec(СХЕМА);
+  db.exec(`PRAGMA user_version = ${ВЕРСИЯ_СХЕМЫ}`);
 
   const вставить = db.prepare(`
     INSERT INTO orders (
       tilda_order_id, token, state, amount_kzt, amount_token, token_symbol,
       cluster, recipient, reference, rate, rate_source, payment_url,
-      quote_json, created_at, expires_at, tilda_signature, tx_signature, notify_url,
+      quote_json, created_at, expires_at, test_mode, tilda_signature, tx_signature,
       notify_attempts, notified_ok, customer_email, description, products_json
     ) VALUES (
       @tilda_order_id, @token, @state, @amount_kzt, @amount_token, @token_symbol,
       @cluster, @recipient, @reference, @rate, @rate_source, @payment_url,
-      @quote_json, @created_at, @expires_at, @tilda_signature, @tx_signature, @notify_url,
+      @quote_json, @created_at, @expires_at, @test_mode, @tilda_signature, @tx_signature,
       @notify_attempts, @notified_ok, @customer_email, @description, @products_json
     )
   `);
@@ -359,9 +412,9 @@ export function openDatabase(путь: string, busyTimeoutMs = 5000): Store {
         quote_json: o.quoteJson,
         created_at: o.createdAt,
         expires_at: o.expiresAt,
+        test_mode: o.testMode ? 1 : 0,
         tilda_signature: o.tildaSignature,
         tx_signature: o.txSignature,
-        notify_url: o.notifyUrl,
         notify_attempts: 0,
         notified_ok: 0,
         customer_email: o.customerEmail,
