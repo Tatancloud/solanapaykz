@@ -34,6 +34,23 @@
  * значения, что видит покупатель на странице оплаты, и по той же причине
  * (см. заголовок `html.ts`): формально они «наши», но подпись транзакции,
  * например, приходит из ответа RPC-узла, а не изнутри проекта.
+ *
+ * `Cache-Control: no-store` на всех ответах этого файла (правка ревью,
+ * найдено в настоящем браузере): без него вход → список → «Выйти» → кнопка
+ * «Назад» браузера показывала список заново из кеша, без единого сетевого
+ * запроса — сервер эту куку уже не принял бы, но на экране чужого или
+ * общего компьютера данные заказов оставались видны. Заголовка одного
+ * недостаточно: он не гарантированно исключает страницу из back/forward
+ * cache браузера (bfcache) — тот же сценарий воспроизведён и С этим
+ * заголовком, браузер всё равно восстановил список из кеша без единого
+ * запроса к серверу. Вторая линия обороны — `public/admin.js`
+ * (`pageshow`/`event.persisted`): страница, показанная ИЗ bfcache,
+ * безусловно перезагружается, и тогда сервер уже видит актуальную куку.
+ *
+ * Ограничение попыток входа считает по адресу клиента, а не всегда по
+ * адресу TCP-сокета — см. `клиентскийАдрес` ниже: за обратным прокси
+ * (nginx, задача 9) сокет для всех посетителей один и тот же, и без этого
+ * различения счётчик схлопнулся бы в общий на всех сразу.
  */
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -43,8 +60,10 @@ import { экранироватьHtml } from './html.js';
 import { прочитатьТело, разобратьUrlencoded, ТелоСлишкомБольшое } from './routes-pay.js';
 import type { ЗависимостиСервера } from './server.js';
 
-const ЗАГОЛОВКИ_HTML = { 'content-type': 'text/html; charset=utf-8' } as const;
-const ЗАГОЛОВКИ_ТЕКСТ = { 'content-type': 'text/plain; charset=utf-8' } as const;
+const ЗАГОЛОВКИ_HTML = { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } as const;
+const ЗАГОЛОВКИ_ТЕКСТ = { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' } as const;
+/** Заголовки редиректов (303) этого файла — без тела, но с тем же запретом кеширования. */
+const ЗАГОЛОВКИ_РЕДИРЕКТА = { 'cache-control': 'no-store' } as const;
 
 const ИМЯ_КУКИ = 'admin_session';
 const СРОК_СЕССИИ_СЕК = 12 * 60 * 60;
@@ -143,8 +162,57 @@ interface ЗаписьПопыток {
   windowStart: number;
 }
 
+/**
+ * Адреса, с которых доверяем заголовку `X-Forwarded-For` — сам процесс
+ * слушает только на loopback (см. `config.example.json`, `listenPort`), и
+ * обратный прокси (nginx, задача 9) будет обращаться к нему тоже с
+ * loopback. Запрос, пришедший СРАЗУ с loopback-адреса на сокете, — это
+ * прокси; запрос с любого другого адреса на сокете — это либо прямое
+ * обращение в обход прокси, либо сам прокси на другом хосте (сегодня не
+ * наш случай) — заголовку в обоих случаях доверять нельзя.
+ */
+const АДРЕСА_ДОВЕРЕННЫХ_ПРОКСИ: ReadonlySet<string> = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+
+/**
+ * Адрес клиента для ограничения попыток входа — не всегда адрес TCP-сокета.
+ *
+ * Правка ревью: за обратным прокси на этом же хосте (nginx, задача 9) сокет
+ * видит один и тот же адрес (сам прокси) для всех посетителей — без этого
+ * различения счётчик попыток схлопнулся бы в один общий на всех сразу, и
+ * любой прохожий пятью неверными паролями закрывал бы вход настоящему
+ * продавцу на пятнадцать минут. Поэтому заголовку `X-Forwarded-For`
+ * доверяем ТОЛЬКО когда сам сокет — доверенный прокси (см.
+ * `АДРЕСА_ДОВЕРЕННЫХ_ПРОКСИ`): иначе любой внешний клиент, обратившись
+ * напрямую в обход прокси, мог бы подставить в этом заголовке чужой адрес
+ * и обнулить чужой счётчик или скрыть свой собственный подбор пароля.
+ *
+ * Экспортирована пуристой функцией от двух строк, а не от `IncomingMessage`
+ * целиком, — так её проверяют юнит-тестом без настоящего HTTP-соединения
+ * (см. `tests/admin.test.ts`), тем же приёмом, что и `decide()` в
+ * `decision.ts`.
+ */
+export function клиентскийАдрес(
+  адресСокета: string | undefined,
+  заголовокForwardedFor: string | string[] | undefined,
+): string {
+  const сокет = адресСокета ?? 'неизвестный-адрес';
+  if (!АДРЕСА_ДОВЕРЕННЫХ_ПРОКСИ.has(сокет)) return сокет;
+
+  // Node склеивает повторные заголовки через запятую сам, но на случай
+  // массива (некоторые обёртки прокидывают его так) берём первое значение.
+  const значение = Array.isArray(заголовокForwardedFor) ? заголовокForwardedFor[0] : заголовокForwardedFor;
+  if (!значение) return сокет;
+
+  // Самый левый адрес в списке — исходный клиент; последующие (если есть)
+  // добавлены промежуточными прокси при цепочке из нескольких. При одном
+  // прокси перед нами (типичная схема задачи 9) в заголовке будет ровно
+  // один адрес.
+  const первый = значение.split(',')[0]?.trim();
+  return первый && первый.length > 0 ? первый : сокет;
+}
+
 function ipЗапроса(req: IncomingMessage): string {
-  return req.socket.remoteAddress ?? 'неизвестный-адрес';
+  return клиентскийАдрес(req.socket.remoteAddress, req.headers['x-forwarded-for']);
 }
 
 /* ---------------------------- разметка ---------------------------- */
@@ -229,7 +297,8 @@ function страницаСписка(заказы: Order[]): string {
 <tr><th>Номер</th><th>Дата</th><th>Сумма</th><th>Состояние</th><th>Транзакция</th><th>Tilda</th><th>Письмо</th></tr>
 </thead>
 <tbody>${строки}</tbody>
-</table>`,
+</table>
+<script src="/assets/admin.js"></script>`,
   );
 }
 
@@ -279,7 +348,7 @@ export function createAdminRoutes(): AdminRoutes {
 
   function список(req: IncomingMessage, res: ServerResponse, deps: ЗависимостиСервера): void {
     if (!естьСессия(req, deps)) {
-      res.writeHead(303, { location: '/admin/login' });
+      res.writeHead(303, { ...ЗАГОЛОВКИ_РЕДИРЕКТА, location: '/admin/login' });
       res.end();
       return;
     }
@@ -291,7 +360,7 @@ export function createAdminRoutes(): AdminRoutes {
   function формаВхода(req: IncomingMessage, res: ServerResponse, deps: ЗависимостиСервера): void {
     // Уже вошедшего незачем гонять через форму пароля второй раз.
     if (естьСессия(req, deps)) {
-      res.writeHead(303, { location: '/admin' });
+      res.writeHead(303, { ...ЗАГОЛОВКИ_РЕДИРЕКТА, location: '/admin' });
       res.end();
       return;
     }
@@ -343,7 +412,7 @@ export function createAdminRoutes(): AdminRoutes {
     сброситьПопытки(ip);
     const истекаетСек = Math.floor(сейчасMs / 1000) + СРОК_СЕССИИ_СЕК;
     const токен = токенСессии(ключСессии(deps.config.adminPassword), истекаетСек, deps.store.sessionGeneration());
-    res.writeHead(303, { location: '/admin', 'set-cookie': кукаВхода(токен) });
+    res.writeHead(303, { ...ЗАГОЛОВКИ_РЕДИРЕКТА, location: '/admin', 'set-cookie': кукаВхода(токен) });
     res.end();
   }
 
@@ -352,7 +421,7 @@ export function createAdminRoutes(): AdminRoutes {
     // должен обнулять счётчик и тем самым оживлять токен, который уже был
     // отозван этим выходом (см. заголовок файла и `Store.bumpSessionGeneration`).
     deps.store.bumpSessionGeneration();
-    res.writeHead(303, { location: '/admin/login', 'set-cookie': КУКА_ВЫХОДА });
+    res.writeHead(303, { ...ЗАГОЛОВКИ_РЕДИРЕКТА, location: '/admin/login', 'set-cookie': КУКА_ВЫХОДА });
     res.end();
   }
 

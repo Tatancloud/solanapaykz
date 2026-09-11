@@ -10,6 +10,7 @@ import type { Config } from '../src/config.js';
 import { openDatabase, type NewOrder, type Store } from '../src/db.js';
 import { createLog } from '../src/log.js';
 import { createServer, type ЗависимостиСервера } from '../src/http/server.js';
+import { клиентскийАдрес } from '../src/http/routes-admin.js';
 import type { PaymentClient } from '../src/tilda/inbound.js';
 
 const config: Config = {
@@ -114,7 +115,7 @@ afterEach(async () => {
 async function запрос(
   метод: 'GET' | 'POST',
   путь: string,
-  опции: { тело?: Record<string, string>; кука?: string } = {},
+  опции: { тело?: Record<string, string>; кука?: string; xForwardedFor?: string } = {},
 ): Promise<{ status: number; headers: Headers; body: string }> {
   const init: RequestInit = { method: метод, redirect: 'manual' };
   const заголовки: Record<string, string> = {};
@@ -124,6 +125,9 @@ async function запрос(
   }
   if (опции.кука) {
     заголовки['cookie'] = опции.кука;
+  }
+  if (опции.xForwardedFor) {
+    заголовки['x-forwarded-for'] = опции.xForwardedFor;
   }
   if (Object.keys(заголовки).length > 0) init.headers = заголовки;
 
@@ -349,5 +353,87 @@ describe('GET /admin — с валидной сессией', () => {
     expect(ответ.body).toContain('SMTP недоступен');
     // Само состояние заказа при этом не изменилось неудачей письма.
     expect(store.findByTildaOrderId('10868059:200')!.state).toBe('оплачен');
+  });
+
+  it('отдаётся с Cache-Control: no-store — правка ревью: без него «Назад» браузера после «Выйти» показывал список из кеша', async () => {
+    store.createOrder(образец);
+    const ответ = await запросСВходом('GET', '/admin');
+    expect(ответ.headers.get('cache-control')).toBe('no-store');
+  });
+
+  it('подключает /assets/admin.js — вторая линия обороны от bfcache сверх Cache-Control (см. заголовок файла)', async () => {
+    store.createOrder(образец);
+    const ответ = await запросСВходом('GET', '/admin');
+    expect(ответ.body).toContain('<script src="/assets/admin.js"></script>');
+  });
+});
+
+describe('GET /admin/login и POST /admin/login — Cache-Control: no-store', () => {
+  it('форма входа отдаётся с Cache-Control: no-store', async () => {
+    const ответ = await запрос('GET', '/admin/login');
+    expect(ответ.headers.get('cache-control')).toBe('no-store');
+  });
+
+  it('ответ на неверный пароль тоже с Cache-Control: no-store', async () => {
+    const ответ = await запрос('POST', '/admin/login', { тело: { password: 'не тот' } });
+    expect(ответ.headers.get('cache-control')).toBe('no-store');
+  });
+});
+
+describe('ограничение попыток входа считает по клиенту, а не всегда по сокету (правка ревью)', () => {
+  // За обратным прокси (nginx, задача 9) TCP-сокет для всех посетителей —
+  // один и тот же (сам прокси); без разделения по X-Forwarded-For пять
+  // неверных паролей от ЛЮБОГО постороннего закрывали бы вход всем
+  // остальным на пятнадцать минут. Тесты этого файла подключаются к
+  // серверу через 127.0.0.1 — то есть и есть тот самый доверенный
+  // loopback-сокет, — поэтому X-Forwarded-For здесь честно проверяется по
+  // рабочему коду, а не только юнит-тестом чистой функции ниже.
+
+  it('пять неудачных попыток от одного X-Forwarded-For блокируют шестую (даже с верным паролем) для ЭТОГО адреса', async () => {
+    for (let i = 0; i < 5; i++) {
+      await запрос('POST', '/admin/login', { тело: { password: 'не тот' }, xForwardedFor: '1.2.3.4' });
+    }
+    const ответ = await запрос('POST', '/admin/login', {
+      тело: { password: config.adminPassword },
+      xForwardedFor: '1.2.3.4',
+    });
+    expect(ответ.status).toBe(429);
+  });
+
+  it('лимит не разделяется на всех посетителей разом: другой X-Forwarded-For не заблокирован', async () => {
+    for (let i = 0; i < 5; i++) {
+      await запрос('POST', '/admin/login', { тело: { password: 'не тот' }, xForwardedFor: '1.2.3.4' });
+    }
+    // Шестая попытка от адреса 1.2.3.4 уже исчерпала лимит (проверено выше);
+    // адрес 5.6.7.8 — другой клиент, и лимит на него не действует, даже
+    // проходя через тот же самый доверенный сокет.
+    const ответ = await запрос('POST', '/admin/login', {
+      тело: { password: config.adminPassword },
+      xForwardedFor: '5.6.7.8',
+    });
+    expect(ответ.status).toBe(303);
+  });
+});
+
+describe('клиентскийАдрес (правка ревью — доверие X-Forwarded-For только от loopback)', () => {
+  it('с loopback-сокетом и X-Forwarded-For возвращает адрес из заголовка', () => {
+    expect(клиентскийАдрес('127.0.0.1', '203.0.113.7')).toBe('203.0.113.7');
+    expect(клиентскийАдрес('::1', '203.0.113.7')).toBe('203.0.113.7');
+  });
+
+  it('с НЕ-loopback сокетом игнорирует заголовок — это либо прямое обращение в обход прокси, либо прокси не на этом хосте', () => {
+    expect(клиентскийАдрес('203.0.113.9', '198.51.100.1')).toBe('203.0.113.9');
+  });
+
+  it('из цепочки в X-Forwarded-For берёт самый левый (исходного клиента), а не адрес самого прокси', () => {
+    expect(клиентскийАдрес('127.0.0.1', '203.0.113.7, 198.51.100.1')).toBe('203.0.113.7');
+  });
+
+  it('без заголовка (или loopback без него) возвращает адрес сокета', () => {
+    expect(клиентскийАдрес('127.0.0.1', undefined)).toBe('127.0.0.1');
+  });
+
+  it('без адреса сокета вовсе возвращает заглушку, а не падает', () => {
+    expect(клиентскийАдрес(undefined, undefined)).toBe('неизвестный-адрес');
   });
 });

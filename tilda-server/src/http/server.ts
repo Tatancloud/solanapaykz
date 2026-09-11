@@ -160,6 +160,11 @@ async function обработатьЗапрос(
     return;
   }
 
+  if (метод === 'GET' && url.pathname === '/assets/admin.js') {
+    отдатьСтатическийФайл(res, 'admin.js', 'text/javascript; charset=utf-8');
+    return;
+  }
+
   if (метод === 'GET') {
     const совпадениеОплаты = ПУТЬ_СТРАНИЦЫ_ОПЛАТЫ.exec(url.pathname);
     if (совпадениеОплаты) {
