@@ -7,18 +7,20 @@
  */
 import { readFileSync } from 'node:fs';
 import http from 'node:http';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { PaymentCheckerClient } from '../checker.js';
-import type { Config } from '../config.js';
-import type { Store } from '../db.js';
-import type { Log } from '../log.js';
+import { startChecker, type PaymentCheckerClient } from '../checker.js';
+import { loadConfig, type Config } from '../config.js';
+import { openDatabase, type Store } from '../db.js';
+import { createLog, type Log } from '../log.js';
+import { создатьКлиент } from '../payments.js';
 import type { PaymentClient } from '../tilda/inbound.js';
 import type { Отправка } from '../tilda/notify.js';
 import { страница404 } from './html.js';
 import { createAdminRoutes } from './routes-admin.js';
 import { обработатьTildaPay } from './routes-pay.js';
 import { обработатьСтатус, обработатьСтраницуОплаты } from './routes-page.js';
+import { обработатьTildaWebhook } from './routes-webhook.js';
 
 /**
  * Тестовые крюки этого модуля — не для боевого кода. Собраны в одно
@@ -130,6 +132,11 @@ async function обработатьЗапрос(
     return;
   }
 
+  if (метод === 'POST' && url.pathname === '/tilda/webhook') {
+    await обработатьTildaWebhook(req, res, deps);
+    return;
+  }
+
   if (метод === 'GET' && url.pathname === '/admin') {
     admin.список(req, res, deps);
     return;
@@ -181,4 +188,102 @@ async function обработатьЗапрос(
 
   res.writeHead(404, { 'content-type': 'text/html; charset=utf-8' });
   res.end(страница404());
+}
+
+/* ------------------------------- запуск ------------------------------- */
+
+/**
+ * Известные секреты настроек — передаются в журнал (`createLog`), чтобы он
+ * вырезал их значения из готовой строки записи независимо от того, под
+ * каким именем поля они всплыли (см. заголовок `../log.ts`, третий барьер).
+ * `rpcUrl` сюда не входит: это не секрет, а адрес узла, и от него журнал и
+ * так оставляет только схему и хост (второй барьер `../log.ts`).
+ */
+function секретыНастроек(config: Config): string[] {
+  return [config.orderSecret, config.notifySecret, config.adminPassword, config.smtp.pass];
+}
+
+/**
+ * Путь к файлу настроек: первый аргумент командной строки, а без него —
+ * `config.json` в текущем рабочем каталоге (см. `README.md` и
+ * `docker-compose.yml` — там он смонтирован read-only ровно туда).
+ */
+function путьКНастройкам(): string {
+  return process.argv[2] ?? join(process.cwd(), 'config.json');
+}
+
+/**
+ * Читает настройки, поднимает хранилище, HTTP-сервер и фоновый обход —
+ * то есть действительно запускает процесс, а не только собирает функции,
+ * которые кто-то другой вызовет (см. системную заметку задачи 9: до этой
+ * функции сервер не имел точки запуска вовсе — ни хранилище, ни обход, ни
+ * чтение настроек с диска никто не вызывал).
+ *
+ * Тестовые крюки (`ЗависимостиСервераТест`) сюда никогда не попадают: их
+ * неоткуда взять из файла настроек на диске — у `Config` (см.
+ * `../config.ts`) такого поля нет и быть не может.
+ */
+export async function запуститьСервер(): Promise<{ server: http.Server; остановить: () => Promise<void> }> {
+  const путь = путьКНастройкам();
+
+  let config: Config;
+  try {
+    const сырыеНастройки: unknown = JSON.parse(readFileSync(путь, 'utf8'));
+    config = loadConfig(сырыеНастройки);
+  } catch (е) {
+    throw new Error(`Не удалось запустить сервер: настройки «${путь}»: ${(е as Error).message}`);
+  }
+
+  const log = createLog((строка) => process.stdout.write(строка + '\n'), секретыНастроек(config));
+  const store = openDatabase(config.databasePath);
+  const client = создатьКлиент(config);
+
+  const server = createServer({ config, store, client, log });
+  const остановитьОбход = startChecker({ config, store, client, log });
+
+  // Только loopback — по конструкции: обратный прокси (nginx) сидит на том
+  // же хосте (см. заголовок `routes-admin.ts` про доверенный адрес прокси
+  // для счётчика попыток входа). В Docker-развёртывании (`docker-compose.yml`)
+  // это работает благодаря `network_mode: host` — иначе прокси со стороны
+  // контейнера пришёл бы не с loopback, а с адреса моста Docker.
+  await new Promise<void>((res, rej) => {
+    server.listen(config.listenPort, '127.0.0.1', () => res());
+    server.once('error', rej);
+  });
+  log.info('Сервер запущен', { port: config.listenPort });
+
+  let остановлен = false;
+  async function остановить(): Promise<void> {
+    if (остановлен) return;
+    остановлен = true;
+    остановитьОбход();
+    await new Promise<void>((res) => server.close(() => res()));
+  }
+
+  return { server, остановить };
+}
+
+/**
+ * Запускается, только если этот файл выполняется напрямую
+ * (`node dist/http/server.js`, см. `package.json` → `scripts.start`), а не
+ * когда его импортируют тесты (им нужны только `createServer` и типы, без
+ * побочных эффектов чтения настроек и открытия сокета).
+ */
+const этоТочкаВхода =
+  process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (этоТочкаВхода) {
+  запуститьСервер()
+    .then(({ остановить }) => {
+      const наСигнал = (сигнал: string) => {
+        process.stdout.write(`Получен сигнал ${сигнал}, завершаем работу\n`);
+        void остановить().then(() => process.exit(0));
+      };
+      process.on('SIGTERM', () => наСигнал('SIGTERM'));
+      process.on('SIGINT', () => наСигнал('SIGINT'));
+    })
+    .catch((е: unknown) => {
+      process.stderr.write(`${(е as Error).message}\n`);
+      process.exitCode = 1;
+    });
 }
