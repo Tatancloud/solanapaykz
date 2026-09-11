@@ -44,6 +44,17 @@ export interface Config {
   merchantEmail: string;
   databasePath: string;
   listenPort: number;
+  /**
+   * Адреса, с которых доверяем заголовку `X-Forwarded-For` при подсчёте
+   * попыток входа в `/admin` (см. `http/routes-admin.ts`). По умолчанию —
+   * только loopback (`127.0.0.1`, `::1`, `::ffff:127.0.0.1`): процесс и
+   * обратный прокси (nginx) на одном хосте вне контейнера. Если прокси
+   * достаёт до процесса через мост Docker (сервер в контейнере в обычной,
+   * не host-сети), сюда нужно добавить адрес шлюза этого моста — иначе
+   * счётчик попыток входа доверять чужому заголовку не будет и схлопнется
+   * в общий на всех посетителей сразу (см. заголовок `routes-admin.ts`).
+   */
+  trustedProxyAddresses: string[];
 }
 
 /** Ошибка настроек: несёт список всех найденных проблем разом. */
@@ -58,6 +69,44 @@ export class ConfigError extends Error {
 }
 
 export const МИНИМАЛЬНАЯ_ДЛИНА_СЕКРЕТА = 8;
+
+/**
+ * Известные системные адреса Solana — встроенные программы и служебные
+ * константы, а не кошельки, которыми кто-то владеет. Деньги, отправленные
+ * на такой адрес, никому не достанутся и не восстановятся: это не то же
+ * самое, что «неверный формат» (который проверить без выхода в сеть вообще
+ * нельзя) — это конкретно защита от того, что в `recipient` по ошибке
+ * останется значение из примера настроек или тестового плейсхолдера.
+ * Найдено на собственном опыте (задача 9): при первом развёртывании этого
+ * сервера в `config.json` остался System Program как временная заглушка —
+ * ровно тот случай, для которого эта проверка и нужна.
+ */
+const ИЗВЕСТНЫЕ_СИСТЕМНЫЕ_АДРЕСА = new Set<string>([
+  '11111111111111111111111111111111', // System Program
+  'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA', // SPL Token Program
+  'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb', // Token-2022 Program
+  'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knw', // Associated Token Account Program
+  'ComputeBudget111111111111111111111111111111', // Compute Budget Program
+  'Vote111111111111111111111111111111111111111', // Vote Program
+  'Stake11111111111111111111111111111111111111', // Stake Program
+  'Config1111111111111111111111111111111111111', // Config Program
+  'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr', // Memo Program v2
+  'Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo', // Memo Program v1
+]);
+
+/**
+ * Адрес из одного и того же повторённого символа («111...1», «aaaa...a» и
+ * подобные) — тривиальный паттерн встроенных программ Solana (все они
+ * заканчиваются на серию единиц) и заведомо не то, что может выдать
+ * настоящая генерация кошелька.
+ */
+function этоАдресИзОдногоСимвола(значение: string): boolean {
+  return значение.length > 0 && [...значение].every((символ) => символ === значение[0]);
+}
+
+function этоИзвестныйСистемныйАдрес(значение: string): boolean {
+  return ИЗВЕСТНЫЕ_СИСТЕМНЫЕ_АДРЕСА.has(значение) || этоАдресИзОдногоСимвола(значение);
+}
 
 /** Известные ключи верхнего уровня — опечатка вроде `markupPercnt` не должна молча превратиться в «поле не задано, беру значение по умолчанию». */
 const ИЗВЕСТНЫЕ_КЛЮЧИ = new Set<string>([
@@ -78,6 +127,7 @@ const ИЗВЕСТНЫЕ_КЛЮЧИ = new Set<string>([
   'merchantEmail',
   'databasePath',
   'listenPort',
+  'trustedProxyAddresses',
 ]);
 
 /** Известные ключи внутри `smtp` — та же защита от опечаток на вложенном уровне. */
@@ -92,6 +142,7 @@ const ПО_УМОЛЧАНИЮ = {
   quoteTtlSeconds: 900,
   lateWindowSeconds: 86400,
   listenPort: 8080,
+  trustedProxyAddresses: ['127.0.0.1', '::1', '::ffff:127.0.0.1'] as string[],
 };
 
 function этоОбъект(значение: unknown): значение is Record<string, unknown> {
@@ -146,6 +197,17 @@ export function loadConfig(raw: unknown): Config {
   // --- recipient ---
   if (!непустаяСтрока(raw.recipient)) {
     проблемы.push('recipient: обязателен, непустая строка (адрес кошелька получателя)');
+  } else if (этоИзвестныйСистемныйАдрес(raw.recipient)) {
+    // Не «неверный формат» (это проверить без выхода в сеть нельзя вообще),
+    // а конкретно защита от того, что в настройках остался плейсхолдер или
+    // адрес встроенной программы Solana: деньги, отправленные на такой
+    // адрес, никому не достанутся и не восстановятся (см. комментарий у
+    // ИЗВЕСТНЫЕ_СИСТЕМНЫЕ_АДРЕСА выше).
+    проблемы.push(
+      `recipient: «${raw.recipient}» — известный системный адрес Solana (встроенная программа, а не кошелёк). ` +
+        'Платёж на такой адрес пропадёт безвозвратно: там нет владельца, который мог бы получить деньги. ' +
+        'Укажите настоящий публичный адрес кошелька-получателя.',
+    );
   }
 
   // --- rpcUrl ---
@@ -288,6 +350,19 @@ export function loadConfig(raw: unknown): Config {
     }
   }
 
+  // --- trustedProxyAddresses ---
+  let trustedProxyAddresses: string[] = ПО_УМОЛЧАНИЮ.trustedProxyAddresses;
+  if (raw.trustedProxyAddresses !== undefined) {
+    if (
+      Array.isArray(raw.trustedProxyAddresses) &&
+      raw.trustedProxyAddresses.every((значение) => непустаяСтрока(значение))
+    ) {
+      trustedProxyAddresses = raw.trustedProxyAddresses as string[];
+    } else {
+      проблемы.push('trustedProxyAddresses: массив непустых строк (адресов)');
+    }
+  }
+
   if (проблемы.length > 0) {
     throw new ConfigError(проблемы);
   }
@@ -310,5 +385,6 @@ export function loadConfig(raw: unknown): Config {
     merchantEmail: raw.merchantEmail as string,
     databasePath: raw.databasePath as string,
     listenPort,
+    trustedProxyAddresses,
   };
 }

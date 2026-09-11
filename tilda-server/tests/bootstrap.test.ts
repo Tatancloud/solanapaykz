@@ -47,7 +47,7 @@ async function свободныйПорт(): Promise<number> {
 }
 
 const базовыеНастройки = {
-  recipient: '11111111111111111111111111111111',
+  recipient: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM',
   rpcUrl: 'https://api.devnet.solana.com',
   cluster: 'devnet',
   token: 'USDC',
