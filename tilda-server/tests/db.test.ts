@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DuplicateOrderError, openDatabase, type NewOrder, type Store } from '../src/db.js';
+import { DatabaseSync } from 'node:sqlite';
+import { DuplicateOrderError, openDatabase, этоДубльНомераTilda, type NewOrder, type Store } from '../src/db.js';
 
 let каталог: string;
 let store: Store;
@@ -104,5 +105,72 @@ describe('Store', () => {
     const после = store.findByToken('ткн-1');
     expect(после?.notifyAttempts).toBe(2);
     expect(после?.notifiedOk).toBe(1);
+  });
+
+  it(
+    'выставляет busy_timeout при открытии: проигравший в гонке ждёт освобождения блокировки, а не падает мгновенно',
+    () => {
+      // busy_timeout — свойство отдельного соединения, а не файла базы:
+      // прочитать его через PRAGMA с ДРУГОГО соединения нельзя, оно
+      // всегда покажет 0. Поэтому проверяем поведение настоящего
+      // соединения хранилища напрямую: держим эксклюзивную блокировку и
+      // никогда её не отпускаем, значит если хранилище действительно
+      // ждёт настроенные 5000 мс (а не падает сразу с «database is
+      // locked»), вставка займёт заметно больше нуля — и именно
+      // столько, сколько настроено, а не какое-то случайное время.
+      const путь = join(каталог, 'таймаут.sqlite');
+      const хранилище = openDatabase(путь);
+      const держит = new DatabaseSync(путь);
+      держит.exec('BEGIN EXCLUSIVE');
+
+      const начало = Date.now();
+      let поймана: unknown;
+      try {
+        хранилище.createOrder({ ...образец, tildaOrderId: 'занято:1', token: 'занято-токен-1' });
+      } catch (е) {
+        поймана = е;
+      } finally {
+        держит.exec('COMMIT');
+        держит.close();
+      }
+      const прошло = Date.now() - начало;
+
+      expect(поймана).toBeInstanceOf(Error);
+      expect(прошло).toBeGreaterThanOrEqual(4000);
+    },
+    8000,
+  );
+
+  it('не путает «база занята» (SQLITE_BUSY) с нарушением уникальности заказа', () => {
+    // Настоящая ошибка от двух реальных соединений SQLite на одном
+    // файле, а не выдуманный объект: два процесса на одном файле дают
+    // «database is locked», у неё errcode = 5 (SQLITE_BUSY), а не 2067
+    // (SQLITE_CONSTRAINT_UNIQUE), и в тексте нет ни таблицы, ни колонки —
+    // этому не нужны два процесса, поведение SQLite одинаковое что для
+    // двух соединений в одном процессе, что для двух процессов.
+    const путь = join(каталог, 'занято.sqlite');
+    const держит = new DatabaseSync(путь);
+    держит.exec('PRAGMA journal_mode = WAL');
+    держит.exec('CREATE TABLE x (a INTEGER)');
+    держит.exec('BEGIN EXCLUSIVE');
+
+    const конкурент = new DatabaseSync(путь);
+    конкурент.exec('PRAGMA busy_timeout = 50'); // держащий соединение блокировку не отпустит — ждать незачем дольше
+
+    let поймана: unknown;
+    try {
+      конкурент.exec('INSERT INTO x (a) VALUES (1)');
+    } catch (е) {
+      поймана = е;
+    } finally {
+      держит.exec('COMMIT');
+      держит.close();
+      конкурент.close();
+    }
+
+    expect(поймана).toBeInstanceOf(Error);
+    expect((поймана as { errcode?: number }).errcode).toBe(5);
+    expect((поймана as Error).message).not.toContain('orders.tilda_order_id');
+    expect(этоДубльНомераTilda(поймана)).toBe(false);
   });
 });
