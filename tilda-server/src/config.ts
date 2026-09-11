@@ -24,6 +24,14 @@ export interface Config {
   rpcUrl: string;
   cluster: Cluster;
   token: TokenSymbol;
+  /**
+   * Название магазина — необязательное, по умолчанию пустая строка.
+   * Подставляется меткой (`label`) в платёжный запрос: покупатель видит
+   * это имя в кошельке в момент подтверждения платежа, а безликая метка
+   * («Оплата заказа») там выглядит подозрительно — человек, который не
+   * понимает, кому платит, платёж отменяет.
+   */
+  shopName: string;
   markupPercent: number;
   quoteTtlSeconds: number;
   lateWindowSeconds: number;
@@ -57,6 +65,7 @@ const ИЗВЕСТНЫЕ_КЛЮЧИ = new Set<string>([
   'rpcUrl',
   'cluster',
   'token',
+  'shopName',
   'markupPercent',
   'quoteTtlSeconds',
   'lateWindowSeconds',
@@ -78,6 +87,7 @@ const ИЗВЕСТНЫЕ_КЛЮЧИ_SMTP = new Set<string>(['host', 'port', 'use
 const ПО_УМОЛЧАНИЮ = {
   cluster: 'devnet' as Cluster,
   token: 'USDC' as TokenSymbol,
+  shopName: '',
   markupPercent: 0,
   quoteTtlSeconds: 900,
   lateWindowSeconds: 86400,
@@ -160,6 +170,16 @@ export function loadConfig(raw: unknown): Config {
       token = raw.token;
     } else {
       проблемы.push("token: должен быть 'USDC' или 'SOL'");
+    }
+  }
+
+  // --- shopName ---
+  let shopName: string = ПО_УМОЛЧАНИЮ.shopName;
+  if (raw.shopName !== undefined) {
+    if (typeof raw.shopName === 'string') {
+      shopName = raw.shopName;
+    } else {
+      проблемы.push('shopName: должен быть строкой');
     }
   }
 
@@ -277,6 +297,7 @@ export function loadConfig(raw: unknown): Config {
     rpcUrl: raw.rpcUrl as string,
     cluster,
     token,
+    shopName,
     markupPercent,
     quoteTtlSeconds,
     lateWindowSeconds,

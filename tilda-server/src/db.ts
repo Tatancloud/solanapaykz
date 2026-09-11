@@ -37,7 +37,16 @@ export interface Order {
   quoteJson: string;
   createdAt: number;
   expiresAt: number;
-  signature: string | null;
+  /**
+   * Подпись заказа от Tilda. Пишется при создании и больше не меняется —
+   * единственное доказательство, что заказ с такой суммой действительно
+   * пришёл от площадки, а не был подделан. Раньше делила один столбец с
+   * подписью транзакции Solana — оплата затирала бы это доказательство
+   * ровно в споре, где оно нужнее всего; разведены по разным столбцам.
+   */
+  tildaSignature: string | null;
+  /** Подпись транзакции Solana — пусто до оплаты, заполняется при подтверждении. */
+  txSignature: string | null;
   notifyUrl: string | null;
   notifyAttempts: number;
   notifiedOk: 0 | 1;
@@ -113,7 +122,8 @@ CREATE TABLE IF NOT EXISTS orders (
   quote_json      TEXT    NOT NULL,
   created_at      INTEGER NOT NULL,
   expires_at      INTEGER NOT NULL,
-  signature       TEXT,
+  tilda_signature TEXT,
+  tx_signature    TEXT,
   notify_url      TEXT,
   notify_attempts INTEGER NOT NULL DEFAULT 0,
   notified_ok     INTEGER NOT NULL DEFAULT 0,
@@ -142,7 +152,8 @@ interface СтрокаЗаказа {
   quote_json: string;
   created_at: number;
   expires_at: number;
-  signature: string | null;
+  tilda_signature: string | null;
+  tx_signature: string | null;
   notify_url: string | null;
   notify_attempts: number;
   notified_ok: number;
@@ -169,7 +180,8 @@ function изСтроки(р: СтрокаЗаказа): Order {
     quoteJson: р.quote_json,
     createdAt: р.created_at,
     expiresAt: р.expires_at,
-    signature: р.signature,
+    tildaSignature: р.tilda_signature,
+    txSignature: р.tx_signature,
     notifyUrl: р.notify_url,
     notifyAttempts: р.notify_attempts,
     notifiedOk: р.notified_ok === 1 ? 1 : 0,
@@ -196,7 +208,8 @@ const КОЛОНКА: Record<Exclude<keyof Order, 'id'>, string> = {
   quoteJson: 'quote_json',
   createdAt: 'created_at',
   expiresAt: 'expires_at',
-  signature: 'signature',
+  tildaSignature: 'tilda_signature',
+  txSignature: 'tx_signature',
   notifyUrl: 'notify_url',
   notifyAttempts: 'notify_attempts',
   notifiedOk: 'notified_ok',
@@ -298,12 +311,12 @@ export function openDatabase(путь: string, busyTimeoutMs = 5000): Store {
     INSERT INTO orders (
       tilda_order_id, token, state, amount_kzt, amount_token, token_symbol,
       cluster, recipient, reference, rate, rate_source, payment_url,
-      quote_json, created_at, expires_at, signature, notify_url,
+      quote_json, created_at, expires_at, tilda_signature, tx_signature, notify_url,
       notify_attempts, notified_ok, customer_email, description, products_json
     ) VALUES (
       @tilda_order_id, @token, @state, @amount_kzt, @amount_token, @token_symbol,
       @cluster, @recipient, @reference, @rate, @rate_source, @payment_url,
-      @quote_json, @created_at, @expires_at, @signature, @notify_url,
+      @quote_json, @created_at, @expires_at, @tilda_signature, @tx_signature, @notify_url,
       @notify_attempts, @notified_ok, @customer_email, @description, @products_json
     )
   `);
@@ -346,7 +359,8 @@ export function openDatabase(путь: string, busyTimeoutMs = 5000): Store {
         quote_json: o.quoteJson,
         created_at: o.createdAt,
         expires_at: o.expiresAt,
-        signature: o.signature,
+        tilda_signature: o.tildaSignature,
+        tx_signature: o.txSignature,
         notify_url: o.notifyUrl,
         notify_attempts: 0,
         notified_ok: 0,
