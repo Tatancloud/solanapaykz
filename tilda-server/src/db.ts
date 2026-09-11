@@ -205,11 +205,56 @@ const КОЛОНКА: Record<Exclude<keyof Order, 'id'>, string> = {
   productsJson: 'products_json',
 };
 
-/** Является ли ошибка нарушением `UNIQUE` на колонке `tilda_order_id`. */
-function этоДубльНомераTilda(е: unknown): boolean {
+/**
+ * Расширенный код результата SQLite для нарушения `UNIQUE`
+ * (`SQLITE_CONSTRAINT` = 19, расширенный = `19 | (8 << 8)` = 2067).
+ * Задокументированная числовая константа движка — в отличие от текста
+ * сообщения (`err.message`), она не зависит от версии SQLite, локали
+ * или формулировки. `node:sqlite` прокидывает её как есть в поле
+ * `errcode`.
+ */
+const SQLITE_CONSTRAINT_UNIQUE = 2067;
+
+/**
+ * Форма ошибки, которую бросает `node:sqlite` при сбое движка. В
+ * `@types/node` не описана (там у методов `DatabaseSync`/`StatementSync`
+ * тип возврата известен, а тип исключения — нет); проверена на живом
+ * Node 22.23: у объекта есть ровно `code` ('ERR_SQLITE_ERROR' на
+ * стороне Node), `errcode` и `errstr` (числовой и текстовый код самого
+ * SQLite) и обычные `message`/`stack`. Имени колонки/таблицы отдельным
+ * полем нет — только внутри текста `message`.
+ */
+interface ОшибкаSQLite extends Error {
+  code: string;
+  errcode: number;
+  errstr: string;
+}
+
+function этоОшибкаSQLite(е: unknown): е is ОшибкаSQLite {
+  return е instanceof Error && typeof (е as Partial<ОшибкаSQLite>).errcode === 'number';
+}
+
+/**
+ * Является ли ошибка нарушением `UNIQUE` на колонке `tilda_order_id`.
+ *
+ * Основной критерий — код ошибки (`errcode === SQLITE_CONSTRAINT_UNIQUE`),
+ * а не текст сообщения: числовой код стабилен между версиями SQLite,
+ * текст — нет. Он же надёжно отличает нарушение UNIQUE от «database is
+ * locked» (`errcode === 5`, SQLITE_BUSY) — ошибки, которую получает
+ * проигравший в гонке при двух процессах на одном файле без
+ * `busy_timeout` (устранено PRAGMA ниже, но код ошибки в любом случае не
+ * должен путать эти два случая, даже если однажды окно снова откроется).
+ *
+ * Имя колонки код ошибки не несёт: `node:sqlite` не даёт его отдельным
+ * полем (см. `ОшибкаSQLite` выше), поэтому колонку по-прежнему приходится
+ * узнавать по подстроке в тексте сообщения — но это уже вторичная,
+ * уточняющая проверка после того, как код ошибки подтвердил, что это
+ * вообще нарушение UNIQUE, а не какая-то другая ошибка движка.
+ */
+export function этоДубльНомераTilda(е: unknown): boolean {
   return (
-    е instanceof Error &&
-    (е as NodeJS.ErrnoException).code === 'ERR_SQLITE_ERROR' &&
+    этоОшибкаSQLite(е) &&
+    е.errcode === SQLITE_CONSTRAINT_UNIQUE &&
     е.message.includes('orders.tilda_order_id')
   );
 }
@@ -218,6 +263,13 @@ function этоДубльНомераTilda(е: unknown): boolean {
 export function openDatabase(путь: string): Store {
   const db: БазаSQLite = new DatabaseSync(путь);
 
+  // busy_timeout — штатный приём для WAL при нескольких соединениях на
+  // одном файле (перезапуск сервера со старым процессом, ещё не
+  // отпустившим файл; имитатор Tilda рядом с работающим сервером).
+  // Без него проигравший в гонке получает мгновенный отказ «database is
+  // locked» вместо того, чтобы дождаться освобождения блокировки и
+  // получить настоящее — и корректно распознаваемое — нарушение UNIQUE.
+  db.exec('PRAGMA busy_timeout = 5000');
   // WAL — чтобы фоновый обходчик (задача 6) мог читать, пока HTTP-сервер
   // пишет, без блокировки всего файла; foreign_keys — на будущее, если
   // таблица заказов обрастёт связанными таблицами.
