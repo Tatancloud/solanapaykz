@@ -48,6 +48,11 @@ WORKDIR /app/tilda-server
 # в начале файла про симлинк file:.. зависимости.
 COPY --from=build /app /app
 
+# Каталог для файла SQLite — существует всегда, даже если docker-compose.yml
+# не смонтирует сюда именованный том (например, при разовом запуске без
+# compose): node:sqlite не создаёт отсутствующие родительские каталоги сам.
+RUN mkdir -p /app/tilda-server/data
+
 # Слушает только на loopback изнутри процесса (см. src/http/server.ts,
 # запуститьСервер) — наружу порт открывает docker-compose.yml через
 # network_mode: host, поэтому EXPOSE здесь не имеет действия, но остаётся
