@@ -13,19 +13,19 @@
   <nav>
     <a href="{{ '/woocommerce' | relative_url }}">WooCommerce</a>
     <a href="{{ '/tilda' | relative_url }}">Tilda</a>
-    <a href="{{ '/sdk' | relative_url }}">Библиотека</a>
-    <a href="{{ '/security' | relative_url }}">Безопасность</a>
-    <a class="lang" href="{{ page.alt | default: '/en/' | relative_url }}">{{ page.altlabel | default: 'English' }}</a>
+    <a href="{{ '/sdk' | relative_url }}">Library</a>
+    <a href="{{ '/security' | relative_url }}">Security</a>
+    <a class="lang" href="{{ page.alt | default: '/ru/' | relative_url }}">{{ page.altlabel | default: 'Русский' }}</a>
   </nav>
 </header>
 <main>
 {{ content }}
 </main>
 <footer>
-  <p>Открытый исходный код под лицензией MIT.
+  <p>Open source under the MIT licence.
      <a href="https://github.com/Tatancloud/solanapaykz">GitHub</a></p>
-  <p class="quiet">Деньги идут напрямую с кошелька покупателя на кошелёк продавца.
-     Ни сервис, ни его авторы не получают доступа к вашим средствам и не запрашивают приватные ключи.</p>
+  <p class="quiet">Funds move straight from the buyer's wallet to the merchant's wallet.
+     Neither this service nor its authors can touch your money, and private keys are never requested.</p>
 </footer>
 </body>
 </html>

@@ -1,133 +1,162 @@
 ---
 layout: default
-title: Плагин для WooCommerce
-alt: /en/woocommerce
-altlabel: English
+title: Plugin for WooCommerce
+lang: en
+alt: /ru/woocommerce
+altlabel: Русский
 ---
 
-# Плагин для WooCommerce
+# Plugin for WooCommerce
 
-Способ оплаты для WordPress/WooCommerce: покупатель видит сумму заказа в
-тенге, платит в **USDC** или **SOL** по QR-коду прямо со своего кошелька.
-Деньги идут напрямую на кошелёк продавца — плагин их не получает, не
-удерживает и не может удержать.
+A payment method for WordPress/WooCommerce: the buyer sees the order
+amount in tenge (KZT), and pays in **USDC** or **SOL** via a QR code
+straight from their own wallet. Money goes directly to the merchant's
+wallet — the plugin never receives it, never holds it, and can't hold it.
 
 <div class="важно">
-Плагин никогда не запрашивает приватный ключ — ни ваш, ни покупателя. Ему
-известен только публичный адрес вашего кошелька, тот же самый, что вы
-вписываете в настройки. Если кто-то просит ввести секретную фразу или
-приватный ключ «для настройки оплаты» — это мошенник, такого шага не
-существует.
+The plugin never asks for a private key — neither yours nor the buyer's.
+All it knows is the public address of your wallet, the same one you type
+into the settings. If someone asks you to enter a secret phrase or a
+private key "to set up payments," that is a scammer — no such step exists.
 </div>
 
-Плагин не заводит собственных таблиц в базе данных: всё, что ему нужно
-запомнить о заказе, лежит в обычной мете заказа WooCommerce и переезжает
-вместе с ним при экспорте, смене хостинга или переносе сайта.
+The plugin doesn't create any tables of its own in the database: everything
+it needs to remember about an order lives in ordinary WooCommerce order
+meta and travels with it through exports, hosting changes, or a site
+migration.
 
-## Что нужно до установки
+## Before you install
 
-| Требование | Почему именно так |
+| Requirement | Why exactly this |
 |---|---|
-| WordPress 6.5+ и WooCommerce (проверено на 11.1) | плагин — это способ оплаты WooCommerce, без него работать не может |
-| PHP 8.1+ с расширением **bcmath** | без bcmath расчёт суммы к оплате незаметно теряет точность на заказах дороже 92 233,72 ₸. Число не взято с потолка: это максимальное целое PHP (9 223 372 036 854 775 807), делённое на шесть знаков после запятой у USDC и восемь знаков точности курса. На большей сумме промежуточное произведение перестаёт помещаться в целое, молча превращается в число с плавающей точкой и теряет младшие разряды — плагин сам откажется включаться, если bcmath нет |
-| **Валюта магазина — тенге (KZT)** | курс, который использует плагин, берётся к тенге; при другой валюте сумма к оплате считалась бы неверно, и заметно это было бы не раньше сверки выручки. Поэтому плагин сам проверяет валюту и отключает способ оплаты, если она не тенге — покупатель его просто не увидит |
-| Свой узел (RPC) сети Solana | см. раздел ниже — без него плагин не сможет находить платежи |
-| Кошелёк Solana для приёма платежей | для проверки без реальных денег подойдёт кошелёк в тестовой сети (devnet) с монетами из крана |
+| WordPress 6.5+ and WooCommerce (tested on 11.1) | the plugin is a WooCommerce payment method and cannot work without it |
+| PHP 8.1+ with the **bcmath** extension | without bcmath, the payment-amount calculation silently loses precision on orders above 92,233.72 ₸. That figure is not arbitrary: it is PHP's maximum integer (9,223,372,036,854,775,807) divided by USDC's six decimal places and the eight digits of rate precision. Above that amount the intermediate product no longer fits in an integer, silently becomes a float and loses its least significant digits — the plugin will refuse to activate on its own if bcmath is missing |
+| **Shop currency is KZT** | the exchange rate the plugin uses is quoted against KZT; with any other currency the amount due would be computed wrong, and you likely wouldn't notice until reconciling revenue. So the plugin checks the currency itself and disables the payment method if it isn't KZT — the buyer simply won't see it |
+| Your own Solana RPC node | see the section below — without it the plugin can't find payments |
+| A Solana wallet to receive payments | for testing without real money, a wallet on the test network (devnet) funded from a faucet will do |
 
-## Установка
+## Where to get the plugin
 
-1. Загрузите архив плагина в **Плагины → Добавить новый → Загрузить
-   плагин** или распакуйте его в `wp-content/plugins/`.
-2. Включите плагин. Если в среде не хватает нужного расширения PHP, плагин
-   сам откажется включиться и назовёт, чего не хватает — это не баг, это
-   защита от тихой потери точности на суммах.
-3. Проверьте, что валюта магазина — тенге: **WooCommerce → Настройки →
-   Основные → Валюта**.
+There is no prebuilt archive in the releases section yet, so there are two
+working ways to get one.
 
-## Настройка
+**First — build the archive with the supplied script.** It packs only what is
+needed in production: no tests, no development dependencies, no housekeeping
+files.
 
-**WooCommerce → Настройки → Платежи → SolanaPay-KZ**:
+```bash
+git clone https://github.com/Tatancloud/solanapaykz.git
+cd solanapaykz/demo-shop/plugin
+bash build.sh
+# produces build/solanapaykz-0.1.0.zip — install that in WordPress
+```
 
-| Поле | Что вписать | Почему |
-|---|---|---|
-| Адрес кошелька продавца | Публичный адрес вашего кошелька Solana (base58) | это не адрес монеты — частая ошибка. Плагин отдельно проверяет её и не даст сохранить настройки с адресом монеты вместо кошелька, потому что платёж на такой адрес пропал бы безвозвратно |
-| Сеть | Тестовая (devnet) для проверки, основная (mainnet) для реальных платежей | смешение сети настроек с сетью уже созданного заказа — ошибка конфигурации, а не платежа: плагин её не исправляет автоматически (см. «Что делать при каждом состоянии заказа» ниже) |
-| Адрес узла Solana | URL вашего платного RPC-провайдера | см. следующий раздел — публичный узел не подходит |
-| Монета | USDC (курс стабилен) или SOL | — |
-| Наценка, % | необязательный процент сверх суммы заказа | запас на движение курса, пока покупатель платит |
-| Срок действия цены | по умолчанию 15 минут | столько времени зафиксированный курс остаётся в силе; после истечения заказ не отменяется автоматически, если сигнатура платежа уже видна — только полное отсутствие платежа после истечения срока ведёт к отмене |
-| Проверять отменённые заказы | сколько времени после отмены заказа плагин ещё ищет платёж | покупатель мог отправить платёж до отмены, а подтверждение в блокчейне прийти позже |
-
-Плагин не даст сохранить настройки, при которых оплата заведомо не сможет
-пройти (неверный адрес кошелька, недоступная сеть или монета) — после
-сохранения проверьте страницу настроек на предупреждения.
-
-### Где взять узел Solana и почему публичный не годится
-
-Плагину нужно не просто отправить запрос в сеть Solana — ему нужно **найти
-конкретный платёж** среди всех транзакций по метке. Публичные узлы вроде
-`api.mainnet-beta.solana.com` жёстко ограничивают частоту запросов и не
-хранят историю транзакций, необходимую для такого поиска. На практике это
-означает: проверка платежа либо не срабатывает вовсе, либо срабатывает
-через раз.
-
-Нужен платный узел от провайдера (например, Helius, QuickNode, Alchemy) — у
-большинства есть бесплатный уровень, которого достаточно для старта
-небольшого магазина. Адрес узла вписывается в настройки как обычный URL,
-например `https://mainnet.helius-rpc.com/?api-key=...`.
-
-### Системный cron
-
-Плагин фоново перепроверяет заказы по расписанию — на случай, если
-покупатель закрыл вкладку сразу после оплаты, не дождавшись подтверждения
-в браузере. Встроенный псевдо-cron WordPress срабатывает только при заходе
-посетителя на сайт: на малопосещаемом магазине это означает, что проверка
-запаздывает на часы. Если на сайте стоит константа `DISABLE_WP_CRON`,
-плагин покажет предупреждение в админке — настройте настоящий системный
-cron на `wp-cron.php`, иначе часть платежей будет подтверждаться с большой
-задержкой.
-
-## Проверка тестовым платежом
-
-1. Включите настройки с сетью **devnet** и адресом devnet-совместимого
-   RPC-узла.
-2. Оформите тестовый заказ в магазине, выбрав оплату криптовалютой.
-3. На странице «Спасибо за заказ» появится QR-код на пересчитанную сумму в
-   USDC или SOL.
-4. Оплатите его тестовым кошельком (Phantom или Solflare, переключённым на
-   devnet) с монетами из крана.
-5. Заказ должен перейти в «Обрабатывается» в течение секунд — либо по
-   опросу со страницы оплаты, либо по фоновому расписанию, если вкладка
-   уже закрыта.
-
-Только после успешной проверки на devnet имеет смысл переключаться на
-mainnet с настоящим кошельком и настоящим RPC-провайдером.
-
-## Что делать при каждом состоянии заказа
-
-Плагин переводит заказ по результату проверки платежа, но некоторые
-переходы намеренно требуют решения продавца — потому что деньги в
-блокчейне необратимы, и цена автоматической ошибки здесь выше цены
-задержки.
-
-| Состояние заказа | Что это значит | Что делать продавцу |
-|---|---|---|
-| **Ожидание оплаты** (`pending`) | цена зафиксирована, платежа ещё не видно | ничего — плагин проверяет сам, по опросу браузера и по расписанию |
-| **Обрабатывается / Выполнен** | платёж найден, сумма и получатель сошлись | обычная обработка заказа, как при любой другой оплате |
-| **Отменён** | либо срок цены истёк без единой сигнатуры платежа, либо продавец отменил заказ вручную | если отменён по истечении срока — ничего делать не нужно; если покупатель утверждает, что платил, проверьте не только этот заказ, но и следующее состояние |
-| **На удержании** (`on-hold`), заметка о несовпадении | транзакция с меткой этого заказа найдена в блокчейне, но не прошла проверку — не тот получатель, не тот токен или заниженная сумма | посмотрите транзакцию по её подписи (в заметке заказа) в блок-эксплорере вручную и решите, засчитывать оплату или нет. Это **не** значит «покупатель не заплатил»: деньги могли уже уйти с его счёта |
-| **На удержании**, заметка о позднем платеже | заказ уже был отменён, а после отмены на его адрес всё же пришёл подтверждённый платёж (в пределах окна проверки отменённых заказов) | решите: восстановить заказ или вернуть деньги покупателю напрямую — плагин это решение не принимает и не может принять |
+**Second — download the whole repository.** On the
+[repository page](https://github.com/Tatancloud/solanapaykz) choose
+"Code" → "Download ZIP", unpack it and take the `demo-shop/plugin` folder.
+Rename it to `solanapaykz` and place it in `wp-content/plugins/`.
 
 <div class="важно">
-Плагин никогда не отменяет заказ автоматически из-за несовпадения суммы и
-никогда не меняет состояние заказа при недоступности узла Solana. Молчание
-сети — это не ответ «денег нет», а автоматика в этом месте ошибается
-дороже человека.
+<strong>The second way leaves tests and development files in the folder.</strong>
+The plugin will still work, but a production site has no use for them: they
+take up space and widen the attack surface. The archive built the first way is
+cleaner.
 </div>
 
-Подробнее о том, что именно проверяется в транзакции и почему — на
-странице [«Безопасность»](security).
+## Installation
 
-## Лицензия
+1. Upload the plugin archive via **Plugins → Add New → Upload Plugin**, or
+   unpack it into `wp-content/plugins/`.
+2. Activate the plugin. If the environment is missing a required PHP
+   extension, the plugin will refuse to activate and name what's missing —
+   this isn't a bug, it's a guard against silently losing precision on
+   amounts.
+3. Check that the shop's currency is KZT: **WooCommerce → Settings →
+   General → Currency**.
+
+## Configuration
+
+**WooCommerce → Settings → Payments → SolanaPay-KZ**:
+
+| Field | What to enter | Why |
+|---|---|---|
+| Merchant wallet address | The public address of your Solana wallet (base58) | this is not a coin's mint address — a common mistake. The plugin checks for this specifically and won't let you save settings with a mint address instead of a wallet, because a payment sent to such an address would be lost for good |
+| Network | Test (devnet) for checking things out, main (mainnet) for real payments | mixing the network in settings with the network of an order that already exists is a configuration error, not a payment error — the plugin doesn't fix it automatically (see "What to do for each order state" below) |
+| Solana node address | The URL of your paid RPC provider | see the next section — a public node won't do |
+| Coin | USDC (stable rate) or SOL | — |
+| Markup, % | an optional percentage added on top of the order amount | a buffer against the rate moving while the buyer is paying |
+| Price validity | 15 minutes by default | how long the locked-in rate stays valid; once it expires, the order isn't cancelled automatically if a payment signature is already visible — only a complete absence of payment after expiry leads to cancellation |
+| Check cancelled orders | how long after an order is cancelled the plugin keeps looking for a payment | the buyer may have sent the payment before the cancellation, with on-chain confirmation arriving later |
+
+The plugin won't let you save settings under which payment is guaranteed to
+fail (a wrong wallet address, an unreachable network, or coin) — after
+saving, check the settings page for warnings.
+
+### Where to get a Solana node, and why a public one won't work
+
+The plugin doesn't just need to send a request to the Solana network — it
+needs to **find one specific payment** among all transactions by its
+reference. Public nodes like `api.mainnet-beta.solana.com` enforce hard
+rate limits and don't keep the transaction history that such a search
+needs. In practice this means: checking a payment either doesn't work at
+all, or only works some of the time.
+
+You need a paid node from a provider (for example, Helius, QuickNode,
+Alchemy) — most of them have a free tier that's enough to get a small shop
+started. The node address goes into the settings as an ordinary URL, for
+example `https://mainnet.helius-rpc.com/?api-key=...`.
+
+### System cron
+
+The plugin re-checks orders in the background on a schedule, in case the
+buyer closed the tab right after paying, without waiting for confirmation
+in the browser. WordPress's built-in pseudo-cron only fires when a visitor
+loads the site: on a low-traffic shop that means the check can lag by
+hours. If the site has the `DISABLE_WP_CRON` constant set, the plugin will
+show a warning in the admin — set up a real system cron job hitting
+`wp-cron.php`, or some payments will be confirmed with a large delay.
+
+## Testing with a test payment
+
+1. Turn on the settings with the network set to **devnet** and the address
+   of a devnet-compatible RPC node.
+2. Place a test order in the shop, choosing crypto as the payment method.
+3. The "Order received" page will show a QR code for the amount converted
+   into USDC or SOL.
+4. Pay it with a test wallet (Phantom or Solflare, switched to devnet)
+   funded from a faucet.
+5. The order should move to "Processing" within seconds — either through
+   polling from the payment page, or on the background schedule if the tab
+   is already closed.
+
+Only after a successful check on devnet does it make sense to switch to
+mainnet with a real wallet and a real RPC provider.
+
+## What to do for each order state
+
+The plugin moves an order forward based on the payment check, but some
+transitions deliberately require a decision from the merchant — because
+money on the blockchain is irreversible, and the cost of an automatic
+mistake here is higher than the cost of a delay.
+
+| Order state | What it means | What the merchant should do |
+|---|---|---|
+| **Awaiting payment** (`pending`) | the price is locked in, no payment is visible yet | nothing — the plugin checks on its own, both by polling from the browser and on schedule |
+| **Processing / Completed** | payment found, amount and recipient match | handle the order as usual, same as with any other payment method |
+| **Cancelled** | either the price validity period expired with no payment signature at all, or the merchant cancelled the order by hand | if cancelled because the period expired, nothing needs doing; if the buyer claims they paid, check not only this order but also the next state |
+| **On hold** (`on-hold`), note about a mismatch | a transaction bearing this order's reference was found on the blockchain, but failed the check — wrong recipient, wrong token, or an amount that's too low | look up the transaction by its signature (in the order note) in a block explorer by hand and decide whether to accept the payment. This does **not** mean "the buyer didn't pay" — the money may already have left their account |
+| **On hold**, note about a late payment | the order had already been cancelled, and a confirmed payment to its address arrived anyway afterward (within the cancelled-order check window) | decide: restore the order, or refund the buyer directly — the plugin doesn't make this decision and can't make it |
+
+<div class="важно">
+The plugin never cancels an order automatically because of an amount
+mismatch, and never changes an order's state when the Solana node is
+unreachable. Silence from the network is not an answer of "there's no
+money" — automation is more expensive to get wrong here than a human is.
+</div>
+
+For more on exactly what's checked in a transaction and why, see the
+["Security"](security) page.
+
+## Licence
 
 MIT.

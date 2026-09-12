@@ -1,79 +1,82 @@
 ---
 layout: default
-title: Приём оплаты в USDC и SOL для магазинов в Казахстане
-alt: /en/
-altlabel: English
+title: Accepting USDC and SOL payments for shops in Kazakhstan
+lang: en
+alt: /ru/
+altlabel: Русский
 ---
 
 # SolanaPay-KZ
 
-Открытый набор инструментов, позволяющий интернет-магазину принимать оплату в
-стейблкоине **USDC** и в **SOL** на блокчейне Solana, показывая покупателю
-цену в тенге.
+An open-source toolkit that lets an online shop accept payment in the
+**USDC** stablecoin and in **SOL** on the Solana blockchain, while showing
+the buyer a price in tenge (KZT).
 
-**Деньги идут напрямую с кошелька покупателя на кошелёк продавца.** Ни этот
-проект, ни его авторы не принимают, не хранят и не могут задержать ваши
-средства. Приватные ключи не запрашиваются, не создаются и не хранятся ни на
-одном шаге.
+**Money goes straight from the buyer's wallet to the merchant's wallet.**
+Neither this project nor its authors receive, hold, or can freeze your
+funds. Private keys are never requested, generated, or stored at any step.
 
 <div class="важно">
-<strong>Если кто-то просит ввести приватный ключ или мнемоническую фразу от
-кошелька — это мошенник.</strong> Ни одна часть SolanaPay-KZ этого не делает
-и делать не может: для приёма платежей достаточно публичного адреса.
+<strong>If someone asks you to enter a private key or a seed phrase for a
+wallet, that is a scammer.</strong> No part of SolanaPay-KZ does this or can
+do this: accepting payments only ever needs a public address.
 </div>
 
-## Что входит
+## What's included
 
-| Часть | Для кого | Состояние |
+| Part | For whom | Status |
 |---|---|---|
-| [Плагин WooCommerce](woocommerce) | магазин на WordPress | готов |
-| [Сервер для Tilda](tilda) | магазин на Tilda | готов, интеграция на модерации |
-| [Библиотека для разработчиков](sdk) | своя платформа | готова |
+| [WooCommerce plugin](woocommerce) | a shop on WordPress | ready |
+| [Server for Tilda](tilda) | a shop on Tilda | ready, integration pending moderation |
+| [Library for developers](sdk) | a custom platform | ready |
 
-## Как это работает
+## How it works
 
-1. Покупатель оформляет заказ. Магазин знает сумму в тенге.
-2. Сумма пересчитывается в токены по биржевому курсу и **замораживается на
-   15 минут** — чтобы цена не менялась, пока покупатель платит.
-3. Покупателю показывается QR-код. Он платит из своего кошелька.
-4. Магазин проверяет платёж прямо в блокчейне и подтверждает заказ.
+1. The buyer places an order. The shop knows the amount in KZT.
+2. The amount is converted into tokens at the exchange rate and **frozen
+   for 15 minutes** — so the price doesn't move while the buyer is paying.
+3. The buyer is shown a QR code. They pay from their own wallet.
+4. The shop checks the payment directly on the blockchain and confirms the
+   order.
 
-Между вторым и третьим шагом никто не стоит: перевод идёт с кошелька на
-кошелёк. Наш код только считает сумму и убеждается, что деньги пришли.
+Nothing stands between steps two and three: the transfer goes wallet to
+wallet. Our code only computes the amount and confirms that the money
+arrived.
 
-## Почему курс берётся именно так
+## Why the rate is computed this way
 
-Основной источник — биржевой курс пары USDT/KZT на Binance, умноженный на
-курс USDC к USDT. Это единственная прямая пара криптовалюты с тенге, которая
-существует.
+The primary source is the exchange rate for the USDT/KZT pair on Binance,
+multiplied by the USDC-to-USDT rate. This is the only direct pair between a
+cryptocurrency and KZT that exists.
 
-Запасной источник — официальный курс доллара к тенге, умноженный на
-долларовую цену токена. Он даёт значение примерно на процент ниже
-биржевого, поэтому используется только когда биржа недоступна.
+The fallback source is the official dollar-to-KZT rate, multiplied by the
+token's dollar price. It comes out roughly a percent below the exchange
+rate, so it's used only when the exchange is unavailable.
 
-CoinGecko, который обычно советуют в таких случаях, тенге не поддерживает
-вовсе: на запрос он отвечает успехом и пустым результатом. Наивная
-реализация приняла бы пустоту за нулевой курс.
+CoinGecko, which is usually recommended for this, doesn't support KZT at
+all: it answers the request with success and an empty result. A naive
+implementation would mistake that emptiness for a zero rate.
 
-## Округление всегда в пользу продавца
+## Rounding always favours the merchant
 
-Сумма в токенах округляется **вверх**, до последнего знака, который
-существует у монеты. У USDC это шесть знаков, у SOL — девять. Покупатель
-платит не меньше, чем стоит заказ; разница не превышает одной миллионной
-доллара.
+The token amount is rounded **up**, to the last digit the coin supports —
+six digits for USDC, nine for SOL. The buyer never pays less than the order
+costs; the difference never exceeds one millionth of a dollar.
 
-## Что делать, если сумма не сошлась
+## What happens if the amount doesn't match
 
-Платёж, который найден, но не совпал по сумме, **никогда не отменяется
-автоматически**. Такой заказ помечается как требующий проверки, и решение
-принимает продавец, глядя на саму транзакцию. Причина простая: автоматика
-здесь ошибается дороже человека — деньги в блокчейне необратимы.
+A payment that is found but doesn't match the expected amount is **never
+cancelled automatically**. Such an order is flagged as needing review, and
+the merchant decides, by looking at the transaction itself. The reason is
+simple: automation is more expensive to get wrong here than a human is —
+money on the blockchain is irreversible.
 
-То же и с недоступностью сети: если узел Solana не отвечает, заказ не меняет
-состояние. Молчание сети не является ответом «денег нет».
+The same applies to network outages: if the Solana node doesn't respond,
+the order's state doesn't change. Silence from the network is not an
+answer of "there's no money."
 
-## Исходный код
+## Source code
 
 [github.com/Tatancloud/solanapaykz](https://github.com/Tatancloud/solanapaykz)
-— лицензия MIT. Код можно читать, использовать и изменять, в том числе в
-коммерческих проектах.
+— MIT licence. The code can be read, used, and modified, including in
+commercial projects.

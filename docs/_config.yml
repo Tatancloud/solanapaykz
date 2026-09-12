@@ -1,6 +1,6 @@
 title: SolanaPay-KZ
-description: Приём оплаты в USDC и SOL на Solana с пересчётом из тенге
-lang: ru
+description: Accept USDC and SOL on Solana, priced in Kazakhstani tenge
+lang: en
 url: https://tatancloud.github.io
 baseurl: /solanapaykz
 markdown: kramdown

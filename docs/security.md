@@ -1,129 +1,132 @@
 ---
 layout: default
-title: Безопасность
-alt: /en/security
-altlabel: English
+title: Security
+lang: en
+alt: /ru/security
+altlabel: Русский
 ---
 
-# Безопасность
+# Security
 
-Эта страница — для продавца, который хочет понять, чему можно доверять, и
-для разработчика, который хочет понять, что именно проверяет код перед тем,
-как считать заказ оплаченным.
+This page is for the merchant who wants to understand what can be trusted,
+and for the developer who wants to understand exactly what the code checks
+before treating an order as paid.
 
-## Приватные ключи не запрашиваются никогда
+## Private keys are never requested
 
-Ни один компонент SolanaPay-KZ — ни плагин WooCommerce, ни сервер для
-Tilda, ни библиотека `@solanapaykz/core` — не создаёт, не хранит и не
-запрашивает приватный ключ или мнемоническую фразу. Ни продавца, ни
-покупателя.
+No component of SolanaPay-KZ — not the WooCommerce plugin, not the server
+for Tilda, not the `@solanapaykz/core` library — creates, stores, or
+requests a private key or a seed phrase. Not the merchant's, and not the
+buyer's.
 
-Это не обещание, а следствие того, как устроен приём платежа. Всё, что
-нужно системе для приёма денег — публичный адрес кошелька продавца (тот же,
-что вы дали бы, чтобы вам перевели деньги обычным переводом) и случайная
-метка (`reference`) для поиска платежа в блокчейне — 32 случайных байта,
-отформатированные как Solana-адрес, для которых пара ключей вообще не
-генерируется и не существует. Ни для получения денег, ни для проверки их
-поступления подписывать что-либо от чьего-либо имени не требуется — а раз
-не требуется, значит, приватный ключ и негде было бы использовать.
+This isn't a promise, it's a consequence of how accepting payments works.
+All the system needs to accept money is the merchant's public wallet
+address (the same one you'd give someone to have money sent to you the
+ordinary way) and a random tag (`reference`) for finding the payment on the
+blockchain — 32 random bytes formatted as a Solana address, for which no
+key pair is ever generated or exists. Neither receiving the money nor
+verifying its arrival requires signing anything on anyone's behalf — and
+since it isn't required, there's nowhere a private key could even be used.
 
 <div class="важно">
-Если кто-то — в переписке, в поддержке, где угодно — просит ввести
-секретную фразу или приватный ключ кошелька «для настройки приёма
-платежей», это мошенник. Такого шага не существует ни в одной части
-проекта.
+If someone — in a chat, in support, anywhere — asks you to enter a secret
+phrase or a wallet's private key "to set up accepting payments," that is a
+scammer. No such step exists anywhere in the project.
 </div>
 
-## Деньги идут напрямую
+## Money goes straight through
 
-Перевод происходит с кошелька покупателя на кошелёк продавца одной
-транзакцией в блокчейне Solana. Ни этот проект, ни его код, ни сервер для
-Tilda не стоят между ними как получатель или посредник по деньгам — они
-не могут принять платёж на свой адрес вместо продавца, задержать его или
-перенаправить. Роль кода везде одна и та же: посчитать сумму по курсу,
-показать покупателю QR-код и **проверить постфактум**, что перевод, который
-уже случился в блокчейне, соответствует заказу.
+The transfer happens from the buyer's wallet to the merchant's wallet in a
+single transaction on the Solana blockchain. Neither this project, nor its
+code, nor the server for Tilda stands between them as a recipient or an
+intermediary for the money — they cannot accept a payment to their own
+address instead of the merchant's, hold it, or redirect it. The code's role
+is always the same: compute the amount from the exchange rate, show the
+buyer a QR code, and **verify after the fact** that a transfer which has
+already happened on the blockchain matches the order.
 
-## Что именно проверяется в транзакции
+## What exactly gets checked in a transaction
 
-Когда код ищет платёж по метке (`reference`) и решает, засчитывать ли его,
-проверяются пять вещей одновременно:
+When the code searches for a payment by its reference and decides whether
+to accept it, five things are checked at once:
 
-| Проверяется | Зачем |
+| Checked | Why |
 |---|---|
-| **Получатель** | перевод должен идти на адрес продавца, зафиксированный в заказе, — иначе это чужой платёж, случайно попавший под ту же метку |
-| **Сумма** | переведено должно быть не меньше суммы из котировки (переплата проходит проверку, недоплата — нет) |
-| **Монета** | перевод должен быть в том токене, что указан в заказе (USDC или SOL) — платёж в другом токене не принимается как оплата этого заказа |
-| **Метка (reference)** | именно по ней транзакция вообще находится среди всех переводов в блокчейне — без метки не с чем сверять получателя, сумму и монету |
-| **Отсутствие ошибки в транзакции** (`meta.err === null`) | Solana записывает в блокчейн и неудачные транзакции — само наличие записи ещё не значит, что перевод состоялся |
-| **Уровень подтверждения `finalized`** | самый надёжный из доступных в Solana; более быстрые, но менее надёжные уровни (`confirmed`, `processed`) намеренно не используются, потому что для необратимого решения «заказ оплачен» скорость дешевле надёжности не бывает |
+| **Recipient** | the transfer must go to the merchant address recorded on the order — otherwise it's someone else's payment that happened to land under the same reference |
+| **Amount** | the amount transferred must be at least the quoted amount (an overpayment passes the check, an underpayment doesn't) |
+| **Coin** | the transfer must be in the token specified on the order (USDC or SOL) — a payment in a different token isn't accepted as payment for this order |
+| **Reference** | this is what lets the transaction be found among all transfers on the blockchain in the first place — without the reference there's nothing to check the recipient, amount, and coin against |
+| **No error in the transaction** (`meta.err === null`) | Solana records failed transactions on-chain too — a record existing doesn't by itself mean the transfer went through |
+| **`finalized` commitment level** | the most reliable one available on Solana; the faster but less reliable levels (`confirmed`, `processed`) are deliberately not used, because for the irreversible decision "the order is paid," speed is never worth trading for reliability |
 
-Сама сверка делегирована библиотеке `@solana/pay` (`validateTransfer`), а не
-написана заново: самописная проверка входящей транзакции — то место, где
-легче всего по ошибке принять чужой или неполный платёж.
+The actual verification is delegated to the `@solana/pay` library
+(`validateTransfer`) rather than written from scratch: checking an incoming
+transaction by hand is exactly the kind of place where it's easiest to
+accept someone else's or an incomplete payment by mistake.
 
-## Почему несовпадение суммы не отменяет заказ автоматически
+## Why an amount mismatch doesn't cancel an order automatically
 
-Если транзакция с нужной меткой нашлась, но не прошла проверку — не тот
-получатель, не тот токен или сумма меньше ожидаемой — система не считает
-заказ автоматически неоплаченным и не отменяет его. Это состояние, которое
-требует решения человека: транзакция уже существует в блокчейне, деньги уже
-могли уйти со счёта покупателя, и это не то же самое, что «покупатель не
-платил».
+If a transaction with the right reference is found but fails the check —
+wrong recipient, wrong token, or an amount lower than expected — the
+system does not automatically treat the order as unpaid and does not
+cancel it. This is a state that requires a human decision: the transaction
+already exists on the blockchain, the money may already have left the
+buyer's account, and that is not the same thing as "the buyer didn't pay."
 
 <div class="важно">
-Автоматика в этом месте ошибается дороже человека. Отменить заказ, по
-которому покупатель уже отправил деньги (пусть и не сошедшиеся по формальному
-признаку), — значит потерять доверие покупателя и, возможно, деньги, которые
-никто не вернёт: переводы в блокчейне необратимы. Поэтому решение
-сознательно оставлено продавцу, который смотрит на саму транзакцию, а не на
-её автоматическую интерпретацию.
+Automation is more expensive to get wrong here than a human is. Cancelling
+an order the buyer has already sent money for (even if it didn't match on
+a formal criterion) means losing the buyer's trust and possibly money that
+no one will get back: transfers on the blockchain are irreversible. That's
+why the decision is deliberately left to the merchant, who looks at the
+transaction itself, rather than at some automated interpretation of it.
 </div>
 
-## Почему сбой сети не меняет состояние
+## Why a network failure doesn't change an order's state
 
-Если узел Solana не отвечает — таймаут, лимит запросов, недоступность —
-это пробрасывается как ошибка, а не как результат проверки платежа.
-Заказ остаётся в прежнем состоянии. Молчание сети не является ответом
-«денег нет»: если бы недоступность узла интерпретировалась как «платежа
-нет», при перегруженном или временно отключённом RPC-провайдере заказы
-отменялись бы за реальные, уже отправленные деньги.
+If the Solana node doesn't respond — a timeout, a rate limit, an outage —
+this is propagated as an error, not as the outcome of a payment check. The
+order stays in its current state. Silence from the network is not an
+answer of "there's no money": if an unreachable node were interpreted as
+"no payment," orders would get cancelled over real, already-sent money
+whenever an RPC provider was overloaded or briefly down.
 
-По той же причине курс, который не удалось получить ни от одного
-источника, не приводит к продаже по устаревшему или выдуманному значению
-— заказ просто не создаётся. Продать по неизвестному курсу хуже, чем не
-продать.
+For the same reason, an exchange rate that couldn't be obtained from any
+source doesn't lead to a sale at a stale or made-up value — the order
+simply isn't created. Selling at an unknown rate is worse than not
+selling.
 
-## Что делать продавцу при спорном платеже
+## What the merchant should do about a disputed payment
 
-1. Найдите транзакцию по подписи (`signature`), которая сохраняется в
-   заметке заказа (WooCommerce) или в списке заказов (`/admin` для
-   сервера Tilda).
-2. Посмотрите её в публичном блок-эксплорере Solana или через сам RPC —
-   получателя, сумму и токен можно проверить независимо от того, что
-   решил код.
-3. Решите по фактическому содержимому транзакции: засчитать оплату,
-   запросить доплату у покупателя или вернуть ему деньги напрямую со своего
-   кошелька, если перевод пришёл, а заказ по каким-то причинам не актуален.
+1. Find the transaction by its signature (`signature`), which is saved in
+   the order note (WooCommerce) or in the order list (`/admin` for the
+   Tilda server).
+2. Look it up in a public Solana block explorer, or via the RPC itself —
+   the recipient, amount, and token can be checked independently of what
+   the code decided.
+3. Decide based on the transaction's actual contents: accept the payment,
+   ask the buyer for the remaining amount, or refund them directly from
+   your own wallet, if the transfer arrived but the order is no longer
+   valid for some reason.
 
-Это решение всегда принимает продавец — ни один компонент проекта не может
-принять его автоматически, потому что для этого ему пришлось бы либо
-держать деньги (чего он не делает), либо ошибаться на необратимых переводах.
+This decision always belongs to the merchant — no component of the project
+can make it automatically, because doing so would require either holding
+the money (which it doesn't) or being wrong about irreversible transfers.
 
-## Чего проект не делает
+## What the project doesn't do
 
-SolanaPay-KZ не берёт на себя роль платёжного посредника — только роль
-кассира, который считает и проверяет:
+SolanaPay-KZ doesn't take on the role of a payment intermediary — only the
+role of a cashier that counts and verifies:
 
-- **Не оформляет возвраты.** Вернуть деньги покупателю может только сам
-  продавец, переводом со своего кошелька, — ни у кого другого нет к этому
-  кошельку доступа.
-- **Не разрешает споры.** Если платёж не сошёлся или пришёл поздно, решение
-  — за продавцом, а не за автоматикой и не за проектом (см. выше).
-- **Не хранит средства.** Ни на одном шаге деньги не проходят через адрес,
-  контролируемый проектом, — только напрямую от покупателя к продавцу.
-- **Не хранит и не может восстановить приватные ключи** — потому что
-  никогда их и не получает.
+- **Doesn't issue refunds.** Only the merchant can refund the buyer, by a
+  transfer from their own wallet — no one else has access to that wallet.
+- **Doesn't resolve disputes.** If a payment didn't match or arrived late,
+  the decision is the merchant's, not automation's and not the project's
+  (see above).
+- **Doesn't hold funds.** At no step does money pass through an address
+  controlled by the project — only directly from buyer to merchant.
+- **Doesn't store and cannot recover private keys** — because it never
+  receives them in the first place.
 
-Если что-то из перечисленного нужно — это отдельная задача продавца или
-стороннего сервиса, не эта система.
+If you need any of the above, that's a separate task for the merchant or a
+third-party service, not this system.
