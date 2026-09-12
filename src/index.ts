@@ -5,6 +5,7 @@ export {
 } from './client.js';
 export type { Quote } from './quote/quote.js';
 export type { PaymentRequest } from './payment/request.js';
+export { SIGNATURE_LIMIT } from './verify/verify.js';
 export type { PaymentStatus } from './verify/verify.js';
 export type { Cluster, TokenSymbol } from './config.js';
 export {
