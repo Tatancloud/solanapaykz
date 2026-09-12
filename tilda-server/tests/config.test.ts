@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { loadConfig } from '../src/config.js';
 
 const полные = {
@@ -172,5 +174,59 @@ describe('loadConfig', () => {
     it('отвергает не-булево значение', () => {
       expect(() => loadConfig({ ...полные, enableFormWebhook: 'да' })).toThrow(/enableFormWebhook/);
     });
+  });
+});
+
+describe('config.example.json (правка финального ревью — пример обязан быть работоспособным)', () => {
+  // Находка ревью: пример настроек содержит двенадцать ключей-комментариев
+  // вида `_комментарий*`, а loadConfig отвергал любой неизвестный ключ —
+  // README велит скопировать пример в config.json, значит первый же шаг
+  // развёртывания у нового продавца заканчивался отказом стартовать с
+  // сообщением про опечатку, которой он не делал. Ни один из тестов до этой
+  // правки пример не загружал — живой сервер работал только потому, что его
+  // настройки вычистили руками.
+  //
+  // ЗАПОЛНИТЕ — места, которые продавец обязан заполнить сам (адрес
+  // кошелька, пароли, SMTP и т. п.); здесь подставляем валидные тестовые
+  // значения, чтобы проверить именно структуру примера, а не содержание
+  // плейсхолдеров.
+  const путьКПримеру = fileURLToPath(new URL('../config.example.json', import.meta.url));
+
+  function примерСПодставленнымиЗначениями(): unknown {
+    const сырой = JSON.parse(readFileSync(путьКПримеру, 'utf8')) as Record<string, unknown>;
+    return {
+      ...сырой,
+      recipient: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM',
+      rpcUrl: 'https://api.devnet.solana.com',
+      orderSecret: 'заполненный-секрет-заказа',
+      notifySecret: 'заполненный-секрет-уведомления',
+      tildaNotifyUrl: 'https://pay.example.kz/tilda/notify',
+      publicUrl: 'https://pay.example.kz',
+      adminPassword: 'заполненный-пароль-админа',
+      smtp: {
+        ...(сырой.smtp as Record<string, unknown>),
+        host: 'smtp.example.kz',
+        user: 'noreply@example.kz',
+        pass: 'заполненный-smtp-пароль',
+        from: 'shop@example.kz',
+      },
+      merchantEmail: 'merchant@example.kz',
+      databasePath: '/data/orders.sqlite',
+    };
+  }
+
+  it('загружается без ошибок после подстановки ЗАПОЛНИТЕ', () => {
+    expect(() => loadConfig(примерСПодставленнымиЗначениями())).not.toThrow();
+  });
+
+  it('двенадцать (и более) ключей-комментариев верхнего уровня не мешают загрузке', () => {
+    const сырой = JSON.parse(readFileSync(путьКПримеру, 'utf8')) as Record<string, unknown>;
+    const ключиКомментариев = Object.keys(сырой).filter((к) => к.startsWith('_'));
+    expect(ключиКомментариев.length).toBeGreaterThanOrEqual(10);
+  });
+
+  it('без подстановки (голые ЗАПОЛНИТЕ) отказывает — проверка не просто гасит ключи-комментарии, а видит настоящие проблемы', () => {
+    const сырой = JSON.parse(readFileSync(путьКПримеру, 'utf8')) as unknown;
+    expect(() => loadConfig(сырой)).toThrow();
   });
 });
