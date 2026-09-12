@@ -113,8 +113,17 @@ describe('notifyTilda', () => {
 
   it('подписывает уведомление секретом уведомления, а не секретом заказа', async () => {
     const отправленное = await перехватитьОтправку((отправка) => notifyTilda(заказ, сОтправкой(отправка)));
-    expect(отправленное.signature).toBe(signFields(отправленное, config.notifySecret));
-    expect(отправленное.signature).not.toBe(signFields(отправленное, config.orderSecret));
+    expect(отправленное.signature).toBe(signFields(отправленное, config.notifySecret, 'notify'));
+    expect(отправленное.signature).not.toBe(signFields(отправленное, config.orderSecret, 'notify'));
+  });
+
+  it('подписывает уведомление с ролью notify — даже с секретом заказа (гипотетически) подпись заказа не подошла бы', async () => {
+    // Правка финального ревью: метка роли в строке подписи (см.
+    // signature.ts) делает подписи заказа и уведомления невзаимозаменяемыми
+    // независимо от настроек секретов — вторая, самостоятельная линия
+    // обороны сверх запрета равенства секретов в loadConfig.
+    const отправленное = await перехватитьОтправку((отправка) => notifyTilda(заказ, сОтправкой(отправка)));
+    expect(отправленное.signature).not.toBe(signFields(отправленное, config.notifySecret, 'order'));
   });
 
   it('несёт order_id, amount, currency, test_mode, status «paid» и подпись транзакции', async () => {

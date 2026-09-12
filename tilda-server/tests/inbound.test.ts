@@ -34,7 +34,7 @@ function телоЗаказа(изменения: Record<string, string> = {}): 
     notify_url: 'https://tilda.cc/payment/notify/abc',
     ...изменения,
   };
-  return { ...поля, signature: signFields(поля, секрет) };
+  return { ...поля, signature: signFields(поля, секрет, 'order') };
 }
 
 function парс(тело: Record<string, string>) {

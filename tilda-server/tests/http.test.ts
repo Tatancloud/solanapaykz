@@ -52,7 +52,7 @@ function телоЗаказа(изменения: Record<string, string> = {}): 
     notify_url: config.tildaNotifyUrl,
     ...изменения,
   };
-  return { ...поля, signature: signFields(поля, секрет) };
+  return { ...поля, signature: signFields(поля, секрет, 'order') };
 }
 
 /**
@@ -195,7 +195,7 @@ describe('POST /tilda/pay', () => {
       timestamp: '1789200000',
       test_mode: '0',
     };
-    const тело = { ...поля, signature: signFields(поля, секрет) };
+    const тело = { ...поля, signature: signFields(поля, секрет, 'order') };
     const ответ = await запрос('POST', '/tilda/pay', тело);
     expect(ответ.status).toBe(400);
     expect(store.findByTildaOrderId('10868059:43')).toBeNull();

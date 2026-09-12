@@ -160,6 +160,18 @@ describe('loadConfig', () => {
     });
   });
 
+  describe('orderSecret !== notifySecret (правка финального ревью)', () => {
+    it('отвергает совпадающие секреты', () => {
+      expect(() =>
+        loadConfig({ ...полные, orderSecret: 'один-и-тот-же-секрет', notifySecret: 'один-и-тот-же-секрет' }),
+      ).toThrow(/orderSecret.*notifySecret|notifySecret.*orderSecret/);
+    });
+
+    it('разные секреты по-прежнему проходят', () => {
+      expect(() => loadConfig(полные)).not.toThrow();
+    });
+  });
+
   describe('enableFormWebhook (правка финального ревью — запасной вход выключен по умолчанию)', () => {
     it('по умолчанию выключен', () => {
       const c = loadConfig(полные);

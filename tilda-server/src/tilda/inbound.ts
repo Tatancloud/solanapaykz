@@ -225,7 +225,7 @@ export function проверитьЗаказ(
   body: Record<string, string>,
   secret: string,
 ): void {
-  if (!verifySignature(body, order.signature, secret)) {
+  if (!verifySignature(body, order.signature, secret, 'order')) {
     throw new SignatureError();
   }
 
