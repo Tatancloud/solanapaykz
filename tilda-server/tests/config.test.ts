@@ -187,6 +187,38 @@ describe('loadConfig', () => {
       expect(() => loadConfig({ ...полные, enableFormWebhook: 'да' })).toThrow(/enableFormWebhook/);
     });
   });
+
+  describe('successUrl / failureUrl (правка финального ревью, задача 4 — возврат покупателя на Tilda)', () => {
+    it('необязательны — без них покупатель остаётся на странице итога сервера (прежнее поведение)', () => {
+      const c = loadConfig(полные);
+      expect(c.successUrl).toBeUndefined();
+      expect(c.failureUrl).toBeUndefined();
+    });
+
+    it('принимает и сохраняет корректные https-адреса', () => {
+      const c = loadConfig({
+        ...полные,
+        successUrl: 'https://shop.example.kz/thank-you',
+        failureUrl: 'https://shop.example.kz/sorry',
+      });
+      expect(c.successUrl).toBe('https://shop.example.kz/thank-you');
+      expect(c.failureUrl).toBe('https://shop.example.kz/sorry');
+    });
+
+    it('отвергает адрес не по https', () => {
+      expect(() => loadConfig({ ...полные, successUrl: 'http://shop.example.kz/thank-you' })).toThrow(
+        /successUrl/,
+      );
+    });
+
+    it('нормализует адрес — небезопасные символы кодируются, чтобы значение годилось для заголовка Location', () => {
+      // Заголовок HTTP обязан быть ASCII (routes-page.ts отдаёт его как
+      // есть в Location) — не любая ссылка, которую администратор мог
+      // скопировать из адресной строки браузера, им является.
+      const c = loadConfig({ ...полные, successUrl: 'https://shop.example.kz/спасибо' });
+      expect(c.successUrl).toBe('https://shop.example.kz/%D1%81%D0%BF%D0%B0%D1%81%D0%B8%D0%B1%D0%BE');
+    });
+  });
 });
 
 describe('config.example.json (правка финального ревью — пример обязан быть работоспособным)', () => {

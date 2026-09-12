@@ -307,6 +307,99 @@ describe('GET /pay/:token', () => {
   });
 });
 
+describe('GET /pay/:token — возврат на страницу магазина (задача 4 финального ревью)', () => {
+  const конфигСВозвратом: Config = {
+    ...config,
+    successUrl: 'https://shop.example.kz/thank-you',
+    failureUrl: 'https://shop.example.kz/sorry',
+  };
+
+  /** Отдельный сервер с настроенными successUrl/failureUrl — по умолчанию (в общем `config` этого файла) их нет. */
+  async function серверСВозвратом(): Promise<{ базовыйUrl: string; закрыть: () => Promise<void> }> {
+    const deps: ЗависимостиСервера = {
+      config: конфигСВозвратом,
+      store,
+      client: фейковыйКлиент(),
+      log: createLog(() => {}),
+    };
+    const сервер = createServer(deps);
+    await new Promise<void>((resolve) => сервер.listen(0, '127.0.0.1', resolve));
+    const адрес = сервер.address() as AddressInfo;
+    return {
+      базовыйUrl: `http://127.0.0.1:${адрес.port}`,
+      закрыть: () => new Promise<void>((resolve) => сервер.close(() => resolve())),
+    };
+  }
+
+  it('оплаченный заказ уводит на config.successUrl, а не на страницу итога', async () => {
+    const заказ = store.createOrder({ ...образецНовогоЗаказа, token: '4'.repeat(32), tildaOrderId: '10868059:110' });
+    store.updateState(заказ.id, 'оплачен', { txSignature: 'подпись' });
+    const { базовыйUrl, закрыть } = await серверСВозвратом();
+    try {
+      const ответ = await fetch(`${базовыйUrl}/pay/${заказ.token}`, { redirect: 'manual' });
+      expect(ответ.status).toBe(302);
+      expect(ответ.headers.get('location')).toBe('https://shop.example.kz/thank-you');
+    } finally {
+      await закрыть();
+    }
+  });
+
+  it('уведомлённый заказ тоже уводит на config.successUrl', async () => {
+    const заказ = store.createOrder({ ...образецНовогоЗаказа, token: '5'.repeat(32), tildaOrderId: '10868059:111' });
+    store.updateState(заказ.id, 'оплачен', { txSignature: 'подпись' });
+    store.markNotified(заказ.id, true, 1);
+    const { базовыйUrl, закрыть } = await серверСВозвратом();
+    try {
+      const ответ = await fetch(`${базовыйUrl}/pay/${заказ.token}`, { redirect: 'manual' });
+      expect(ответ.status).toBe(302);
+      expect(ответ.headers.get('location')).toBe('https://shop.example.kz/thank-you');
+    } finally {
+      await закрыть();
+    }
+  });
+
+  it('просроченный заказ уводит на config.failureUrl', async () => {
+    const заказ = store.createOrder({ ...образецНовогоЗаказа, token: '6'.repeat(32), tildaOrderId: '10868059:112' });
+    store.updateState(заказ.id, 'просрочен');
+    const { базовыйUrl, закрыть } = await серверСВозвратом();
+    try {
+      const ответ = await fetch(`${базовыйUrl}/pay/${заказ.token}`, { redirect: 'manual' });
+      expect(ответ.status).toBe(302);
+      expect(ответ.headers.get('location')).toBe('https://shop.example.kz/sorry');
+    } finally {
+      await закрыть();
+    }
+  });
+
+  it('«не сошлось», «поздний» и «ошибка настроек» не редиректят — это не однозначный успех или отказ', async () => {
+    const состояния = ['не сошлось', 'поздний', 'ошибка настроек'] as const;
+    const { базовыйUrl, закрыть } = await серверСВозвратом();
+    try {
+      for (const [индекс, состояние] of состояния.entries()) {
+        const заказ = store.createOrder({
+          ...образецНовогоЗаказа,
+          token: `8${индекс}`.padEnd(32, '0'),
+          tildaOrderId: `10868059:20${индекс}`,
+        });
+        store.updateState(заказ.id, состояние, состояние === 'не сошлось' || состояние === 'поздний' ? { txSignature: 'подпись' } : {});
+        const ответ = await fetch(`${базовыйUrl}/pay/${заказ.token}`, { redirect: 'manual' });
+        expect(ответ.status).toBe(200);
+      }
+    } finally {
+      await закрыть();
+    }
+  });
+
+  it('без настроенных successUrl/failureUrl (обычный config этого файла) — прежнее поведение, страница итога', async () => {
+    const заказ = store.createOrder({ ...образецНовогоЗаказа, token: '9'.repeat(32), tildaOrderId: '10868059:113' });
+    store.updateState(заказ.id, 'оплачен', { txSignature: 'подпись' });
+    // Используем общий server/базовыйUrl этого файла (config без successUrl).
+    const ответ = await запрос('GET', `/pay/${заказ.token}`);
+    expect(ответ.status).toBe(200);
+    expect(ответ.body).toContain('Оплата получена');
+  });
+});
+
 describe('GET /api/status/:token', () => {
   it('несуществующий токен отвечает 404', async () => {
     const ответ = await запрос('GET', '/api/status/' + '3'.repeat(32));
