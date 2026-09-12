@@ -20,7 +20,7 @@ import { страница404 } from './html.js';
 import { createAdminRoutes } from './routes-admin.js';
 import { обработатьTildaPay } from './routes-pay.js';
 import { обработатьСтатус, обработатьСтраницуОплаты } from './routes-page.js';
-import { обработатьTildaWebhook } from './routes-webhook.js';
+import { createWebhookRoutes } from './routes-webhook.js';
 
 /**
  * Тестовые крюки этого модуля — не для боевого кода. Собраны в одно
@@ -40,6 +40,8 @@ export interface ЗависимостиСервераТест {
    * `routes-page.ts`). По умолчанию 8 секунд.
    */
   таймаутОпросаMs?: number;
+  /** Время жизни кеша ответа опроса статуса, мс (см. `routes-page.ts`). По умолчанию 3 секунды. */
+  кешОпросаMs?: number;
 }
 
 /**
@@ -98,13 +100,17 @@ export function createServer(deps: ЗависимостиСервера): http.S
   // модуля: тесты создают сервер заново на каждый прогон (см. `http.test.ts`,
   // `admin.test.ts`), и каждому должен достаться свой, ещё пустой счётчик.
   const admin = createAdminRoutes();
+  // Тот же приём и та же причина — свой, ещё пустой ограничитель частоты
+  // создания заказов на сервер, а не общий на процесс (см. заголовок
+  // `создатьОграничительЧастотыСоздания` в `routes-webhook.ts`).
+  const webhook = createWebhookRoutes();
 
   return http.createServer((req, res) => {
     for (const [имя, значение] of Object.entries(ЗАГОЛОВКИ_БЕЗОПАСНОСТИ)) {
       res.setHeader(имя, значение);
     }
 
-    void обработатьЗапрос(req, res, deps, admin).catch((е) => {
+    void обработатьЗапрос(req, res, deps, admin, webhook).catch((е) => {
       deps.log.error('Необработанная ошибка при обработке HTTP-запроса', {
         сообщение: (е as Error).message,
       });
@@ -123,6 +129,7 @@ async function обработатьЗапрос(
   res: http.ServerResponse,
   deps: ЗависимостиСервера,
   admin: ReturnType<typeof createAdminRoutes>,
+  webhook: ReturnType<typeof createWebhookRoutes>,
 ): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://localhost');
   const метод = req.method ?? 'GET';
@@ -132,8 +139,13 @@ async function обработатьЗапрос(
     return;
   }
 
-  if (метод === 'POST' && url.pathname === '/tilda/webhook') {
-    await обработатьTildaWebhook(req, res, deps);
+  // Выключен по умолчанию (`config.enableFormWebhook`, см. `../config.ts`):
+  // не под условием внутри самого обработчика, а здесь, в маршрутизации —
+  // выключенный вход обязан вести себя как несуществующий маршрут (404), а
+  // не отвечать чем-то, что выдаёт сам факт его существования постороннему,
+  // который его прощупывает.
+  if (метод === 'POST' && url.pathname === '/tilda/webhook' && deps.config.enableFormWebhook) {
+    await webhook.обработать(req, res, deps);
     return;
   }
 

@@ -77,6 +77,36 @@ export class AmountError extends Error {
   }
 }
 
+/**
+ * Заказ с таким `tildaOrderId` уже есть, но его сумма, валюта или признак
+ * тестового режима расходятся с текущим (подписанным) запросом.
+ *
+ * Ревью на живом сервере: `POST /tilda/webhook` (запасной вход БЕЗ подписи,
+ * см. заголовок `../http/routes-webhook.ts`) заранее заводил заказ с чужим
+ * номером и суммой в один тенге; когда настоящий подписанный заказ на сто
+ * пятьдесят тысяч тенге приходил с тем же номером, `createPaymentFor`
+ * находил уже существующую запись и отдавал её как есть — покупатель видел
+ * страницу оплаты на один тенге вместо ста пятидесяти тысяч. Пространства
+ * номеров теперь разведены (`form:` — приставка запасного входа), но эта
+ * проверка — вторая, самостоятельная линия обороны на случай ЛЮБОГО другого
+ * пути к тому же `tildaOrderId` с другими деньгами, а не только уже
+ * закрытой дыры: два по-настоящему подписанных запроса с одним и тем же
+ * номером заказа, но разными суммами, для покупателя тоже не должны молча
+ * привести к оплате по устаревшей цене.
+ */
+export class OrderConflictError extends Error {
+  readonly tildaOrderId: string;
+
+  constructor(tildaOrderId: string) {
+    super(
+      `заказ с номером Tilda «${tildaOrderId}» уже существует с другими условиями ` +
+        '(сумма, валюта или признак тестового режима не совпадают)',
+    );
+    this.name = 'OrderConflictError';
+    this.tildaOrderId = tildaOrderId;
+  }
+}
+
 /** Непустая строка или `null` — Tilda присылает отсутствующие поля пустой строкой, а не отсутствием ключа. */
 function непустаяСтрокаИлиNull(значение: string | undefined): string | null {
   return значение ? значение : null;
@@ -195,7 +225,7 @@ export function проверитьЗаказ(
   body: Record<string, string>,
   secret: string,
 ): void {
-  if (!verifySignature(body, order.signature, secret)) {
+  if (!verifySignature(body, order.signature, secret, 'order')) {
     throw new SignatureError();
   }
 
@@ -304,6 +334,31 @@ export async function createPaymentFor(order: TildaOrder, deps: CreatePaymentFor
 
   const существующий = deps.store.findByTildaOrderId(order.orderId);
   if (существующий) {
+    // Найденная запись возвращается «как есть» только если она заведена
+    // ровно ЭТИМИ же условиями — иначе это либо повторный вызов (в норме
+    // сумма/валюта/режим совпадают всегда), либо чужой заказ, случайно или
+    // намеренно занявший тот же номер (см. `OrderConflictError`). Сверяем с
+    // ПОДПИСАННЫМ/только что разобранным `order`, а не наоборот — источник
+    // истины сейчас в руках у вызывающего, а не в уже сохранённой записи.
+    if (
+      существующий.amountKzt !== order.amountKzt ||
+      существующий.currency !== order.currency ||
+      существующий.testMode !== order.testMode
+    ) {
+      deps.log.error(
+        'Найден заказ с тем же номером Tilda, но с другими условиями — возможна подмена суммы. Отказ.',
+        {
+          tildaOrderId: order.orderId,
+          суммаСохранённая: существующий.amountKzt,
+          суммаЗапроса: order.amountKzt,
+          валютаСохранённая: существующий.currency,
+          валютаЗапроса: order.currency,
+          тестСохранённый: существующий.testMode,
+          тестЗапроса: order.testMode,
+        },
+      );
+      throw new OrderConflictError(order.orderId);
+    }
     return существующий;
   }
 
@@ -328,6 +383,11 @@ export async function createPaymentFor(order: TildaOrder, deps: CreatePaymentFor
     // должен быть возможен.
     token: randomBytes(16).toString('hex'),
     amountKzt: quote.amountKzt,
+    // Валюта заказа — сохраняется отдельным столбцом ровно для сверки выше
+    // (см. `OrderConflictError`), а не потому что мы когда-то считаем в
+    // чём-то кроме тенге: `order.currency` на этом месте уже проверена
+    // (`проверитьЗаказ`/хардкод вебхука формы) и всегда равна `'KZT'`.
+    currency: order.currency,
     amountToken: quote.amountToken,
     tokenSymbol: quote.token,
     cluster: quote.cluster,

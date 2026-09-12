@@ -11,6 +11,7 @@ import {
   AmountError,
   createPaymentFor,
   CurrencyError,
+  OrderConflictError,
   parseTildaOrder,
   SignatureError,
   проверитьЗаказ,
@@ -123,6 +124,14 @@ export async function обработатьTildaPay(
       log: deps.log,
     });
   } catch (е) {
+    if (е instanceof OrderConflictError) {
+      // Уже залогировано внутри createPaymentFor с подробностями расхождения
+      // (сумма/валюта/режим) — покупателю сумма и валюта чужой записи не
+      // предназначены, поэтому ответ намеренно без деталей.
+      res.writeHead(409, { 'content-type': 'text/plain; charset=utf-8' });
+      res.end('Не удалось обработать заказ: конфликт с уже существующей записью. Обратитесь в магазин.');
+      return;
+    }
     // Сбой курса, сети или RPC — не денежное решение и не вина покупателя:
     // продать по неизвестному курсу хуже отказа (см. createPaymentFor).
     deps.log.error('Не удалось подготовить платёж для заказа Tilda', {

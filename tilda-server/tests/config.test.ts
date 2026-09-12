@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { loadConfig } from '../src/config.js';
 
 const полные = {
@@ -155,6 +157,114 @@ describe('loadConfig', () => {
       expect(() => loadConfig({ ...полные, trustedProxyAddresses: ['127.0.0.1', ''] })).toThrow(
         /trustedProxyAddresses/,
       );
+    });
+  });
+
+  describe('orderSecret !== notifySecret (правка финального ревью)', () => {
+    it('отвергает совпадающие секреты', () => {
+      expect(() =>
+        loadConfig({ ...полные, orderSecret: 'один-и-тот-же-секрет', notifySecret: 'один-и-тот-же-секрет' }),
+      ).toThrow(/orderSecret.*notifySecret|notifySecret.*orderSecret/);
+    });
+
+    it('разные секреты по-прежнему проходят', () => {
+      expect(() => loadConfig(полные)).not.toThrow();
+    });
+  });
+
+  describe('enableFormWebhook (правка финального ревью — запасной вход выключен по умолчанию)', () => {
+    it('по умолчанию выключен', () => {
+      const c = loadConfig(полные);
+      expect(c.enableFormWebhook).toBe(false);
+    });
+
+    it('можно включить явно', () => {
+      const c = loadConfig({ ...полные, enableFormWebhook: true });
+      expect(c.enableFormWebhook).toBe(true);
+    });
+
+    it('отвергает не-булево значение', () => {
+      expect(() => loadConfig({ ...полные, enableFormWebhook: 'да' })).toThrow(/enableFormWebhook/);
+    });
+  });
+});
+
+describe('config.example.json (правка финального ревью — пример обязан быть работоспособным)', () => {
+  // Находка ревью: пример настроек содержит двенадцать ключей-комментариев
+  // вида `_комментарий*`, а loadConfig отвергал любой неизвестный ключ —
+  // README велит скопировать пример в config.json, значит первый же шаг
+  // развёртывания у нового продавца заканчивался отказом стартовать с
+  // сообщением про опечатку, которой он не делал. Ни один из тестов до этой
+  // правки пример не загружал — живой сервер работал только потому, что его
+  // настройки вычистили руками.
+  //
+  // ЗАПОЛНИТЕ — места, которые продавец обязан заполнить сам (адрес
+  // кошелька, пароли, SMTP и т. п.); здесь подставляем валидные тестовые
+  // значения, чтобы проверить именно структуру примера, а не содержание
+  // плейсхолдеров.
+  const путьКПримеру = fileURLToPath(new URL('../config.example.json', import.meta.url));
+
+  function примерСПодставленнымиЗначениями(): unknown {
+    const сырой = JSON.parse(readFileSync(путьКПримеру, 'utf8')) as Record<string, unknown>;
+    return {
+      ...сырой,
+      recipient: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM',
+      rpcUrl: 'https://api.devnet.solana.com',
+      orderSecret: 'заполненный-секрет-заказа',
+      notifySecret: 'заполненный-секрет-уведомления',
+      tildaNotifyUrl: 'https://pay.example.kz/tilda/notify',
+      publicUrl: 'https://pay.example.kz',
+      adminPassword: 'заполненный-пароль-админа',
+      smtp: {
+        ...(сырой.smtp as Record<string, unknown>),
+        host: 'smtp.example.kz',
+        user: 'noreply@example.kz',
+        pass: 'заполненный-smtp-пароль',
+        from: 'shop@example.kz',
+      },
+      merchantEmail: 'merchant@example.kz',
+      databasePath: '/data/orders.sqlite',
+    };
+  }
+
+  it('загружается без ошибок после подстановки ЗАПОЛНИТЕ', () => {
+    expect(() => loadConfig(примерСПодставленнымиЗначениями())).not.toThrow();
+  });
+
+  it('двенадцать (и более) ключей-комментариев верхнего уровня не мешают загрузке', () => {
+    const сырой = JSON.parse(readFileSync(путьКПримеру, 'utf8')) as Record<string, unknown>;
+    const ключиКомментариев = Object.keys(сырой).filter((к) => к.startsWith('_'));
+    expect(ключиКомментариев.length).toBeGreaterThanOrEqual(10);
+  });
+
+  it('без подстановки (голые ЗАПОЛНИТЕ) отказывает — проверка не просто гасит ключи-комментарии, а видит настоящие проблемы', () => {
+    const сырой = JSON.parse(readFileSync(путьКПримеру, 'utf8')) as unknown;
+    expect(() => loadConfig(сырой)).toThrow();
+  });
+
+  describe('секреты описаны верно (находка 7 — пример расходился с реализацией)', () => {
+    // orderSecret проверяет ВХОДЯЩИЙ заказ, notifySecret подписывает НАШЕ
+    // исходящее уведомление — пример раньше описывал их наоборот. Длина
+    // секретов считается в символах (кодовых точках), а не в байтах UTF-8
+    // (см. src/config.ts, проверитьСекрет) — пример утверждал обратное, и
+    // для orderSecret/notifySecret, и для adminPassword.
+    const сырой = JSON.parse(readFileSync(путьКПримеру, 'utf8')) as Record<string, string>;
+
+    it('комментарий про секреты не путает orderSecret и notifySecret местами', () => {
+      const текст = сырой._комментарий_секреты;
+      // orderSecret должен упоминаться рядом с «ВХОДЯЩЕГО», а не с
+      // «исходящее» — обратный порядок и был находкой ревью.
+      expect(текст).toMatch(/orderSecret.{0,40}ВХОДЯЩЕГО/);
+      expect(текст).toMatch(/notifySecret.{0,40}исходящее/);
+    });
+
+    it('комментарии про секреты и про пароль админа не утверждают счёт длины в байтах UTF-8', () => {
+      // Именно эта формулировка была ошибкой примера (см. src/config.ts,
+      // проверитьСекрет — считает [...строка].length, кодовые точки, а не
+      // байты) — «не байт»/«не в байтах» в тексте ниже (уже исправленная
+      // формулировка) не должно ловиться этой проверкой.
+      expect(сырой._комментарий_секреты.toLowerCase()).not.toMatch(/в байтах/);
+      expect(сырой._комментарий_админ.toLowerCase()).not.toMatch(/в байтах/);
     });
   });
 });

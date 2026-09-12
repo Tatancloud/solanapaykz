@@ -17,12 +17,32 @@ export const ПОЛЯ_ПОДПИСИ = ['order_id', 'amount', 'currency', 'times
 const РАЗДЕЛИТЕЛЬ = '|';
 
 /**
+ * Роль подписи — метка, с которой начинается строка для подписи (см.
+ * `строкаДляПодписи`).
+ *
+ * Правка финального ревью: заказ (`order|...`, покупатель шлёт из браузера,
+ * секрет — `config.orderSecret`) и уведомление об оплате (`notify|...`, наш
+ * сервер шлёт на `config.tildaNotifyUrl`, секрет — `config.notifySecret`)
+ * считались по ОДНОЙ И ТОЙ ЖЕ строке из одних и тех же пяти полей — их
+ * различал только секрет, а равенство секретов ничем не было запрещено
+ * (кроме фразы в README). Пример настроек к тому же путал назначение
+ * секретов местами (см. `config.example.json`) — то есть подталкивал
+ * именно к этой путанице. Если секреты совпадали, подписанный заказ,
+ * который Tilda присылает через браузер покупателя, становился готовым
+ * уведомлением об оплате: тем же полям, с той же подписью, достаточно
+ * дописать `status=paid`. Метка роли делает подписи НЕВЗАИМОЗАМЕНЯЕМЫМИ
+ * независимо от настроек — HMAC с иным первым слагаемым даёт другой
+ * результат, даже если секрет совпал.
+ */
+export type РольПодписи = 'order' | 'notify';
+
+/**
  * Строка для подписи. Секрет в неё не подставляется: он служит ключом HMAC.
  * Варианты Tilda, где секрет склеивается со значениями, уязвимы к удлинению
  * сообщения — HMAC снимает этот вопрос.
  */
-function строкаДляПодписи(fields: Record<string, string>): string {
-  return ПОЛЯ_ПОДПИСИ.map((имя) => {
+function строкаДляПодписи(fields: Record<string, string>, role: РольПодписи): string {
+  const поля = ПОЛЯ_ПОДПИСИ.map((имя) => {
     const значение = fields[имя] ?? '';
 
     // Разделитель внутри значения сделал бы разбор неоднозначным. Поля
@@ -33,17 +53,23 @@ function строкаДляПодписи(fields: Record<string, string>): strin
     }
 
     return значение;
-  }).join(РАЗДЕЛИТЕЛЬ);
+  });
+
+  // Роль — первым элементом, той же строкой, что и остальные поля: не
+  // отдельный параметр HMAC (второй ключ или доп. update() усложнили бы
+  // протокол сильнее, чем требуется), а часть той же подписываемой строки.
+  return [role, ...поля].join(РАЗДЕЛИТЕЛЬ);
 }
 
-export function signFields(fields: Record<string, string>, secret: string): string {
-  return createHmac('sha256', secret).update(строкаДляПодписи(fields), 'utf8').digest('hex');
+export function signFields(fields: Record<string, string>, secret: string, role: РольПодписи): string {
+  return createHmac('sha256', secret).update(строкаДляПодписи(fields, role), 'utf8').digest('hex');
 }
 
 export function verifySignature(
   fields: Record<string, string>,
   signature: string,
   secret: string,
+  role: РольПодписи,
 ): boolean {
   // Типы TypeScript здесь ничего не гарантируют: это разбор тела HTTP-
   // запроса, а поле `signature` там может просто отсутствовать — в функцию
@@ -61,7 +87,7 @@ export function verifySignature(
   let ожидаемая: string;
 
   try {
-    ожидаемая = signFields(fields, secret);
+    ожидаемая = signFields(fields, secret, role);
   } catch {
     // Разделитель внутри поля подписи. Проверка обязана вернуть «не сошлось»,
     // а не уронить обработчик: иначе подделанное поле становится способом

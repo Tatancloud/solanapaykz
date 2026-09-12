@@ -20,6 +20,7 @@ function заказ(изменения: Partial<Order> = {}): Order {
     token: 'a'.repeat(32),
     state: 'уведомлён',
     amountKzt: '15000',
+    currency: 'KZT',
     amountToken: '32.640000',
     tokenSymbol: 'USDC',
     cluster: 'devnet',

@@ -35,6 +35,7 @@ const config: Config = {
   listenPort: 0,
   listenHost: '127.0.0.1',
   trustedProxyAddresses: ['127.0.0.1', '::1', '::ffff:127.0.0.1'],
+  enableFormWebhook: false,
 };
 
 /** Тело заказа Tilda, подписанное тестовым секретом — как в tests/inbound.test.ts. */
@@ -51,7 +52,7 @@ function телоЗаказа(изменения: Record<string, string> = {}): 
     notify_url: config.tildaNotifyUrl,
     ...изменения,
   };
-  return { ...поля, signature: signFields(поля, секрет) };
+  return { ...поля, signature: signFields(поля, секрет, 'order') };
 }
 
 /**
@@ -100,6 +101,7 @@ const образецНовогоЗаказа: NewOrder = {
   tildaOrderId: '10868059:99',
   token: 'a'.repeat(32),
   amountKzt: '15000',
+  currency: 'KZT',
   amountToken: '32.640000',
   tokenSymbol: 'USDC',
   cluster: 'devnet',
@@ -193,7 +195,7 @@ describe('POST /tilda/pay', () => {
       timestamp: '1789200000',
       test_mode: '0',
     };
-    const тело = { ...поля, signature: signFields(поля, секрет) };
+    const тело = { ...поля, signature: signFields(поля, секрет, 'order') };
     const ответ = await запрос('POST', '/tilda/pay', тело);
     expect(ответ.status).toBe(400);
     expect(store.findByTildaOrderId('10868059:43')).toBeNull();
@@ -335,6 +337,111 @@ describe('GET /api/status/:token', () => {
     const тело = JSON.parse(ответ.body);
     expect(тело.state).toBe('оплачен');
     expect(тело.secondsLeft).toBe(0);
+  });
+});
+
+describe('GET /api/status/:token — кеш ответа опроса (правка финального ревью)', () => {
+  // Опрос из вкладки покупателя идёт раз в 5 секунд без ограничений и без
+  // кеша вызывал полную проверку платежа НА КАЖДЫЙ запрос — находка ревью.
+  // Здесь считаем вызовы checkPayment, чтобы увидеть кеш по факту, а не
+  // только по коду ответа.
+  let каталог2: string;
+  let store2: Store;
+  let server2: Server;
+  let базовыйUrl2: string;
+  let вызововПроверки: number;
+
+  beforeEach(async () => {
+    каталог2 = mkdtempSync(join(tmpdir(), 'spkz-http-poll-cache-'));
+    store2 = openDatabase(join(каталог2, 'orders.sqlite'));
+    вызововПроверки = 0;
+
+    const считающийКлиент: PaymentClient & PaymentCheckerClient = {
+      ...фейковыйКлиент(),
+      async checkPayment(): Promise<PaymentStatus> {
+        вызововПроверки += 1;
+        return { status: 'pending' };
+      },
+    };
+
+    const deps: ЗависимостиСервера = {
+      config,
+      store: store2,
+      client: считающийКлиент,
+      log: createLog(() => {}),
+      тест: { кешОпросаMs: 60_000 },
+    };
+
+    server2 = createServer(deps);
+    await new Promise<void>((resolve) => server2.listen(0, '127.0.0.1', resolve));
+    const адрес = server2.address() as AddressInfo;
+    базовыйUrl2 = `http://127.0.0.1:${адрес.port}`;
+  });
+
+  afterEach(async () => {
+    await new Promise<void>((resolve) => server2.close(() => resolve()));
+    rmSync(каталог2, { recursive: true, force: true });
+  });
+
+  it('повторный опрос того же токена в пределах кеша не запускает вторую проверку платежа', async () => {
+    const заказ = store2.createOrder({ ...образецНовогоЗаказа, token: '90'.repeat(16), tildaOrderId: '10868059:111' });
+
+    const первый = await fetch(`${базовыйUrl2}/api/status/${заказ.token}`);
+    expect(первый.status).toBe(200);
+    expect(вызововПроверки).toBe(1);
+
+    const второй = await fetch(`${базовыйUrl2}/api/status/${заказ.token}`);
+    expect(второй.status).toBe(200);
+    // Тот же кешированный ответ — checkPayment не вызывался снова.
+    expect(вызововПроверки).toBe(1);
+    expect(await первый.text()).toBe(await второй.text());
+  });
+
+  it('опрос ДРУГОГО токена не берётся из чужого кеша', async () => {
+    const заказА = store2.createOrder({ ...образецНовогоЗаказа, token: '91'.repeat(16), tildaOrderId: '10868059:112' });
+    const заказБ = store2.createOrder({ ...образецНовогоЗаказа, token: '92'.repeat(16), tildaOrderId: '10868059:113' });
+
+    await fetch(`${базовыйUrl2}/api/status/${заказА.token}`);
+    expect(вызововПроверки).toBe(1);
+
+    await fetch(`${базовыйUrl2}/api/status/${заказБ.token}`);
+    expect(вызововПроверки).toBe(2);
+  });
+
+  it('после истечения кеша следующий опрос снова проверяет платёж', async () => {
+    const каталог3 = mkdtempSync(join(tmpdir(), 'spkz-http-poll-cache-ttl-'));
+    const store3 = openDatabase(join(каталог3, 'orders.sqlite'));
+    let вызовов3 = 0;
+    const считающийКлиент3: PaymentClient & PaymentCheckerClient = {
+      ...фейковыйКлиент(),
+      async checkPayment(): Promise<PaymentStatus> {
+        вызовов3 += 1;
+        return { status: 'pending' };
+      },
+    };
+    const server3 = createServer({
+      config,
+      store: store3,
+      client: считающийКлиент3,
+      log: createLog(() => {}),
+      тест: { кешОпросаMs: 1 }, // истекает почти сразу
+    });
+    await new Promise<void>((resolve) => server3.listen(0, '127.0.0.1', resolve));
+    const адрес3 = server3.address() as AddressInfo;
+    const базовыйUrl3 = `http://127.0.0.1:${адрес3.port}`;
+
+    try {
+      const заказ = store3.createOrder({ ...образецНовогоЗаказа, token: '93'.repeat(16), tildaOrderId: '10868059:114' });
+      await fetch(`${базовыйUrl3}/api/status/${заказ.token}`);
+      expect(вызовов3).toBe(1);
+
+      await new Promise((r) => setTimeout(r, 20)); // дождаться истечения кеша (1 мс)
+      await fetch(`${базовыйUrl3}/api/status/${заказ.token}`);
+      expect(вызовов3).toBe(2);
+    } finally {
+      await new Promise<void>((resolve) => server3.close(() => resolve()));
+      rmSync(каталог3, { recursive: true, force: true });
+    }
   });
 });
 

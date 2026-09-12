@@ -103,7 +103,8 @@
         'уведомлён': 'paid',
         'не сошлось': 'mismatch',
         'поздний': 'late',
-        'просрочен': 'expired'
+        'просрочен': 'expired',
+        'ошибка настроек': 'config-error'
     };
 
     function show(state, message) {
