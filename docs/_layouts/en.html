@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="{{ page.lang | default: site.lang }}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% if page.title %}{{ page.title }} — {% endif %}{{ site.title }}</title>
+<meta name="description" content="{{ page.description | default: site.description }}">
+<link rel="stylesheet" href="{{ '/assets/style.css' | relative_url }}">
+</head>
+<body>
+<header>
+  <a class="logo" href="{{ '/en/' | relative_url }}">SolanaPay-KZ</a>
+  <nav>
+    <a href="{{ '/en/woocommerce' | relative_url }}">WooCommerce</a>
+    <a href="{{ '/en/tilda' | relative_url }}">Tilda</a>
+    <a href="{{ '/en/sdk' | relative_url }}">Library</a>
+    <a href="{{ '/en/security' | relative_url }}">Security</a>
+    <a class="lang" href="{{ page.alt | default: '/' | relative_url }}">{{ page.altlabel | default: 'Русский' }}</a>
+  </nav>
+</header>
+<main>
+{{ content }}
+</main>
+<footer>
+  <p>Open source under the MIT licence.
+     <a href="https://github.com/Tatancloud/solanapaykz">GitHub</a></p>
+  <p class="quiet">Funds move straight from the buyer's wallet to the merchant's wallet.
+     Neither this service nor its authors can touch your money, and private keys are never requested.</p>
+</footer>
+</body>
+</html>

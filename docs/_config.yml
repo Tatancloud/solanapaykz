@@ -1,0 +1,12 @@
+title: SolanaPay-KZ
+description: Приём оплаты в USDC и SOL на Solana с пересчётом из тенге
+lang: ru
+url: https://tatancloud.github.io
+baseurl: /solanapaykz
+markdown: kramdown
+kramdown:
+  input: GFM
+  syntax_highlighter: rouge
+# Внутренние материалы проекта лежат в process/ и на сайт не попадают.
+exclude:
+  - README.md

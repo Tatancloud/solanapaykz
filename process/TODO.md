@@ -13,14 +13,14 @@
 - [x] Клон репозитория `Tatancloud/solanapaykz`
 - [x] Git identity: `Tatancloud` / `ruslan@satybaldin.kz`
 - [x] Remote переключён на SSH (HTTPS не проходил аутентификацию)
-- [x] ТЗ сохранено: `docs/TZ.pdf` и `docs/TZ.md`
+- [x] ТЗ сохранено: `process/TZ.pdf` и `process/TZ.md`
 - [x] Проверены предпосылки ТЗ: источник курса, версии пакетов, волатильность
 
 ## Этап 1. Core SDK — `[x]` (публикация отложена)
 
 Библиотека на TypeScript. Основа для всех остальных этапов.
 
-- [x] Спецификация и утверждение (`docs/superpowers/specs/`)
+- [x] Спецификация и утверждение (`process/superpowers/specs/`)
 - [x] Каркас пакета: TypeScript, сборка, тесты
 - [x] Модуль курса: Binance `USDTKZT` основной, синтетика резервная
 - [x] Кеш и срок жизни котировки (15 минут)
@@ -36,7 +36,7 @@
       проверен, имя `@solanapaykz/core` свободно, токен и доступ есть.
 
 **Зависимости:** `@solana/pay@1.0.26` + `@solana/kit@6.10` (версии закреплены,
-см. `docs/TZ.md`, п. 10.2).
+см. `process/TZ.md`, п. 10.2).
 
 ## Этап 2. Плагин WooCommerce — `[x]`
 

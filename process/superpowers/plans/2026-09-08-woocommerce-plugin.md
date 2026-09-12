@@ -16,7 +16,7 @@
 **Стек:** PHP 8.1+, WordPress 7.0+, WooCommerce 9.0+, расширения bcmath и
 curl, PHPUnit 11 для тестов.
 
-**Спека:** `docs/superpowers/specs/2026-09-08-woocommerce-plugin-design.md`
+**Спека:** `process/superpowers/specs/2026-09-08-woocommerce-plugin-design.md`
 
 ## Глобальные ограничения
 

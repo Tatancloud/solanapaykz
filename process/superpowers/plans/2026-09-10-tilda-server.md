@@ -18,8 +18,8 @@ QR, проверяет платёж в блокчейне и шлёт Tilda по
 встроенный `node:http`, `nodemailer` для почты, Docker Compose, nginx с
 сертификатом Let's Encrypt.
 
-**Спека:** `docs/superpowers/specs/2026-09-10-tilda-server-design.md`
-**Протокол Tilda:** `docs/tilda-protokol.md` — собран из личного кабинета,
+**Спека:** `process/superpowers/specs/2026-09-10-tilda-server-design.md`
+**Протокол Tilda:** `process/tilda-protokol.md` — собран из личного кабинета,
 в публичной документации его нет. Сверяться по нему.
 
 ## Глобальные ограничения
