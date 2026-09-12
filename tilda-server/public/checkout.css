@@ -52,7 +52,8 @@
 
 .solanapaykz__hint,
 .solanapaykz__timer,
-.solanapaykz__link {
+.solanapaykz__link,
+.solanapaykz__markup {
     color: #555;
     font-size: 0.9em;
     margin: 0.5em 0;

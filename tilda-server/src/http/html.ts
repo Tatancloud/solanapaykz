@@ -9,6 +9,7 @@
  * `экранироватьHtml` — включая значения внутри атрибутов (`href`), а не
  * только текст между тегами.
  */
+import type { Quote } from '@solanapaykz/core';
 import type { Order, OrderState } from '../db.js';
 
 /** Экранирует текст для безопасной вставки в HTML между тегами и в атрибуты. */
@@ -102,6 +103,39 @@ function разобратьТоварыДляПоказа(productsJson: string |
   });
 }
 
+/**
+ * Сумма в тенге, по которой ДЕЙСТВИТЕЛЬНО считалась сумма в токене
+ * (`Quote.amountKztCharged` — с уже применённой наценкой продавца), а не
+ * исходная сумма заказа (`Order.amountKzt`, без наценки).
+ *
+ * Правка финального ревью (задача 8): страница показывала сумму в токене,
+ * посчитанную С наценкой, рядом с суммой в тенге и курсом БЕЗ наценки —
+ * при ненулевой наценке эти числа не сходятся между собой (по названному
+ * курсу и названной сумме в тенге получилась бы другая сумма в токене), и
+ * покупатель списывает больше, чем ему назвали. Сейчас наценка везде
+ * нулевая (`amountKztCharged === amountKzt`), поэтому разница спит — но
+ * спящая дыра всё равно дыра.
+ *
+ * `quoteJson` — тот же самый объект `Quote`, что использовался при
+ * создании заказа (задача 5), сохранённый как есть; парсим по месту, а
+ * не заводим отдельный столбец под уже сохранённое значение. Не
+ * ожидается сбоя (значение пишет сам сервер, не Tilda и не покупатель),
+ * но при любой странности откатываемся к `order.amountKzt` — так же,
+ * как этот файл уже поступает с составом корзины (`продажаТоваровHtml`
+ * выше): показ страницы не должен падать из-за неожиданной формы
+ * сохранённых данных.
+ */
+function суммаСНаценкой(order: Order): string {
+  try {
+    const quote = JSON.parse(order.quoteJson) as Partial<Quote>;
+    return typeof quote.amountKztCharged === 'string' && quote.amountKztCharged.length > 0
+      ? quote.amountKztCharged
+      : order.amountKzt;
+  } catch {
+    return order.amountKzt;
+  }
+}
+
 function составКорзиныHtml(productsJson: string | null): string {
   const товары = разобратьТоварыДляПоказа(productsJson);
   if (товары.length === 0) return '';
@@ -144,6 +178,16 @@ export function страницаОплаты(order: Order, секундОста�
     : '';
   const товары = составКорзиныHtml(order.productsJson);
 
+  // Сумма, действительно использованная для расчёта суммы в токене (см.
+  // заголовок суммаСНаценкой) — показываем ЕЁ рядом с курсом, а не
+  // исходную сумму заказа: иначе при ненулевой наценке эти два числа не
+  // сходятся между собой (задача 8, правка финального ревью).
+  const суммаКзтДляРасчёта = суммаСНаценкой(order);
+  const естьНаценка = суммаКзтДляРасчёта !== order.amountKzt;
+  const строкаНаценки = естьНаценка
+    ? `<p class="solanapaykz__markup">Включает наценку магазина. Без наценки: ${экранироватьHtml(order.amountKzt)} ₸.</p>`
+    : '';
+
   // Данные для checkout.js идут через data-атрибуты контейнера, а не
   // встроенным <script>: страница отдаётся с `Content-Security-Policy:
   // default-src 'self'` (без 'unsafe-inline'), и встроенный скрипт этой
@@ -170,8 +214,9 @@ export function страницаОплаты(order: Order, секундОста�
   ${товары}
   <p class="solanapaykz__amount">
     К оплате: <strong>${экранироватьHtml(order.amountToken)} ${экранироватьHtml(order.tokenSymbol)}</strong>
-    <span class="solanapaykz__kzt">(${экранироватьHtml(order.amountKzt)} ₸ по курсу ${экранироватьHtml(order.rate)})</span>
+    <span class="solanapaykz__kzt">(${экранироватьHtml(суммаКзтДляРасчёта)} ₸ по курсу ${экранироватьHtml(order.rate)})</span>
   </p>
+  ${строкаНаценки}
   <div class="solanapaykz__qr" id="solanapaykz-qr">${qrSvg}</div>
   <p class="solanapaykz__hint">Отсканируйте код кошельком Solana. Деньги придут продавцу напрямую.</p>
   <p class="solanapaykz__timer" id="solanapaykz-timer" aria-live="polite"></p>

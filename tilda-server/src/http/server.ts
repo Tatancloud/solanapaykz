@@ -70,9 +70,29 @@ const КАТАЛОГ_PUBLIC = join(КАТАЛОГ_ЭТОГО_ФАЙЛА, '..', '
 const ПУТЬ_СТРАНИЦЫ_ОПЛАТЫ = /^\/pay\/([0-9a-f]{32})$/;
 const ПУТЬ_СТАТУСА = /^\/api\/status\/([0-9a-f]{32})$/;
 
+/**
+ * Правка финального ревью (задача 7). Проверено ревью в настоящем
+ * браузере: и страница оплаты, и список заказов встраивались рамкой
+ * (`<iframe>`) со стороннего сайта — подмена вида поверх страницы
+ * оплаты (clickjacking) была рабочим приёмом обмана. `frame-ancestors
+ * 'none'` — актуальная директива CSP для запрета встраивания;
+ * `X-Frame-Options: DENY` — тот же запрет для браузеров, которые
+ * `frame-ancestors` ещё не понимают (устаревших, но встречающихся).
+ *
+ * `Strict-Transport-Security` добавлен тем же ходом: ни nginx (см.
+ * `nginx.example.conf`), ни сервер его не отдавали, хотя приём платежа
+ * — ровно тот случай, где случайное соединение по http (открытая ссылка
+ * без явного https://, старая закладка) не должно быть возможным
+ * вовсе. `max-age` — два года (обычная практика для HSTS), с
+ * `includeSubDomains`: у этого сервера нет поддоменов, но при их
+ * появлении в будущем беззащитный по умолчанию поддомен не должен стать
+ * тихой дырой.
+ */
 const ЗАГОЛОВКИ_БЕЗОПАСНОСТИ = {
-  'content-security-policy': "default-src 'self'",
+  'content-security-policy': "default-src 'self'; frame-ancestors 'none'",
   'x-content-type-options': 'nosniff',
+  'x-frame-options': 'DENY',
+  'strict-transport-security': 'max-age=63072000; includeSubDomains',
 } as const;
 
 function отдатьСтатическийФайл(res: http.ServerResponse, имяФайла: string, contentType: string): void {
@@ -187,7 +207,7 @@ async function обработатьЗапрос(
   if (метод === 'GET') {
     const совпадениеОплаты = ПУТЬ_СТРАНИЦЫ_ОПЛАТЫ.exec(url.pathname);
     if (совпадениеОплаты) {
-      обработатьСтраницуОплаты(совпадениеОплаты[1]!, res, deps);
+      await обработатьСтраницуОплаты(совпадениеОплаты[1]!, res, deps);
       return;
     }
 

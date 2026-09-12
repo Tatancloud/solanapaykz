@@ -39,6 +39,24 @@ export interface Config {
   notifySecret: string;
   tildaNotifyUrl: string;
   publicUrl: string;
+  /**
+   * Куда вернуть покупателя после завершения оплаты (страница «спасибо»
+   * магазина на Tilda) — правка финального ревью (задача 4). Tilda
+   * присылает `success_url`/`failure_url` в самом запросе заказа, но эти
+   * поля вне подписи (см. заголовок `tilda/inbound.ts`) — переходить по
+   * ним как есть значит открыть переадресацию на любой чужой адрес,
+   * который подставит покупатель в своём браузере. Берём адрес из
+   * настроек продавца, а не из запроса — он один и тот же для всех
+   * заказов этого магазина, что и так верно для формы Tilda (её поля
+   * «Страница успеха»/«Страница отказа» настраиваются один раз на весь
+   * приём платежей, а не отдельно на каждый заказ).
+   *
+   * Необязательно: без него покупатель остаётся на странице итога этого
+   * сервера — тем же поведением, что было до этой правки.
+   */
+  successUrl?: string;
+  /** См. `successUrl` — адрес для заказа, который не оплатили в срок (state «просрочен»). */
+  failureUrl?: string;
   adminPassword: string;
   smtp: SmtpConfig;
   merchantEmail: string;
@@ -147,6 +165,8 @@ const ИЗВЕСТНЫЕ_КЛЮЧИ = new Set<string>([
   'notifySecret',
   'tildaNotifyUrl',
   'publicUrl',
+  'successUrl',
+  'failureUrl',
   'adminPassword',
   'smtp',
   'merchantEmail',
@@ -359,6 +379,32 @@ export function loadConfig(raw: unknown): Config {
     проблемы.push('publicUrl: обязателен, должен начинаться с https://');
   }
 
+  // --- successUrl / failureUrl --- (задача 4, необязательны)
+  //
+  // Сохраняем результат `new URL(...).toString()`, а не сырую строку из
+  // настроек: значение идёт напрямую в HTTP-заголовок `Location`
+  // (`routes-page.ts`), а такой заголовок обязан быть ASCII — не любая
+  // ссылка, которую администратор мог скопировать из адресной строки
+  // браузера (кириллический путь без ручного процентного кодирования),
+  // им является. `URL.toString()` кодирует небезопасные символы сама.
+  let successUrl: string | undefined;
+  if (raw.successUrl !== undefined) {
+    if (проверитьHttpsUrl(raw.successUrl)) {
+      successUrl = new URL(raw.successUrl).toString();
+    } else {
+      проблемы.push('successUrl: если указан, должен начинаться с https://');
+    }
+  }
+
+  let failureUrl: string | undefined;
+  if (raw.failureUrl !== undefined) {
+    if (проверитьHttpsUrl(raw.failureUrl)) {
+      failureUrl = new URL(raw.failureUrl).toString();
+    } else {
+      проблемы.push('failureUrl: если указан, должен начинаться с https://');
+    }
+  }
+
   // --- adminPassword ---
   if (!проверитьСекрет(raw.adminPassword)) {
     проблемы.push(`adminPassword: обязателен, строка не короче ${МИНИМАЛЬНАЯ_ДЛИНА_СЕКРЕТА} символов`);
@@ -470,6 +516,11 @@ export function loadConfig(raw: unknown): Config {
     notifySecret: raw.notifySecret as string,
     tildaNotifyUrl: raw.tildaNotifyUrl as string,
     publicUrl: raw.publicUrl as string,
+    // `exactOptionalPropertyTypes` не даёт присвоить `undefined` явным
+    // значением необязательного поля — спред пустого объекта, когда
+    // настройка не задана (тот же приём, что и в checker.ts).
+    ...(successUrl !== undefined ? { successUrl } : {}),
+    ...(failureUrl !== undefined ? { failureUrl } : {}),
     adminPassword: raw.adminPassword as string,
     smtp: smtp as SmtpConfig,
     merchantEmail: raw.merchantEmail as string,

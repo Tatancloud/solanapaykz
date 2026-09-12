@@ -339,7 +339,7 @@ describe('GET /admin — с валидной сессией', () => {
       свежий,
       { action: 'оплачен', signature: 'подпись-х', note: 'Платёж получен.' },
       {
-        config: { smtp: config.smtp, merchantEmail: config.merchantEmail },
+        config: { smtp: config.smtp, merchantEmail: config.merchantEmail, publicUrl: config.publicUrl },
         store,
         log: createLog(() => {}),
         тест: { отправка: async () => { throw new Error('SMTP недоступен'); } },
@@ -367,6 +367,13 @@ describe('GET /admin — с валидной сессией', () => {
     store.createOrder(образец);
     const ответ = await запросСВходом('GET', '/admin');
     expect(ответ.headers.get('cache-control')).toBe('no-store');
+  });
+
+  it('запрещает встраивание в чужой сайт (правка финального ревью, задача 7 — список заказов встраивался рамкой в браузере)', async () => {
+    store.createOrder(образец);
+    const ответ = await запросСВходом('GET', '/admin');
+    expect(ответ.headers.get('x-frame-options')).toBe('DENY');
+    expect(ответ.headers.get('content-security-policy')).toContain("frame-ancestors 'none'");
   });
 
   it('подключает /assets/admin.js — вторая линия обороны от bfcache сверх Cache-Control (см. заголовок файла)', async () => {

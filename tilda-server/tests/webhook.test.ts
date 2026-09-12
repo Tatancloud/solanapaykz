@@ -10,6 +10,7 @@ import type { Config } from '../src/config.js';
 import { openDatabase, type Store } from '../src/db.js';
 import { createLog } from '../src/log.js';
 import { createServer, type ЗависимостиСервера } from '../src/http/server.js';
+import { signFields } from '../src/signature.js';
 import type { PaymentClient } from '../src/tilda/inbound.js';
 
 const config: Config = {
@@ -109,6 +110,23 @@ async function вебхук(поля: Record<string, string>): Promise<{ status:
     body: new URLSearchParams(поля).toString(),
   });
   return { status: ответ.status, body: await ответ.text() };
+}
+
+/**
+ * POST на основной, подписанный вход (`/tilda/pay`) — тем же секретом
+ * заказа, что и у `config` этого файла. Нужен для теста на столкновение
+ * номеров подписанного входа и вебхука формы: только `вебхук()` выше не
+ * даёт создать заказ ОСНОВНЫМ путём с тем же номером, чтобы сравнить.
+ */
+async function оплата(поля: Record<string, string>): Promise<{ status: number; location: string | null }> {
+  const тело = { ...поля, signature: signFields(поля, config.orderSecret, 'order') };
+  const ответ = await fetch(`${базовыйUrl}/tilda/pay`, {
+    method: 'POST',
+    redirect: 'manual',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams(тело).toString(),
+  });
+  return { status: ответ.status, location: ответ.headers.get('location') };
 }
 
 /** Тело реальной (не проверочной) заявки формы Tilda — поля с заглавной буквы, как в задании. */
@@ -288,6 +306,35 @@ describe('POST /tilda/webhook — конфликт номеров (правка 
 
     // Исходная сумма не должна была измениться под влиянием второй заявки.
     expect(store.findByTildaOrderId('form:к:1')?.amountKzt).toBe('15000');
+  });
+
+  it('номер вебхука формы и номер подписанного входа с одинаковыми цифрами не сталкиваются (тест финального ревью, задача 10)', async () => {
+    // Ровно тот сценарий, из-за которого приставка `form:` вообще
+    // появилась (см. заголовок routes-webhook.ts и OrderConflictError в
+    // tilda/inbound.ts): посторонний заранее заводит НЕПОДПИСАННУЮ заявку
+    // вебхука формы на один тенге с номером БУДУЩЕГО настоящего заказа —
+    // без разведённых пространств номеров настоящий, подписанный заказ с
+    // тем же order_id нашёл бы уже существующую запись на один тенге и
+    // либо отдал бы её как есть, либо (после защиты OrderConflictError)
+    // отказал бы самому настоящему покупателю. С приставкой это два
+    // независимых заказа с разными номерами в базе.
+    const дешёваяЗаявка = await вебхук(телоЗаявки({ tranid: '482910', Payment: '1' }));
+    expect(дешёваяЗаявка.status).toBe(200);
+
+    const настоящийЗаказ = await оплата({
+      order_id: '482910',
+      amount: '150000',
+      currency: 'KZT',
+      timestamp: '1789200000',
+      test_mode: '0',
+    });
+    expect(настоящийЗаказ.status).toBe(303);
+    expect(настоящийЗаказ.location).toMatch(/^\/pay\/[0-9a-f]{32}$/);
+
+    // Обе записи существуют независимо, под разными номерами, ни одна не
+    // подменила и не заблокировала другую.
+    expect(store.findByTildaOrderId('form:482910')?.amountKzt).toBe('1');
+    expect(store.findByTildaOrderId('482910')?.amountKzt).toBe('150000');
   });
 });
 

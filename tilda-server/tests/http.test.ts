@@ -207,6 +207,22 @@ describe('POST /tilda/pay', () => {
     expect(второй.headers.get('location')).toBe(первый.headers.get('location'));
   });
 
+  it('заказ с тем же номером, но другой суммой отвечает 409 и не подменяет сохранённую запись (тест финального ревью, задача 10)', async () => {
+    // Ровно эта дыра была критической находкой первого круга ревью и
+    // прошла тогда весь набор тестов зелёной — сама защита
+    // (OrderConflictError, tilda/inbound.ts) была покрыта юнит-тестом
+    // createPaymentFor напрямую (tests/inbound.test.ts), но не тем путём,
+    // которым это реально приходит с фронта: через POST /tilda/pay целиком.
+    const первый = await запрос('POST', '/tilda/pay', телоЗаказа());
+    expect(первый.status).toBe(303);
+
+    const сДругойСуммой = await запрос('POST', '/tilda/pay', телоЗаказа({ amount: '1' }));
+    expect(сДругойСуммой.status).toBe(409);
+
+    // Сохранённая запись — по исходному (первому) запросу, а не подменена.
+    expect(store.findByTildaOrderId('10868059:42')?.amountKzt).toBe('15000');
+  });
+
   it('слишком большое тело отвечает 413, а не рвёт соединение', async () => {
     // Ревью проверило это сырым запросом на 10 МБ и получило разрыв
     // связи: req.destroy() рвал TCP-соединение раньше, чем успевал уйти
@@ -267,6 +283,33 @@ describe('GET /pay/:token', () => {
     expect(ответ.body).toContain('32.640000');
   });
 
+  it('нулевая наценка — числа сходятся, строки про наценку нет (правка финального ревью, задача 8)', async () => {
+    // quoteJson образца — '{}': amountKztCharged в нём нет, суммаСНаценкой
+    // откатывается к order.amountKzt, то есть наценки нет.
+    const заказ = store.createOrder({ ...образецНовогоЗаказа, token: 'd'.repeat(32), tildaOrderId: '10868059:115' });
+    const ответ = await запрос('GET', `/pay/${заказ.token}`);
+    expect(ответ.body).toContain(`${заказ.amountKzt} ₸`);
+    expect(ответ.body).not.toContain('Включает наценку');
+  });
+
+  it('ненулевая наценка — показывает сумму, по которой действительно считали, и отдельной строкой саму наценку', async () => {
+    // amountToken (32.640000) в образце посчитан из amountKztCharged, а не
+    // из amountKzt — до этой правки страница показывала бы amountKzt рядом
+    // с курсом, и числа не сходились бы между собой.
+    const заказ = store.createOrder({
+      ...образецНовогоЗаказа,
+      token: 'c'.repeat(32),
+      tildaOrderId: '10868059:116',
+      amountKzt: '15000',
+      quoteJson: JSON.stringify({ amountKzt: '15000', amountKztCharged: '15750' }), // наценка 5%
+    });
+    const ответ = await запрос('GET', `/pay/${заказ.token}`);
+    expect(ответ.body).toContain('(15750 ₸ по курсу'); // сумма расчёта, а не исходная сумма заказа
+    expect(ответ.body).not.toContain('(15000 ₸ по курсу');
+    expect(ответ.body).toContain('Включает наценку магазина');
+    expect(ответ.body).toContain('Без наценки: 15000 ₸');
+  });
+
   it('оплаченному заказу QR не показывает — это приглашение заплатить второй раз', async () => {
     const заказ = store.createOrder({ ...образецНовогоЗаказа, token: 'f'.repeat(32), tildaOrderId: '10868059:103' });
     store.updateState(заказ.id, 'оплачен', { txSignature: 'подпись-транзакции' });
@@ -287,8 +330,20 @@ describe('GET /pay/:token', () => {
   it('отдаётся с CSP default-src \'self\' и X-Content-Type-Options: nosniff', async () => {
     const заказ = store.createOrder({ ...образецНовогоЗаказа, token: '2'.repeat(32), tildaOrderId: '10868059:105' });
     const ответ = await запрос('GET', `/pay/${заказ.token}`);
-    expect(ответ.headers.get('content-security-policy')).toBe("default-src 'self'");
+    expect(ответ.headers.get('content-security-policy')).toBe("default-src 'self'; frame-ancestors 'none'");
     expect(ответ.headers.get('x-content-type-options')).toBe('nosniff');
+  });
+
+  it('X-Frame-Options: DENY и Strict-Transport-Security на странице оплаты (правка финального ревью, задача 7)', async () => {
+    // Проверено ревью в настоящем браузере: и страница оплаты, и список
+    // заказов встраивались рамкой со стороннего сайта — подмена вида
+    // поверх страницы оплаты была рабочим приёмом обмана (clickjacking).
+    // Заголовки общие для всех маршрутов (см. server.ts), поэтому тест
+    // не привязан к конкретному пути.
+    const заказ = store.createOrder({ ...образецНовогоЗаказа, token: '3'.repeat(32), tildaOrderId: '10868059:114' });
+    const ответ = await запрос('GET', `/pay/${заказ.token}`);
+    expect(ответ.headers.get('x-frame-options')).toBe('DENY');
+    expect(ответ.headers.get('strict-transport-security')).toBe('max-age=63072000; includeSubDomains');
   });
 
   it('не содержит встроенного <script>: под CSP default-src \'self\' без unsafe-inline браузер его не исполнит', async () => {
@@ -304,6 +359,99 @@ describe('GET /pay/:token', () => {
     expect(ответ.body).toContain('<script src="/assets/checkout.js"></script>');
     expect(ответ.body).toContain('data-status-url="/api/status/');
     expect(ответ.body).toMatch(/data-seconds-left="\d+"/);
+  });
+});
+
+describe('GET /pay/:token — возврат на страницу магазина (задача 4 финального ревью)', () => {
+  const конфигСВозвратом: Config = {
+    ...config,
+    successUrl: 'https://shop.example.kz/thank-you',
+    failureUrl: 'https://shop.example.kz/sorry',
+  };
+
+  /** Отдельный сервер с настроенными successUrl/failureUrl — по умолчанию (в общем `config` этого файла) их нет. */
+  async function серверСВозвратом(): Promise<{ базовыйUrl: string; закрыть: () => Promise<void> }> {
+    const deps: ЗависимостиСервера = {
+      config: конфигСВозвратом,
+      store,
+      client: фейковыйКлиент(),
+      log: createLog(() => {}),
+    };
+    const сервер = createServer(deps);
+    await new Promise<void>((resolve) => сервер.listen(0, '127.0.0.1', resolve));
+    const адрес = сервер.address() as AddressInfo;
+    return {
+      базовыйUrl: `http://127.0.0.1:${адрес.port}`,
+      закрыть: () => new Promise<void>((resolve) => сервер.close(() => resolve())),
+    };
+  }
+
+  it('оплаченный заказ уводит на config.successUrl, а не на страницу итога', async () => {
+    const заказ = store.createOrder({ ...образецНовогоЗаказа, token: '4'.repeat(32), tildaOrderId: '10868059:110' });
+    store.updateState(заказ.id, 'оплачен', { txSignature: 'подпись' });
+    const { базовыйUrl, закрыть } = await серверСВозвратом();
+    try {
+      const ответ = await fetch(`${базовыйUrl}/pay/${заказ.token}`, { redirect: 'manual' });
+      expect(ответ.status).toBe(302);
+      expect(ответ.headers.get('location')).toBe('https://shop.example.kz/thank-you');
+    } finally {
+      await закрыть();
+    }
+  });
+
+  it('уведомлённый заказ тоже уводит на config.successUrl', async () => {
+    const заказ = store.createOrder({ ...образецНовогоЗаказа, token: '5'.repeat(32), tildaOrderId: '10868059:111' });
+    store.updateState(заказ.id, 'оплачен', { txSignature: 'подпись' });
+    store.markNotified(заказ.id, true, 1);
+    const { базовыйUrl, закрыть } = await серверСВозвратом();
+    try {
+      const ответ = await fetch(`${базовыйUrl}/pay/${заказ.token}`, { redirect: 'manual' });
+      expect(ответ.status).toBe(302);
+      expect(ответ.headers.get('location')).toBe('https://shop.example.kz/thank-you');
+    } finally {
+      await закрыть();
+    }
+  });
+
+  it('просроченный заказ уводит на config.failureUrl', async () => {
+    const заказ = store.createOrder({ ...образецНовогоЗаказа, token: '6'.repeat(32), tildaOrderId: '10868059:112' });
+    store.updateState(заказ.id, 'просрочен');
+    const { базовыйUrl, закрыть } = await серверСВозвратом();
+    try {
+      const ответ = await fetch(`${базовыйUrl}/pay/${заказ.token}`, { redirect: 'manual' });
+      expect(ответ.status).toBe(302);
+      expect(ответ.headers.get('location')).toBe('https://shop.example.kz/sorry');
+    } finally {
+      await закрыть();
+    }
+  });
+
+  it('«не сошлось», «поздний» и «ошибка настроек» не редиректят — это не однозначный успех или отказ', async () => {
+    const состояния = ['не сошлось', 'поздний', 'ошибка настроек'] as const;
+    const { базовыйUrl, закрыть } = await серверСВозвратом();
+    try {
+      for (const [индекс, состояние] of состояния.entries()) {
+        const заказ = store.createOrder({
+          ...образецНовогоЗаказа,
+          token: `8${индекс}`.padEnd(32, '0'),
+          tildaOrderId: `10868059:20${индекс}`,
+        });
+        store.updateState(заказ.id, состояние, состояние === 'не сошлось' || состояние === 'поздний' ? { txSignature: 'подпись' } : {});
+        const ответ = await fetch(`${базовыйUrl}/pay/${заказ.token}`, { redirect: 'manual' });
+        expect(ответ.status).toBe(200);
+      }
+    } finally {
+      await закрыть();
+    }
+  });
+
+  it('без настроенных successUrl/failureUrl (обычный config этого файла) — прежнее поведение, страница итога', async () => {
+    const заказ = store.createOrder({ ...образецНовогоЗаказа, token: '9'.repeat(32), tildaOrderId: '10868059:113' });
+    store.updateState(заказ.id, 'оплачен', { txSignature: 'подпись' });
+    // Используем общий server/базовыйUrl этого файла (config без successUrl).
+    const ответ = await запрос('GET', `/pay/${заказ.token}`);
+    expect(ответ.status).toBe(200);
+    expect(ответ.body).toContain('Оплата получена');
   });
 });
 
@@ -554,5 +702,44 @@ describe('неизвестные маршруты', () => {
   it('отвечают 404', async () => {
     const ответ = await запрос('GET', '/что-то-несуществующее');
     expect(ответ.status).toBe(404);
+  });
+});
+
+describe('необработанный отказ асинхронного обработчика (находка финального ревью)', () => {
+  it('падение GET /pay/:token отвечает 500, а не роняет процесс', async () => {
+    // До правки вызов обработатьСтраницуОплаты в server.ts был без await и
+    // без void — его отказ не попадал в общий catch обработатьЗапрос и
+    // становился необработанным отказом промиса, а это в Node 22 валит
+    // процесс целиком (вместе с приёмом заказов и фоновой проверкой
+    // платежей). Ломаем findByToken, чтобы обработчик страницы оплаты
+    // бросил исключение, и проверяем, что сервер этот процесс переживает —
+    // тем же приёмом, что и соседний тест на 413 в этом файле: если бы
+    // процесс упал, второй запрос ниже не получил бы ответа вовсе.
+    const ломающийсяStore: Store = {
+      ...store,
+      findByToken: () => {
+        throw new Error('нарочно сломан тестом');
+      },
+    };
+    const тестовыеDeps: ЗависимостиСервера = {
+      config,
+      store: ломающийсяStore,
+      client: фейковыйКлиент(),
+      log: createLog((строка) => журнал.push(строка)),
+    };
+    const тестовыйСервер = createServer(тестовыеDeps);
+    await new Promise<void>((resolve) => тестовыйСервер.listen(0, '127.0.0.1', resolve));
+    const адрес = тестовыйСервер.address() as AddressInfo;
+    try {
+      const ответ = await fetch(`http://127.0.0.1:${адрес.port}/pay/${'d'.repeat(32)}`);
+      expect(ответ.status).toBe(500);
+
+      // Процесс жив — соседний маршрут того же сервера, вообще не
+      // трогающий сломанный store, отвечает как обычно.
+      const второйОтвет = await fetch(`http://127.0.0.1:${адрес.port}/assets/checkout.js`);
+      expect(второйОтвет.status).toBe(200);
+    } finally {
+      await new Promise<void>((resolve) => тестовыйСервер.close(() => resolve()));
+    }
   });
 });

@@ -53,7 +53,13 @@
  * вместо того чтобы притворяться, будто формат уже подтверждён вживую.
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { createPaymentFor, OrderConflictError, type TildaOrder } from '../tilda/inbound.js';
+import {
+  createPaymentFor,
+  МАКСИМАЛЬНАЯ_СУММА_KZT,
+  OrderConflictError,
+  ФОРМАТ_СУММЫ,
+  type TildaOrder,
+} from '../tilda/inbound.js';
 import { прочитатьТело, разобратьUrlencoded, ТелоСлишкомБольшое } from './routes-pay.js';
 import type { ЗависимостиСервера } from './server.js';
 
@@ -77,15 +83,6 @@ import type { ЗависимостиСервера } from './server.js';
 const ПРИСТАВКА_НОМЕРА = 'form:';
 
 const ЗАГОЛОВКИ_ТЕКСТ = { 'content-type': 'text/plain; charset=utf-8' } as const;
-
-/**
- * Формат суммы — тот же, что и у основного входа (см. `ФОРМАТ_СУММЫ` в
- * `../tilda/inbound.ts`). Продублирован намеренно, а не импортирован:
- * основной файл не экспортирует эту константу из своего публичного API, и
- * расширять его ради одного запасного входа — не в рамках этой задачи.
- */
-const ФОРМАТ_СУММЫ = /^\d+(\.\d{1,2})?$/;
-const МАКСИМАЛЬНАЯ_СУММА_KZT = 100_000_000;
 
 /**
  * Отдельные поля верхнего уровня, в которых может обнаружиться сумма, если
