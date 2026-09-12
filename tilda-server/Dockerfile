@@ -76,10 +76,18 @@ RUN mkdir -p /app/tilda-server/data
 RUN chown -R node:node /app/tilda-server/data
 USER node
 
-# Слушает только на loopback изнутри процесса (см. src/http/server.ts,
-# запуститьСервер) — наружу порт открывает docker-compose.yml через
-# network_mode: host, поэтому EXPOSE здесь не имеет действия, но остаётся
-# как документация того, какой порт вообще слушает процесс по умолчанию.
+# Порт по умолчанию из config.ts (ПО_УМОЛЧАНИЮ.listenPort) — реально
+# слушаемый порт задаётся config.json → listenPort и может быть другим:
+# этот стенд, например, настроен на 8081 (см. docker-compose.yml → ports).
+# EXPOSE — только документация для тех, кто читает этот файл, самого
+# проброса портов Docker не делает независимо от значения; docker-compose.yml
+# публикует наружу тот порт, что реально задан в config.json.
+#
+# Правка финального ревью (задача 9): раньше здесь стояло «наружу порт
+# открывает docker-compose.yml через network_mode: host» — тот режим
+# заменили на обычную сеть моста ещё в прошлом круге ревью (см. заголовок
+# docker-compose.yml), а комментарий остался и описывал сеть, от которой
+# уже отказались.
 EXPOSE 8080
 
 CMD ["node", "--experimental-sqlite", "dist/http/server.js"]

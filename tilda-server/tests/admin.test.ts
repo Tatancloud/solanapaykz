@@ -339,7 +339,7 @@ describe('GET /admin — с валидной сессией', () => {
       свежий,
       { action: 'оплачен', signature: 'подпись-х', note: 'Платёж получен.' },
       {
-        config: { smtp: config.smtp, merchantEmail: config.merchantEmail },
+        config: { smtp: config.smtp, merchantEmail: config.merchantEmail, publicUrl: config.publicUrl },
         store,
         log: createLog(() => {}),
         тест: { отправка: async () => { throw new Error('SMTP недоступен'); } },

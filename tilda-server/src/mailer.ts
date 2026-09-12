@@ -3,7 +3,8 @@
  *
  * Что входит: номер заказа Tilda, сумма в тенге и в токенах, курс и его
  * источник, подпись транзакции ссылкой на публичный обозреватель, состояние
- * заказа. Ровно то, что нужно человеку для проверки, — не больше.
+ * заказа, ссылка на список всех заказов (`config.publicUrl` + `/admin`, за
+ * отдельным паролем). Ровно то, что нужно человеку для проверки, — не больше.
  *
  * Что НЕ входит никогда, ни при каких обстоятельствах: секреты настроек
  * (`orderSecret`, `notifySecret`, `adminPassword`, `smtp.pass`), адрес узла
@@ -50,7 +51,7 @@ export interface ПисьмоОпции {
 export type ОтправкаПисьма = (опции: ПисьмоОпции) => Promise<РезультатОтправки>;
 
 export interface MailerDeps {
-  config: Pick<Config, 'smtp' | 'merchantEmail'>;
+  config: Pick<Config, 'smtp' | 'merchantEmail' | 'publicUrl'>;
   /**
    * Только `recordMailOutcome`: эта функция не читает и не создаёт заказы,
    * а исход отправки — единственное, что ей позволено писать в базу. Уже
@@ -101,13 +102,35 @@ function строкиПисьма(order: Order, decision: Decision): Array<{ lab
   ];
 }
 
-function построитьПисьмо(order: Order, decision: Decision): { subject: string; text: string; html: string } {
+/**
+ * Ссылка на список заказов (`/admin`), а не на конкретный заказ — правка
+ * финального ревью (задача 9). `config.publicUrl` был обязательной
+ * настройкой, которую нигде не применяли: обязательное поле, которое
+ * ничего не делает, учит относиться к настройкам небрежно.
+ *
+ * Не ссылка на страницу оплаты этого заказа (`/pay/:token`): её ключ —
+ * `order.token` — этому письму НЕЛЬЗЯ содержать ни при каких
+ * обстоятельствах (см. заголовок файла) — тот же ключ, которым оплачивает
+ * покупатель, не должен уходить туда, где его может увидеть кто-то ещё,
+ * получивший доступ к почте продавца. `/admin` требует отдельного входа
+ * по паролю и ведёт к списку, а не к конкретному платёжному ключу.
+ */
+function ссылкаНаСписокЗаказов(publicUrl: string): string {
+  return `${publicUrl}/admin`;
+}
+
+function построитьПисьмо(
+  order: Order,
+  decision: Decision,
+  publicUrl: string,
+): { subject: string; text: string; html: string } {
   const строки = строкиПисьма(order, decision);
   const subject = `SolanaPay-KZ: заказ ${order.tildaOrderId} — ${order.state}`;
-  const text = строки.map((с) => `${с.label}: ${с.text}`).join('\n');
-  const html = `<table>${строки
-    .map((с) => `<tr><th>${экранироватьHtml(с.label)}</th><td>${с.html}</td></tr>`)
-    .join('')}</table>`;
+  const ссылка = ссылкаНаСписокЗаказов(publicUrl);
+  const text = строки.map((с) => `${с.label}: ${с.text}`).join('\n') + `\n\nСписок всех заказов: ${ссылка}`;
+  const html =
+    `<table>${строки.map((с) => `<tr><th>${экранироватьHtml(с.label)}</th><td>${с.html}</td></tr>`).join('')}</table>` +
+    `<p><a href="${экранироватьHtml(ссылка)}">Список всех заказов</a></p>`;
   return { subject, text, html };
 }
 
@@ -139,7 +162,7 @@ async function реальнаяОтправка(smtp: Config['smtp'], опции
  * `db.ts`), состояние заказа физически не может задеть.
  */
 export async function sendMerchantMail(order: Order, decision: Decision, deps: MailerDeps): Promise<boolean> {
-  const { subject, text, html } = построитьПисьмо(order, decision);
+  const { subject, text, html } = построитьПисьмо(order, decision, deps.config.publicUrl);
   const опции: ПисьмоОпции = { from: deps.config.smtp.from, to: deps.config.merchantEmail, subject, text, html };
   const отправить = deps.тест?.отправка ?? ((о: ПисьмоОпции) => реальнаяОтправка(deps.config.smtp, о));
 

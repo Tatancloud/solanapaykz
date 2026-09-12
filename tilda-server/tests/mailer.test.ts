@@ -50,6 +50,7 @@ function заказ(изменения: Partial<Order> = {}): Order {
 const config: MailerDeps['config'] = {
   smtp: { host: 'smtp.example.kz', port: 465, user: 'u', pass: 'секрет-smtp-пароля', from: 'shop@example.kz' },
   merchantEmail: 'merchant@example.kz',
+  publicUrl: 'https://pay.example.kz',
 };
 
 const решениеОплачен: Decision = {
@@ -136,6 +137,18 @@ describe('sendMerchantMail', () => {
     await sendMerchantMail(о, решениеОплачен, { config, store, log: createLog(() => {}), тест });
     const всё = письма[0]!.text + письма[0]!.html;
     expect(всё).not.toContain(о.token);
+  });
+
+  it('содержит ссылку на список заказов (config.publicUrl) — правка финального ревью, задача 9', async () => {
+    // publicUrl был обязательной настройкой, которую нигде не применяли —
+    // теперь письмо продавцу ссылается на /admin, а не на страницу оплаты
+    // ЭТОГО заказа: её ключ (order.token) письму нельзя содержать никогда
+    // (см. тест выше), а /admin и так за отдельным паролем.
+    const { письма, тест } = поймать();
+    const { store } = фейковыйStore();
+    await sendMerchantMail(заказ(), решениеОплачен, { config, store, log: createLog(() => {}), тест });
+    expect(письма[0]!.text).toContain(`${config.publicUrl}/admin`);
+    expect(письма[0]!.html).toContain(`href="${config.publicUrl}/admin"`);
   });
 
   it('HTML-версия экранирует состояние заказа, даже если оно необычной формы', async () => {
