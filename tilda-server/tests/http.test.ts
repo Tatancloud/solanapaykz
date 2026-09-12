@@ -287,8 +287,20 @@ describe('GET /pay/:token', () => {
   it('отдаётся с CSP default-src \'self\' и X-Content-Type-Options: nosniff', async () => {
     const заказ = store.createOrder({ ...образецНовогоЗаказа, token: '2'.repeat(32), tildaOrderId: '10868059:105' });
     const ответ = await запрос('GET', `/pay/${заказ.token}`);
-    expect(ответ.headers.get('content-security-policy')).toBe("default-src 'self'");
+    expect(ответ.headers.get('content-security-policy')).toBe("default-src 'self'; frame-ancestors 'none'");
     expect(ответ.headers.get('x-content-type-options')).toBe('nosniff');
+  });
+
+  it('X-Frame-Options: DENY и Strict-Transport-Security на странице оплаты (правка финального ревью, задача 7)', async () => {
+    // Проверено ревью в настоящем браузере: и страница оплаты, и список
+    // заказов встраивались рамкой со стороннего сайта — подмена вида
+    // поверх страницы оплаты была рабочим приёмом обмана (clickjacking).
+    // Заголовки общие для всех маршрутов (см. server.ts), поэтому тест
+    // не привязан к конкретному пути.
+    const заказ = store.createOrder({ ...образецНовогоЗаказа, token: '3'.repeat(32), tildaOrderId: '10868059:114' });
+    const ответ = await запрос('GET', `/pay/${заказ.token}`);
+    expect(ответ.headers.get('x-frame-options')).toBe('DENY');
+    expect(ответ.headers.get('strict-transport-security')).toBe('max-age=63072000; includeSubDomains');
   });
 
   it('не содержит встроенного <script>: под CSP default-src \'self\' без unsafe-inline браузер его не исполнит', async () => {
