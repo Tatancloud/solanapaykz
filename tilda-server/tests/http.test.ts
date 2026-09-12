@@ -267,6 +267,33 @@ describe('GET /pay/:token', () => {
     expect(ответ.body).toContain('32.640000');
   });
 
+  it('нулевая наценка — числа сходятся, строки про наценку нет (правка финального ревью, задача 8)', async () => {
+    // quoteJson образца — '{}': amountKztCharged в нём нет, суммаСНаценкой
+    // откатывается к order.amountKzt, то есть наценки нет.
+    const заказ = store.createOrder({ ...образецНовогоЗаказа, token: 'd'.repeat(32), tildaOrderId: '10868059:115' });
+    const ответ = await запрос('GET', `/pay/${заказ.token}`);
+    expect(ответ.body).toContain(`${заказ.amountKzt} ₸`);
+    expect(ответ.body).not.toContain('Включает наценку');
+  });
+
+  it('ненулевая наценка — показывает сумму, по которой действительно считали, и отдельной строкой саму наценку', async () => {
+    // amountToken (32.640000) в образце посчитан из amountKztCharged, а не
+    // из amountKzt — до этой правки страница показывала бы amountKzt рядом
+    // с курсом, и числа не сходились бы между собой.
+    const заказ = store.createOrder({
+      ...образецНовогоЗаказа,
+      token: 'c'.repeat(32),
+      tildaOrderId: '10868059:116',
+      amountKzt: '15000',
+      quoteJson: JSON.stringify({ amountKzt: '15000', amountKztCharged: '15750' }), // наценка 5%
+    });
+    const ответ = await запрос('GET', `/pay/${заказ.token}`);
+    expect(ответ.body).toContain('(15750 ₸ по курсу'); // сумма расчёта, а не исходная сумма заказа
+    expect(ответ.body).not.toContain('(15000 ₸ по курсу');
+    expect(ответ.body).toContain('Включает наценку магазина');
+    expect(ответ.body).toContain('Без наценки: 15000 ₸');
+  });
+
   it('оплаченному заказу QR не показывает — это приглашение заплатить второй раз', async () => {
     const заказ = store.createOrder({ ...образецНовогоЗаказа, token: 'f'.repeat(32), tildaOrderId: '10868059:103' });
     store.updateState(заказ.id, 'оплачен', { txSignature: 'подпись-транзакции' });
