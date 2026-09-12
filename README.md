@@ -1,308 +1,113 @@
-# @solanapaykz/core
+# SolanaPay-KZ
 
-SDK на TypeScript для приёма платежей в USDC/SOL сети Solana с автоматической
-конвертацией из тенге (KZT) по текущему курсу. Изоморфный код: работает и в
-Node.js 20.18+, и в браузере, зависит только от глобального `fetch`.
+[Русская версия](README.ru.md) · [Documentation](https://tatancloud.github.io/solanapaykz/)
 
-SDK закрывает три шага приёма платежа:
+An open-source toolkit that lets online shops in Kazakhstan accept payment in
+**USDC** and **SOL** on Solana while showing prices in **tenge (KZT)**.
 
-1. **Котировка** — сколько токена соответствует сумме в тенге прямо сейчас.
-2. **Платёжный запрос** — ссылка Solana Pay и QR-код для покупателя.
-3. **Проверка** — поиск транзакции в блокчейне и её валидация.
+**Money moves straight from the buyer's wallet to the merchant's wallet.**
+Nothing in this project holds, routes or can freeze the merchant's funds.
+Private keys are never requested, created or stored — accepting a payment only
+needs a public address.
 
-SDK не отвечает за хранение заказов, показ QR на странице и обработку
-вебхуков/поллинга — это задача интеграции (например, плагина CMS), которая
-использует этот пакет.
+---
 
-## Установка
+## The problem it solves
 
-```bash
-npm install @solanapaykz/core
-```
+A small shop in Kazakhstan that wants to accept stablecoins faces three
+obstacles at once:
 
-Пакет уже включает точно закреплённые версии `@solana/pay` и `@solana/kit` —
-менять их вручную не нужно (и `@solana/kit@8` ставить нельзя: `@solana/pay`
-требует `^6.4.0`).
+1. **No direct rate.** No exchange quotes crypto against the tenge except one
+   pair. The widely recommended price APIs do not support KZT at all — one of
+   them answers a KZT request with HTTP 200 and an empty object, which a naive
+   implementation reads as a rate of zero.
+2. **No ready integration.** Shop platforms ship card gateways, not wallets.
+3. **Custody.** Most crypto payment services take the money first and settle
+   later, which is exactly what a small merchant cannot risk.
 
-## Быстрый старт: от суммы в тенге до подтверждённого платежа
+SolanaPay-KZ answers all three: it computes the rate from the one pair that
+exists, ships ready integrations for two platforms, and never touches the
+money.
 
-Полный путь — четыре шага. Реальный пример, который можно скопировать в
-проект (нужен только рабочий `rpcUrl`, см. предупреждение ниже). `orderId`,
-`saveOrder` и `markOrderPaid` в примере — не часть SDK, это функции самой
-интеграции (обращение к вашей БД заказов); здесь они только иллюстрируют,
-куда именно нужно передать `reference` из шага 3.
+## What is built
 
-```ts
-import { SolanaPayKZ } from '@solanapaykz/core';
-
-const sdk = new SolanaPayKZ({
-  recipient: '<ВАШ_SOLANA_АДРЕС>', // адрес КОШЕЛЬКА продавца — НЕ адрес монеты (mint).
-                                   // Ошибка здесь необратима: тем, кто владеет mint-адресом
-                                   // USDC/SOL, а не вашим кошельком, платежи не вернуть.
-  rpcUrl: process.env.SOLANA_RPC_URL!, // свой RPC-провайдер, см. раздел ниже
-  cluster: 'mainnet',
-});
-
-// Шаг 1. Котировка: сумма в тенге → сумма токена. Курс замораживается на
-// 15 минут — см. раздел «Риск сдвига курса».
-const quote = await sdk.createQuote({ amountKzt: '10000', token: 'USDC' });
-// quote.amountToken — сумма в USDC строкой, например "21.758051"
-
-// Шаг 2. Платёжный запрос: ссылка Solana Pay (solana:...) и QR-код в SVG.
-const request = await sdk.createPaymentRequest(quote, {
-  label: 'Магазин Example',
-  message: `Заказ №${orderId}`,
-});
-
-// Шаг 3. Сохранить request.reference вместе с заказом — обязательно, см.
-// раздел «Метка платежа (reference)» ниже. Показать покупателю request.qrSvg
-// (или ссылку request.url для перехода в кошелёк напрямую).
-await saveOrder({
-  orderId,
-  reference: request.reference,
-  quoteId: quote.quoteId,
-});
-
-// Шаг 4. Проверка — вызывается позже: по таймеру, при возврате покупателя на
-// сайт, из cron-задачи и т. д. Можно вызывать многократно.
-const status = await sdk.checkPayment({ reference: request.reference, quote });
-
-switch (status.status) {
-  case 'pending':
-    // Платёж ещё не пришёл. Повторить проверку позже.
-    break;
-  case 'expired':
-    // Котировка просрочена, платежа так и не было. Нужно выпустить новую
-    // котировку и новый платёжный запрос — старую метку переиспользовать
-    // нельзя, см. предупреждение про уникальность метки.
-    break;
-  case 'confirmed':
-    // status.signature — подпись транзакции в Solana.
-    // status.amountPaid — сумма из котировки, подтверждённая как полученная
-    // не меньше (подробности — в разделе про статусы).
-    await markOrderPaid(orderId, status.signature);
-    break;
-  case 'mismatch':
-    // Транзакция с этой меткой найдена, но не прошла проверку (не тот
-    // получатель, не тот токен или заниженная сумма). status.reason — текст
-    // для логов, не для показа покупателю. Это НЕ значит «денег нет» —
-    // деньги могли уже уйти. Посмотрите status.signature вручную, прежде чем
-    // считать заказ неоплаченным, см. раздел «mismatch не значит „денег нет“».
-    break;
-}
-```
-
-## Параметры конструктора `SolanaPayKZ`
-
-| Параметр | Тип | Обязателен | По умолчанию | Описание |
-|---|---|---|---|---|
-| `recipient` | `string` | да | — | Solana-адрес продавца, куда должны поступать платежи. |
-| `rpcUrl` | `string` | **да** | значения по умолчанию нет | Адрес RPC-узла Solana. См. предупреждение ниже — публичный узел не подходит. |
-| `cluster` | `'mainnet' \| 'devnet'` | да | — | Кластер сети: определяет адреса mint-токенов. |
-| `markupPercent` | `number` | нет | `0` | Наценка продавца в процентах, применяется к сумме в тенге до конвертации. |
-| `quoteTtlMs` | `number` | нет | `900000` (15 минут) | Срок жизни котировки в миллисекундах. |
-
-## Параметры `createPaymentRequest`
-
-Второй аргумент `sdk.createPaymentRequest(quote, options)` — тип
-`CreatePaymentRequestOptions`. `recipient` в него не входит: адрес получателя
-уже зафиксирован в конструкторе `SolanaPayKZ` и не может быть переопределён
-для отдельного запроса.
-
-| Параметр | Тип | Обязателен | По умолчанию | Описание |
-|---|---|---|---|---|
-| `label` | `string` | нет | — | Название магазина/получателя — показывается кошельком покупателя. |
-| `message` | `string` | нет | — | Пояснение к платежу (например, номер заказа) — показывается кошельком. |
-| `memo` | `string` | нет | — | Записывается в саму транзакцию Solana (инструкция memo) — часть ончейн-истории, а не только UI кошелька. |
-| `qrSize` | `number` | нет | `320` | Размер QR-кода в пикселях. |
-
-## Обязательно прочитать перед продакшеном
-
-### 1–2. Метка платежа (reference)
-
-Каждый платёжный запрос получает `reference` — случайную метку, по которой
-поиск в блокчейне находит транзакцию. Это **единственное** требование SDK к
-хранилищу продавца:
-
-> **Сохраняйте `reference` вместе с заказом.** Без него найти платёж,
-> соответствующий конкретному заказу, невозможно — блокчейн не знает о
-> заказах, только о переводах с меткой.
-
-Не менее важно: **метка должна быть уникальной для каждой попытки оплаты.**
-Поиск (`findReference` из `@solana/pay`) возвращает **самую старую**
-транзакцию с данной меткой. Если покупатель ошибся с оплатой (неверная сумма,
-не тот токен) и для повторной попытки переиспользовать ту же метку, проверка
-навсегда найдёт первую, неудачную транзакцию — новый, корректный платёж
-останется невидим для `checkPayment`. Практическое следствие: **на каждую
-попытку оплаты — новый `createPaymentRequest`**, даже для того же заказа и
-той же котировки.
-
-### 3. RPC-адрес обязателен
-
-`rpcUrl` не имеет значения по умолчанию и обязателен в конструкторе.
-Публичный узел (`api.mainnet-beta.solana.com` и аналогичные) жёстко лимитирован
-по частоте запросов и не хранит достаточно истории транзакций для поиска по
-метке — `checkPayment` на нём будет ненадёжен или недоступен. Для продакшена
-нужен собственный RPC-провайдер (Helius, QuickNode, Triton и т. п.); для
-разработки подойдёт публичный devnet-узел.
-
-### 4. Риск сдвига курса несёт продавец
-
-Котировка замораживает курс на 15 минут (`quoteTtlMs`, по умолчанию
-`900000` мс) — ровно столько действует сумма в QR-коде. Пока покупатель не
-оплатил, курс на рынке может немного отличаться от зафиксированного, и эту
-разницу несёт продавец: если рынок за это время сдвинется в невыгодную
-сторону, а покупатель успеет оплатить по старой котировке, продавец получит
-чуть меньше в пересчёте на текущий курс (и наоборот).
-
-Насколько велик этот риск на практике — замер пары `USDT/KZT` на Binance
-(288 пятиминутных свечей за сутки):
-
-- типичное движение курса внутри пяти минут — около нуля (медиана 0.000%);
-- 95-й перцентиль — 0.065%;
-- максимум за сутки (размах диапазона) — 0.92%.
-
-То есть в подавляющем большинстве случаев риск сдвига за время одной попытки
-оплаты пренебрежимо мал, но не равен нулю — это стоит учитывать при выборе
-`quoteTtlMs` и наценки.
-
-### 5. Источники курса и что меняется при отказе основного
-
-SDK опрашивает источники по порядку и берёт первый успешный ответ, не
-подставляя устаревший курс молча:
-
-| Приоритет | Источник | Как считается | Пример значения |
+| Component | For | Tests | Status |
 |---|---|---|---|
-| Основной | Binance | `USDTKZT × USDCUSDT` (или `× SOLUSDT` для SOL) | 459.74 ₸ за USDC |
-| Резервный | синтетика | курс USD/KZT от агрегатора open.er-api.com × цена токена в USD (CoinGecko) | 455.26 ₸ за USDC |
+| [`@solanapaykz/core`](https://tatancloud.github.io/solanapaykz/sdk) | developers on any platform | 126 | working |
+| [WooCommerce plugin](https://tatancloud.github.io/solanapaykz/woocommerce) | WordPress shops | 213 | working |
+| [Tilda server](https://tatancloud.github.io/solanapaykz/tilda) | Tilda shops | 310 | working, integration under review by Tilda |
 
-**Почему не CoinGecko напрямую и не как основной источник.** У CoinGecko нет
-тенге среди поддерживаемых валют вообще — запрос цены в KZT отвечает
-HTTP 200 и пустым объектом (`{"usd-coin":{}}`), то есть отказ происходит
-молча, а не явной ошибкой. Поэтому: (а) тенге для CoinGecko-варианта берётся
-отдельно, у поставщика курсов валют; (б) SDK трактует такой пустой ответ как
-отказ источника, а не как нулевой курс; (в) Binance, где рыночная цена
-USDT/KZT торгуется напрямую, выбран основным источником, а связка
-USD/KZT × CoinGecko — резервным.
+649 automated tests across three languages, plus end-to-end verification with
+real payments on Solana devnet.
 
-**Чем резервный курс отличается от основного.** open.er-api.com — это
-агрегатор курсов валют, а не официальный источник курса доллара, и он
-обновляется раз в сутки, поэтому в момент сбоя Binance котировка резко
-«застынет» на вчерашнем значении и будет отличаться от биржевого примерно на
-процент — на момент разработки Binance давал 459.74 ₸ за USDC, синтетика
-455.26 ₸ (разница ≈ 1%, обычная крипто-премия рынка над курсом агрегатора).
-Если для бизнеса это неприемлемо, стоит настроить оповещение на переключение
-источника (поле `rateSource` в котировке).
+## How a payment works
 
-Порядок источников фиксирован внутри SDK (Binance первым) и не настраивается
-через публичный API. Поэтому `RateProvider`, `BinanceRateSource`,
-`SyntheticRateSource` и тип `RateSource` осознанно не экспортируются из
-пакета: конструктор `SolanaPayKZ` не принимает свои источники курса, так что
-эти типы негде было бы подключить — а если бы они были доступны напрямую,
-можно было бы собрать провайдер курса с другим порядком источников в обход
-`SolanaPayKZ` и потерять именно ту гарантию («Binance основной»), ради
-которой класс и существует. Считать основным источником Binance безопасно
-для любого экземпляра `SolanaPayKZ` без исключений.
+```
+buyer                     shop                      Solana
+  │                        │                          │
+  │   places an order  ──> │                          │
+  │                        │ rate: Binance USDT/KZT   │
+  │                        │ amount frozen for 15 min │
+  │  <── QR code / link ── │                          │
+  │                                                   │
+  │  ─────────── pays directly from own wallet ─────> │
+  │                        │                          │
+  │                        │ ── checks the chain ──>  │
+  │  <── order confirmed ──│                          │
+```
 
-### 6. Приватные ключи
+The shop never holds the buyer's money and the project never holds the shop's.
+The only thing the code does with funds is *look* at them.
 
-**SDK не создаёт, не хранит и не запрашивает приватные ключи.** Метка
-платежа (`reference`) — это 32 случайных байта, отформатированные как
-Solana-адрес; пара ключей для неё не генерируется и не существует.
-Проверка платежа читает публичные данные блокчейна (RPC), подписывать или
-отправлять транзакции от имени продавца или покупателя SDK не умеет и не
-пытается.
+## Design decisions worth knowing
 
-### 7. Что означает `amountPaid`
+These are the choices that cost the most to get wrong, and each is enforced by
+tests:
 
-В результате `checkPayment` при статусе `confirmed` поле `amountPaid` — это
-**сумма из котировки**, подтверждённая как полученная **не меньше** этой
-суммы, а не точная сумма фактического перевода. Библиотека (через
-`validateTransfer` из `@solana/pay`) проверяет условие «переведено не меньше
-ожидаемого», а не точное равенство — переплата тоже проходит проверку
-успешно. Если продавцу важна именно фактически поступившая сумма (например,
-покупатель осознанно перевёл больше), её нужно смотреть в самой транзакции
-по `status.signature`, а не в `amountPaid`.
+- **Money is integer arithmetic, never floating point.** Amounts are carried as
+  strings and computed in the token's minimal units.
+- **Rounding is always in the merchant's favour**, to the last digit the coin
+  has — six decimals for USDC, nine for SOL.
+- **A network failure never changes an order.** If the Solana node is silent,
+  the order stays as it was. Silence is not an answer of "no payment".
+- **An amount mismatch is never resolved automatically.** A payment that exists
+  but does not add up is handed to a human, because blockchain transfers are
+  irreversible and automation errs more expensively than a person here.
+- **The price is frozen with the order** — amount, recipient, network and
+  payment reference — and never recomputed during verification.
 
-## Статусы платежа
+## Try it
 
-`checkPayment` возвращает один из четырёх статусов:
+- **Documentation:** <https://tatancloud.github.io/solanapaykz/>
+- **Live WooCommerce demo:** <https://shop.pagafox.kz>
 
-| Статус | Поля | Когда |
-|---|---|---|
-| `pending` | — | Транзакция с данной меткой ещё не найдена, котировка не просрочена. |
-| `expired` | — | Транзакция не найдена, а котировка уже просрочена (прошло больше `quoteTtlMs`). |
-| `confirmed` | `signature`, `amountPaid` | Транзакция найдена и прошла проверку получателя, токена и суммы. |
-| `mismatch` | `signature`, `reason` | Транзакция с меткой найдена, но не прошла проверку — не тот получатель, не тот токен или сумма меньше ожидаемой. `reason` — техническое сообщение `@solana/pay`, для логов. |
+## Repository map
 
-Подтверждение проверяется на уровне `finalized` — самом надёжном из
-доступных в Solana; более быстрые, но менее надёжные уровни (`confirmed`,
-`processed`) SDK не использует.
+| Path | What it is |
+|---|---|
+| `src/` | the `@solanapaykz/core` library (TypeScript) |
+| `tests/` | its tests |
+| `tilda-server/` | payment server for Tilda shops (TypeScript, Node 22) |
+| `demo-shop/plugin/` | WooCommerce plugin (PHP 8.1) |
+| `demo-shop/` | Docker setup of the demo shop |
+| `docs/` | the public documentation site (GitHub Pages) |
+| `process/` | how this was built: brief, specifications, plans, code map |
 
-Обратите внимание: платёж, пришедший уже после истечения котировки (статус
-на момент проверки — `expired`), всё равно может найтись и подтвердиться при
-следующем вызове `checkPayment` — транзакция в блокчейне необратима.
-Принимать такой платёж как оплату заказа или нет — решение продавца, SDK его
-не принимает.
+`process/` is unusual for a repository and deliberate: it holds the design
+documents, the implementation plans and the review findings that shaped the
+code. Anyone judging the engineering can read the reasoning, not just the
+result.
 
-### `mismatch` не значит «денег нет»
+## Requirements
 
-**Важно: статус `mismatch` — это не то же самое, что «покупатель не
-заплатил».** Транзакция с данной меткой найдена в блокчейне — деньги уже
-могли уйти со счёта покупателя (и, возможно, дойти до продавца), просто
-проверка не сошлась по формальному признаку (не тот токен, не тот получатель
-или заниженная сумма). Увидев `mismatch`, **не считайте заказ автоматически
-неоплаченным** — посмотрите транзакцию по `status.signature` вручную (через
-блок-эксплорер или сам RPC) и решите, что с ней делать, прежде чем сообщать
-покупателю об ошибке оплаты или создавать новый платёжный запрос.
+- **Own Solana RPC endpoint.** Public nodes are rate-limited and do not keep
+  enough history to find a payment reliably. This is a hard requirement, not a
+  recommendation.
+- PHP 8.1 with the `bcmath` extension for the WooCommerce plugin.
+- Node.js 22 for the library and the Tilda server.
+- Shop currency must be KZT.
 
-## Обработка ошибок
+## Licence
 
-Помимо статусов `PaymentStatus` (которые не являются ошибками — это штатные
-исходы проверки), методы SDK могут выбрасывать исключения. Все они
-наследуются от `SolanaPayKzError` — можно ловить эту базовую ошибку, если не
-нужно различать конкретный тип.
-
-| Метод | Что может выбросить | Когда |
-|---|---|---|
-| `createQuote` | `ConfigError` | Некорректные входные данные (сумма, token/cluster, TTL) — до сетевого запроса. |
-| `createQuote` | `RateUnavailableError` | Ни один источник курса не ответил. |
-| `createPaymentRequest` | `ConfigError` | Котировка испорчена (например, `amountToken` не число или не больше нуля) или некорректен `recipient`. |
-| `createPaymentRequest` | `QuoteExpiredError` | Котировка уже просрочена — нужно выпустить новую. |
-| `checkPayment` | `ConfigError` | Котировка испорчена, `recipient`/`reference` невалидны, либо кластер котировки не совпадает с кластером клиента. |
-| `checkPayment` | *ошибки RPC-клиента `@solana/kit` / сетевые ошибки* | **Пробрасываются наружу без оборачивания.** Сбой RPC-узла (таймаут, лимит запросов, недоступность) — это не `mismatch` и не `pending`, а именно исключение: временный сбой сети не должен выглядеть как результат проверки платежа. Оборачивайте вызов `checkPayment` в `try/catch` и предусматривайте повтор.
-
-Конструктор `new SolanaPayKZ(...)` также синхронно бросает `ConfigError` на
-некорректные `recipient` и `rpcUrl` — это стоит проверить сразу при создании
-клиента, а не только при первом вызове.
-
-## Безопасность
-
-- SDK не создаёт, не хранит и не запрашивает приватные ключи ни продавца, ни
-  покупателя (см. пункт 6 выше).
-- SDK не хранит состояние заказов — это ответственность вызывающего кода.
-  Единственное, что нужно сохранить самостоятельно, — `reference` (пункты 1–2
-  выше).
-- Все сетевые запросы идут через глобальный `fetch` (к источникам курса) и
-  переданный `rpcUrl` (к Solana) — сторонние сервисы SDK не использует.
-
-## Совместимость
-
-Node.js 20.18+ и браузер. Единственная внешняя зависимость времени выполнения,
-требующая сети, — глобальный `fetch`; в старых окружениях Node без
-встроенного `fetch` потребуется полифил.
-
-Генерация QR (`createPaymentRequest`) использует библиотеку `qrcode` и
-запрашивает у неё только SVG (`{ type: 'svg' }`). У этой библиотеки есть два
-внутренних варианта — серверный (с поддержкой PNG, требующей `fs`) и
-браузерный (без `fs` вообще); какой из них подставить, решает сборщик
-потребителя по полю `"browser"` в `package.json` самой `qrcode`. Это
-проверено: webpack, Vite/Rollup и esbuild при сборке под браузер учитывают
-это поле по умолчанию и используют браузерный вариант, где `fs` не
-встречается — специальная настройка с нашей стороны не требуется. Проблема
-теоретически может проявиться только при нестандартной конфигурации сборки
-потребителя (например, явно отключённом учёте поля `browser`).
-
-## Лицензия
-
-MIT
+MIT — see [LICENSE](LICENSE). Free to read, use and modify, including
+commercially.

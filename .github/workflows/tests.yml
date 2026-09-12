@@ -1,0 +1,60 @@
+# Тесты гоняются на каждый коммит и каждое предложение изменений.
+# Проект принимает деньги, поэтому красный прогон здесь — повод остановиться,
+# а не «посмотреть потом».
+name: Тесты
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  sdk:
+    name: Библиотека @solanapaykz/core
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # --include=dev обязателен: в окружениях с NODE_ENV=production npm
+      # молча пропускает зависимости разработки, и тесты просто не запустятся.
+      - run: npm install --include=dev
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  tilda-server:
+    name: Сервер для Tilda
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --include=dev
+      - run: npm run build
+      - name: Зависимости сервера
+        working-directory: tilda-server
+        run: npm install --include=dev
+      - name: Тесты сервера
+        working-directory: tilda-server
+        run: npm test
+
+  plugin:
+    name: Плагин WooCommerce
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.1'
+          # bcmath обязателен: без него расчёт суммы теряет точность на
+          # заказах дороже 92 233,72 ₸ — см. документацию.
+          extensions: bcmath, curl, json
+      - name: Зависимости плагина
+        working-directory: demo-shop/plugin
+        run: composer install --no-interaction --no-progress
+      - name: Тесты плагина
+        working-directory: demo-shop/plugin
+        run: vendor/bin/phpunit
