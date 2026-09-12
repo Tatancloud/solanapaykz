@@ -73,6 +73,7 @@
 .solanapaykz__status--expired,
 .solanapaykz__status--mismatch,
 .solanapaykz__status--late,
+.solanapaykz__status--config-error,
 .solanapaykz__status--error,
 .solanapaykz__status--unknown {
     background: #fdeaea;

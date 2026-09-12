@@ -119,6 +119,30 @@ describe('Store', () => {
     expect(список.map((o) => o.tildaOrderId)).toEqual(['b:1']);
   });
 
+  it('listPending не отдаёт «ожидает», если окно поздних платежей сверх срока цены уже истекло (правка финального ревью)', () => {
+    // Раньше «ожидает» не была ограничена по времени вовсе — заказ,
+    // застрявший в этом состоянии (например, из-за расхождения настроек,
+    // см. checker.ts), навсегда занимал бы место в limit фонового обхода.
+    // окно — 500 секунд, «сейчас» — 1200: свежий (expiresAt 1000) ещё
+    // укладывается (1000 + 500 = 1500 >= 1200), древний (expiresAt 100) —
+    // нет (100 + 500 = 600 < 1200).
+    const свежий = store.createOrder({ ...образец, tildaOrderId: 'п:1', token: 'тп1', expiresAt: 1000 });
+    const древний = store.createOrder({ ...образец, tildaOrderId: 'п:2', token: 'тп2', expiresAt: 100 });
+    expect(свежий.state).toBe('ожидает');
+    expect(древний.state).toBe('ожидает');
+
+    const список = store.listPending(10, 500, 86400, 1200);
+    expect(список.map((o) => o.tildaOrderId)).toEqual(['п:1']);
+  });
+
+  it('listPending никогда не отдаёт заказ в «ошибка настроек» — ждёт человека, а не проверки', () => {
+    const о = store.createOrder({ ...образец, tildaOrderId: 'н:1', token: 'тн1' });
+    store.updateState(о.id, 'ошибка настроек');
+
+    const список = store.listPending(10, 86400, 86400, 1_000_000);
+    expect(список.map((з) => з.tildaOrderId)).not.toContain('н:1');
+  });
+
   it('listPending отдаёт оплаченный неуведомленный заказ в пределах окна повтора и не отдаёт уведомлённый', () => {
     const неуведомлённый = store.createOrder({ ...образец, tildaOrderId: 'c:1', token: 'тс1', createdAt: 100 });
     store.updateState(неуведомлённый.id, 'оплачен', { txSignature: 'подпись', paidAt: 100 });
