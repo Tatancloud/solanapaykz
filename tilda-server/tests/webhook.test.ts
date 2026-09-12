@@ -317,3 +317,58 @@ describe('POST /tilda/webhook — выключен по умолчанию (пр
     }
   });
 });
+
+describe('POST /tilda/webhook — длина номера заявки ограничена (находка 8)', () => {
+  it('отвергает tranid длиннее 255 символов и не заводит заказ', async () => {
+    const огромныйTranid = '1'.repeat(3000);
+    const ответ = await вебхук(телоЗаявки({ tranid: огромныйTranid }));
+    expect(ответ.status).toBe(400);
+    expect(store.findByTildaOrderId(`form:${огромныйTranid}`)).toBeNull();
+  });
+
+  it('tranid ровно на потолке длины (255) по-прежнему принимается', async () => {
+    const tranid = '2'.repeat(255);
+    const ответ = await вебхук(телоЗаявки({ tranid }));
+    expect(ответ.status).toBe(200);
+    expect(store.findByTildaOrderId(`form:${tranid}`)).not.toBeNull();
+  });
+});
+
+describe('POST /tilda/webhook — журнал не пишет тело запроса целиком (находка 8)', () => {
+  it('запись в журнал при неопознанной сумме обрезана, а не содержит поле целиком', async () => {
+    const { Payment: _payment, ...безPayment } = телоЗаявки();
+    const огромноеЧужоеПоле = 'x'.repeat(10_000);
+    const ответ = await вебхук({
+      ...безPayment,
+      payment: JSON.stringify({ totalcost: 15000 }),
+      постороннееПоле: огромноеЧужоеПоле,
+    });
+    expect(ответ.status).toBe(400);
+
+    const записьСТелом = журнал.find((строка) => строка.includes('телоЗапроса'));
+    expect(записьСТелом).toBeDefined();
+    // Обрезано заметно короче исходного гигантского поля — не переписано
+    // в журнал целиком.
+    expect(записьСТелом!.length).toBeLessThan(огромноеЧужоеПоле.length);
+  });
+});
+
+describe('POST /tilda/webhook — частота создания новых заказов ограничена (находка 8)', () => {
+  it('после потолка новых заказов дальнейшие НОВЫЕ tranid отвергаются 429, а повтор существующего — нет', async () => {
+    // Потолок — 20 новых заказов за минуту (createWebhookRoutes, тот же
+    // сервер этого файла на каждый it() создаётся заново, значит и
+    // ограничитель — свой, ещё пустой).
+    for (let i = 0; i < 20; i++) {
+      const ответ = await вебхук(телоЗаявки({ tranid: `лимит:${i}` }));
+      expect(ответ.status).toBe(200);
+    }
+
+    const двадцатьПервый = await вебхук(телоЗаявки({ tranid: 'лимит:20' }));
+    expect(двадцатьПервый.status).toBe(429);
+    expect(store.findByTildaOrderId('form:лимит:20')).toBeNull();
+
+    // Повтор уже существующего tranid — идемпотентный, не в счёт лимита.
+    const повтор = await вебхук(телоЗаявки({ tranid: 'лимит:0' }));
+    expect(повтор.status).toBe(200);
+  });
+});
