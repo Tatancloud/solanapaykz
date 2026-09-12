@@ -35,6 +35,7 @@ const config: Config = {
   listenPort: 0,
   listenHost: '127.0.0.1',
   trustedProxyAddresses: ['127.0.0.1', '::1', '::ffff:127.0.0.1'],
+  enableFormWebhook: false,
 };
 
 /** Тело заказа Tilda, подписанное тестовым секретом — как в tests/inbound.test.ts. */
@@ -100,6 +101,7 @@ const образецНовогоЗаказа: NewOrder = {
   tildaOrderId: '10868059:99',
   token: 'a'.repeat(32),
   amountKzt: '15000',
+  currency: 'KZT',
   amountToken: '32.640000',
   tokenSymbol: 'USDC',
   cluster: 'devnet',

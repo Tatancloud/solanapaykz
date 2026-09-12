@@ -157,4 +157,20 @@ describe('loadConfig', () => {
       );
     });
   });
+
+  describe('enableFormWebhook (правка финального ревью — запасной вход выключен по умолчанию)', () => {
+    it('по умолчанию выключен', () => {
+      const c = loadConfig(полные);
+      expect(c.enableFormWebhook).toBe(false);
+    });
+
+    it('можно включить явно', () => {
+      const c = loadConfig({ ...полные, enableFormWebhook: true });
+      expect(c.enableFormWebhook).toBe(true);
+    });
+
+    it('отвергает не-булево значение', () => {
+      expect(() => loadConfig({ ...полные, enableFormWebhook: 'да' })).toThrow(/enableFormWebhook/);
+    });
+  });
 });

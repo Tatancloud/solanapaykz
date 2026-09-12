@@ -132,7 +132,12 @@ async function обработатьЗапрос(
     return;
   }
 
-  if (метод === 'POST' && url.pathname === '/tilda/webhook') {
+  // Выключен по умолчанию (`config.enableFormWebhook`, см. `../config.ts`):
+  // не под условием внутри самого обработчика, а здесь, в маршрутизации —
+  // выключенный вход обязан вести себя как несуществующий маршрут (404), а
+  // не отвечать чем-то, что выдаёт сам факт его существования постороннему,
+  // который его прощупывает.
+  if (метод === 'POST' && url.pathname === '/tilda/webhook' && deps.config.enableFormWebhook) {
     await обработатьTildaWebhook(req, res, deps);
     return;
   }

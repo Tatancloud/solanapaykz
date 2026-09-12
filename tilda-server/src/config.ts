@@ -67,6 +67,19 @@ export interface Config {
    * в общий на всех посетителей сразу (см. заголовок `routes-admin.ts`).
    */
   trustedProxyAddresses: string[];
+  /**
+   * Включает запасной вход `POST /tilda/webhook` (обычный вебхук формы
+   * Tilda, без подписи — см. заголовок `http/routes-webhook.ts`). По
+   * умолчанию — `false`.
+   *
+   * Правка финального ревью: продавец, который платёжную интеграцию
+   * Tilda уже одобрил и вебхуком формы не пользуется, не должен держать
+   * открытым лишний неподписанный вход — номер проекта Tilda открыто лежит
+   * в разметке её страниц, а адрес вебхука напечатан в README; открытая, но
+   * никому не нужная дверь — это только лишняя площадь для атаки без единой
+   * пользы взамен.
+   */
+  enableFormWebhook: boolean;
 }
 
 /** Ошибка настроек: несёт список всех найденных проблем разом. */
@@ -141,6 +154,7 @@ const ИЗВЕСТНЫЕ_КЛЮЧИ = new Set<string>([
   'listenPort',
   'listenHost',
   'trustedProxyAddresses',
+  'enableFormWebhook',
 ]);
 
 /** Известные ключи внутри `smtp` — та же защита от опечаток на вложенном уровне. */
@@ -157,6 +171,7 @@ const ПО_УМОЛЧАНИЮ = {
   listenPort: 8080,
   listenHost: '127.0.0.1',
   trustedProxyAddresses: ['127.0.0.1', '::1', '::ffff:127.0.0.1'] as string[],
+  enableFormWebhook: false,
 };
 
 function этоОбъект(значение: unknown): значение is Record<string, unknown> {
@@ -387,6 +402,16 @@ export function loadConfig(raw: unknown): Config {
     }
   }
 
+  // --- enableFormWebhook ---
+  let enableFormWebhook: boolean = ПО_УМОЛЧАНИЮ.enableFormWebhook;
+  if (raw.enableFormWebhook !== undefined) {
+    if (typeof raw.enableFormWebhook === 'boolean') {
+      enableFormWebhook = raw.enableFormWebhook;
+    } else {
+      проблемы.push('enableFormWebhook: должен быть true или false');
+    }
+  }
+
   if (проблемы.length > 0) {
     throw new ConfigError(проблемы);
   }
@@ -411,5 +436,6 @@ export function loadConfig(raw: unknown): Config {
     listenPort,
     listenHost,
     trustedProxyAddresses,
+    enableFormWebhook,
   };
 }

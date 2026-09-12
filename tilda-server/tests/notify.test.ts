@@ -19,6 +19,7 @@ const образецНовогоЗаказа: NewOrder = {
   tildaOrderId: '10868059:42',
   token: 'a'.repeat(32),
   amountKzt: '15000',
+  currency: 'KZT',
   amountToken: '32.640000',
   tokenSymbol: 'USDC',
   cluster: 'devnet',

@@ -33,6 +33,7 @@ const config: Config = {
   listenPort: 0,
   listenHost: '127.0.0.1',
   trustedProxyAddresses: ['127.0.0.1', '::1', '::ffff:127.0.0.1'],
+  enableFormWebhook: false,
 };
 
 /** Фейковый клиент SDK — тесты этого файла не про оплату, сеть не нужна (см. tests/http.test.ts). */
@@ -65,6 +66,7 @@ const образец: NewOrder = {
   tildaOrderId: '10868059:42',
   token: 'a'.repeat(32),
   amountKzt: '15000',
+  currency: 'KZT',
   amountToken: '32.640000',
   tokenSymbol: 'USDC',
   cluster: 'devnet',

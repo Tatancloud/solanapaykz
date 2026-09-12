@@ -10,6 +10,7 @@ import {
   AmountError,
   createPaymentFor,
   CurrencyError,
+  OrderConflictError,
   parseTildaOrder,
   SignatureError,
   проверитьЗаказ,
@@ -334,6 +335,7 @@ describe('createPaymentFor', () => {
       tildaOrderId: заказ.orderId,
       token: 'уже-занятый-токен',
       amountKzt: '15000',
+      currency: 'KZT',
       amountToken: '32.640000',
       tokenSymbol: 'USDC',
       cluster: 'devnet',
@@ -356,5 +358,47 @@ describe('createPaymentFor', () => {
     const результат = await createPaymentFor(заказ, deps);
     expect(результат.reference).toBe('метка-соперника');
     expect(результат.token).toBe('уже-занятый-токен');
+  });
+
+  describe('конфликт с уже существующим заказом того же номера (правка финального ревью)', () => {
+    // Найдено ревью на живом сервере: раньше createPaymentFor при найденной
+    // по tildaOrderId записи отдавал её как есть, не сверяя с текущим
+    // запросом — неподписанный вебхук успевал занять номер будущего заказа
+    // суммой в один тенге, и настоящий подписанный заказ на сто пятьдесят
+    // тысяч тенге получал ту же (чужую) запись. Пространства номеров теперь
+    // разведены приставкой `form:` (см. routes-webhook.ts), но сама эта
+    // сверка — самостоятельная защита от ЛЮБОГО другого пути к тому же
+    // номеру, а не только от уже закрытой дыры.
+
+    it('другая сумма у существующей записи — отказ, а не тихая выдача чужой записи', async () => {
+      await createPaymentFor(заказ, deps);
+      const сДругойСуммой: TildaOrder = { ...заказ, amountKzt: '1' };
+      await expect(createPaymentFor(сДругойСуммой, deps)).rejects.toThrow(OrderConflictError);
+    });
+
+    it('другой признак тестового режима у существующей записи — тоже отказ', async () => {
+      await createPaymentFor(заказ, deps);
+      const сДругимРежимом: TildaOrder = { ...заказ, testMode: !заказ.testMode };
+      await expect(createPaymentFor(сДругимРежимом, deps)).rejects.toThrow(OrderConflictError);
+    });
+
+    it('другая валюта у существующей записи — тоже отказ', async () => {
+      await createPaymentFor(заказ, deps);
+      const сДругойВалютой: TildaOrder = { ...заказ, currency: 'USD' };
+      await expect(createPaymentFor(сДругойВалютой, deps)).rejects.toThrow(OrderConflictError);
+    });
+
+    it('при отказе исходная запись в базе не меняется', async () => {
+      const исходный = await createPaymentFor(заказ, deps);
+      const сДругойСуммой: TildaOrder = { ...заказ, amountKzt: '1' };
+      await expect(createPaymentFor(сДругойСуммой, deps)).rejects.toThrow(OrderConflictError);
+      expect(store.findByTildaOrderId(заказ.orderId)).toEqual(исходный);
+    });
+
+    it('полностью совпадающий повтор по-прежнему возвращает ту же запись, а не конфликт', async () => {
+      const первый = await createPaymentFor(заказ, deps);
+      const второй = await createPaymentFor({ ...заказ }, deps);
+      expect(второй.id).toBe(первый.id);
+    });
   });
 });

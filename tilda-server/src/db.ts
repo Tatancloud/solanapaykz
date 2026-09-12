@@ -35,6 +35,14 @@ export interface Order {
   token: string;
   state: OrderState;
   amountKzt: string;
+  /**
+   * Валюта заказа Tilda — сейчас всегда `'KZT'` (единственная, которую
+   * принимает `проверитьЗаказ`/жёстко проставляет вебхук формы), но храним
+   * как отдельное поле, а не константу: `createPaymentFor` (правка ревью)
+   * сверяет его с ПОВТОРНЫМ запросом на тот же `tildaOrderId`, и без
+   * собственного столбца сверять было бы не с чем.
+   */
+  currency: string;
   amountToken: string;
   tokenSymbol: TokenSymbol;
   cluster: Cluster;
@@ -201,6 +209,7 @@ CREATE TABLE IF NOT EXISTS orders (
   token           TEXT    NOT NULL UNIQUE,
   state           TEXT    NOT NULL,
   amount_kzt      TEXT    NOT NULL,
+  currency        TEXT    NOT NULL DEFAULT 'KZT',
   amount_token    TEXT    NOT NULL,
   token_symbol    TEXT    NOT NULL,
   cluster         TEXT    NOT NULL,
@@ -245,6 +254,7 @@ interface СтрокаЗаказа {
   token: string;
   state: string;
   amount_kzt: string;
+  currency: string;
   amount_token: string;
   token_symbol: string;
   cluster: string;
@@ -276,6 +286,7 @@ function изСтроки(р: СтрокаЗаказа): Order {
     token: р.token,
     state: р.state as OrderState,
     amountKzt: р.amount_kzt,
+    currency: р.currency,
     amountToken: р.amount_token,
     tokenSymbol: р.token_symbol as TokenSymbol,
     cluster: р.cluster as Cluster,
@@ -307,6 +318,7 @@ const КОЛОНКА: Record<Exclude<keyof Order, 'id'>, string> = {
   token: 'token',
   state: 'state',
   amountKzt: 'amount_kzt',
+  currency: 'currency',
   amountToken: 'amount_token',
   tokenSymbol: 'token_symbol',
   cluster: 'cluster',
@@ -414,8 +426,15 @@ export function этоДубльНомераTilda(е: unknown): boolean {
  * списка заказов отзывал уже выданные токены, а не только просил браузер
  * забыть куку). Боевой базы по-прежнему нет — снова просто отказ на
  * несовпадении версии, без миграции существующего файла.
+ *
+ * Версия 4 (была 3): добавлена колонка `currency` (финальное ревью —
+ * `createPaymentFor` при найденном по `tildaOrderId` заказе теперь сверяет
+ * сумму, валюту и признак тестового режима с текущим подписанным запросом,
+ * а не отдаёт старую запись как есть; без своего столбца валюту сверять
+ * было бы не с чем). Боевой базы по-прежнему нет — снова просто отказ на
+ * несовпадении версии.
  */
-const ВЕРСИЯ_СХЕМЫ = 3;
+const ВЕРСИЯ_СХЕМЫ = 4;
 
 /**
  * Открывает (создаёт при отсутствии) файл базы и возвращает хранилище
@@ -473,13 +492,13 @@ export function openDatabase(путь: string, busyTimeoutMs = 5000): Store {
 
   const вставить = db.prepare(`
     INSERT INTO orders (
-      tilda_order_id, token, state, amount_kzt, amount_token, token_symbol,
+      tilda_order_id, token, state, amount_kzt, currency, amount_token, token_symbol,
       cluster, recipient, reference, rate, rate_source, payment_url,
       quote_json, created_at, expires_at, test_mode, tilda_signature, tx_signature, paid_at,
       notify_attempts, notified_ok, customer_email, description, products_json,
       mail_failed_at, mail_error
     ) VALUES (
-      @tilda_order_id, @token, @state, @amount_kzt, @amount_token, @token_symbol,
+      @tilda_order_id, @token, @state, @amount_kzt, @currency, @amount_token, @token_symbol,
       @cluster, @recipient, @reference, @rate, @rate_source, @payment_url,
       @quote_json, @created_at, @expires_at, @test_mode, @tilda_signature, @tx_signature, @paid_at,
       @notify_attempts, @notified_ok, @customer_email, @description, @products_json,
@@ -515,6 +534,7 @@ export function openDatabase(путь: string, busyTimeoutMs = 5000): Store {
         token: o.token,
         state: 'ожидает',
         amount_kzt: o.amountKzt,
+        currency: o.currency,
         amount_token: o.amountToken,
         token_symbol: o.tokenSymbol,
         cluster: o.cluster,

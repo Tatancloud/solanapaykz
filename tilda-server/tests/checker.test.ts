@@ -30,12 +30,14 @@ const config: Config = {
   listenPort: 0,
   listenHost: '127.0.0.1',
   trustedProxyAddresses: ['127.0.0.1', '::1', '::ffff:127.0.0.1'],
+  enableFormWebhook: false,
 };
 
 const образец: NewOrder = {
   tildaOrderId: '10868059:42',
   token: 'ткн-1',
   amountKzt: '15000',
+  currency: 'KZT',
   amountToken: '32.640000',
   tokenSymbol: 'USDC',
   cluster: 'devnet',
