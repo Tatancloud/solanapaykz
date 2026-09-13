@@ -31,6 +31,10 @@ services:
     ports:
       - "127.0.0.1:8080:80"
     environment:
+      # Пароль SMTP для отправки писем магазина: в контейнере нет
+      # почтового транспорта, и письма WooCommerce уходили в никуда молча.
+      # Значение берётся из .env (права 600, в репозиторий не попадает).
+      SHOP_SMTP_PASS: ${SHOP_SMTP_PASS}
       WORDPRESS_DB_HOST: db
       WORDPRESS_DB_NAME: wordpress
       WORDPRESS_DB_USER: wordpress
