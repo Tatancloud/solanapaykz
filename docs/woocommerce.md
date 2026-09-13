@@ -37,31 +37,28 @@ migration.
 
 ## Where to get the plugin
 
-There is no prebuilt archive in the releases section yet, so there are two
-working ways to get one.
+**[Download solanapaykz-0.1.0.zip](download/solanapaykz-0.1.0.zip)** — ready to
+install in WordPress. It contains only what production needs: no tests, no
+development dependencies, no housekeeping files.
 
-**First — build the archive with the supplied script.** It packs only what is
-needed in production: no tests, no development dependencies, no housekeeping
-files.
+SHA-256 checksum, so you can confirm you got our file and not someone else's:
+
+```
+4414b509482c6ae6088a447b716aaa6db07f56f51d2aaaa85d69411ae1dfb1f8
+```
+
+Verify with `sha256sum solanapaykz-0.1.0.zip` — the value must match. This is
+not a formality: the plugin handles money, and a substituted archive costs
+more than the minute spent checking.
+
+If you would rather build it yourself, from the same source:
 
 ```bash
 git clone https://github.com/Tatancloud/solanapaykz.git
 cd solanapaykz/demo-shop/plugin
 bash build.sh
-# produces build/solanapaykz-0.1.0.zip — install that in WordPress
+# produces build/solanapaykz-0.1.0.zip, the same file
 ```
-
-**Second — download the whole repository.** On the
-[repository page](https://github.com/Tatancloud/solanapaykz) choose
-"Code" → "Download ZIP", unpack it and take the `demo-shop/plugin` folder.
-Rename it to `solanapaykz` and place it in `wp-content/plugins/`.
-
-<div class="важно">
-<strong>The second way leaves tests and development files in the folder.</strong>
-The plugin will still work, but a production site has no use for them: they
-take up space and widen the attack surface. The archive built the first way is
-cleaner.
-</div>
 
 ## Installation
 
