@@ -82,26 +82,18 @@ final class BlocksSupport extends AbstractPaymentMethodType
     }
 
     /**
-     * Те же имена полей и значения по умолчанию, что и в
-     * Gateway::settings_for_validation() — умышленно не единый метод на
-     * двоих: у Gateway это get_option() экземпляра шлюза, а здесь —
-     * $this->settings, массив из wp_options, который читает сам
-     * AbstractPaymentMethodType. Расхождение в списке полей заметит
-     * GatewaySettingsTest / BlocksPaymentMethodDataTest при следующем
-     * добавлении настройки — оба теста перечисляют одни и те же ключи.
+     * Список имён полей и умолчаний живёт в одном месте —
+     * GatewaySettings::VALIDATION_FIELD_DEFAULTS — и общий с Gateway
+     * (классическое оформление): здесь только чтение через get_setting()
+     * из $this->settings (сырой массив wp_options, который сам читает
+     * AbstractPaymentMethodType), свой список полей класс больше не хранит.
      *
      * @return array<string, string>
      */
     private function settings_for_validation(): array
     {
-        return [
-            'recipient' => (string) $this->get_setting('recipient', ''),
-            'cluster' => (string) $this->get_setting('cluster', 'devnet'),
-            'rpc_url' => (string) $this->get_setting('rpc_url', ''),
-            'token' => (string) $this->get_setting('token', 'USDC'),
-            'markup_percent' => (string) $this->get_setting('markup_percent', '0'),
-            'quote_ttl' => (string) $this->get_setting('quote_ttl', '900'),
-            'late_window' => (string) $this->get_setting('late_window', '86400'),
-        ];
+        return GatewaySettings::collect_for_validation(
+            fn (string $key, string $default): string => (string) $this->get_setting($key, $default)
+        );
     }
 }

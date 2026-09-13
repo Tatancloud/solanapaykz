@@ -86,25 +86,19 @@ final class Gateway extends WC_Payment_Gateway
 
     /**
      * Собирает текущие настройки в формате, который принимает
-     * GatewaySettings::validate(). Единственное место, где перечислены
-     * имена полей и их значения по умолчанию (те же, что в описании полей
-     * GatewaySettings::fields()): и process_admin_options(), и is_available()
-     * берут их отсюда, чтобы новое поле не пришлось добавлять в двух местах
-     * с риском разойтись.
+     * GatewaySettings::validate(). Список имён полей и умолчаний живёт в
+     * одном месте — GatewaySettings::VALIDATION_FIELD_DEFAULTS — и общий с
+     * BlocksSupport (блочное оформление): здесь только чтение через
+     * get_option() экземпляра шлюза, свой список полей класс больше не
+     * хранит.
      *
      * @return array<string, string>
      */
     private function settings_for_validation(): array
     {
-        return [
-            'recipient' => $this->get_option('recipient', ''),
-            'cluster' => $this->get_option('cluster', 'devnet'),
-            'rpc_url' => $this->get_option('rpc_url', ''),
-            'token' => $this->get_option('token', 'USDC'),
-            'markup_percent' => $this->get_option('markup_percent', '0'),
-            'quote_ttl' => $this->get_option('quote_ttl', '900'),
-            'late_window' => $this->get_option('late_window', '86400'),
-        ];
+        return GatewaySettings::collect_for_validation(
+            fn (string $key, string $default): string => (string) $this->get_option($key, $default)
+        );
     }
 
     /**
