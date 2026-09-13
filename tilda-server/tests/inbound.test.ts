@@ -297,6 +297,39 @@ describe('createPaymentFor', () => {
     expect(строка).not.toContain('token=x');
   });
 
+  it('предупреждение не обещает, что запрос проигнорирован — заказ создаётся', async () => {
+    // Прежняя формулировка заканчивалась словами «запрос игнорируется»,
+    // хотя код только пишет в журнал. Проверяется и текст, и факт: заказ
+    // на месте.
+    заказ = парс(телоЗаказа({ notify_url: 'https://tilda.cc/payment/notify/other' }));
+    const созданный = await createPaymentFor(заказ, deps);
+    expect(созданный.tildaOrderId).toBe(заказ.orderId);
+    const строка = журнал.find((с) => с.includes('notify_url'));
+    expect(строка).toBeDefined();
+    expect(строка).not.toContain('игнорируется');
+  });
+
+  it('предупреждение показывает, чем адреса различаются: путь своего и совпадение хостов', async () => {
+    // Логгер обрезает у адресов путь, поэтому два адреса, различающиеся
+    // только путём, печатались одинаково — и предупреждение выглядело как
+    // ошибка сравнения. Недостающую половину даёт СВОЙ путь: чужой
+    // остаётся обрезанным (см. тест выше).
+    заказ = парс(телоЗаказа({ notify_url: 'https://tilda.cc/payment/notify/other' }));
+    await createPaymentFor(заказ, deps);
+    const строка = журнал.find((с) => с.includes('notify_url'));
+    expect(строка).toContain(new URL(deps.config.tildaNotifyUrl).pathname);
+    expect(строка).toContain('"хостСовпадает":true');
+    // Чужой путь по-прежнему не попадает в журнал.
+    expect(строка).not.toContain('/payment/notify/other');
+  });
+
+  it('предупреждение отличает чужой хост от другого пути на том же хосте', async () => {
+    заказ = парс(телоЗаказа({ notify_url: 'https://evil.example/notify' }));
+    await createPaymentFor(заказ, deps);
+    const строка = журнал.find((с) => с.includes('notify_url'));
+    expect(строка).toContain('"хостСовпадает":false');
+  });
+
   it('совпадающий с настройками notify_url не пишет предупреждение', async () => {
     // По умолчанию телоЗаказа().notify_url совпадает с deps.config.tildaNotifyUrl.
     await createPaymentFor(заказ, deps);
