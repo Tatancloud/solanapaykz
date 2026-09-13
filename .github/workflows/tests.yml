@@ -19,7 +19,13 @@ jobs:
           node-version: '22'
       # --include=dev обязателен: в окружениях с NODE_ENV=production npm
       # молча пропускает зависимости разработки, и тесты просто не запустятся.
-      - run: npm install --include=dev
+      #
+      # npm ci, а не npm install: ci отказывается, если package.json и
+      # package-lock.json разошлись (install в этом случае молча ставит
+      # версию из package.json и переписывает замок) — ровно то расхождение,
+      # из-за которого прошлая поломка сборки проехала мимо этих проверок
+      # незамеченной (см. Dockerfile, тот же аргумент).
+      - run: npm ci --include=dev
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
@@ -32,14 +38,79 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: npm install --include=dev
+      # npm ci — та же причина, что и в задании sdk выше.
+      - run: npm ci --include=dev
       - run: npm run build
       - name: Зависимости сервера
         working-directory: tilda-server
-        run: npm install --include=dev
+        run: npm ci --include=dev
       - name: Тесты сервера
         working-directory: tilda-server
         run: npm test
+
+  docker-image:
+    name: Образ сервера — сборка и запуск
+    runs-on: ubuntu-latest
+    # Находка ревью: прошлая поломка сборки образа прошла все остальные
+    # задания зелёными — ни одно из них не собирает Dockerfile вообще, только
+    # npm-пакеты напрямую на раннере. Это задание закрывает ровно ту дыру:
+    # собирает именно tilda-server/Dockerfile (тот же контекст сборки —
+    # корень репозитория, что и в docker-compose.yml) и запускает контейнер
+    # из получившегося образа. Одной успешной сборки недостаточно — сборка
+    # уже проходила зелёной в тот раз, когда сервер не отвечал: настоящая
+    # проверка — что процесс внутри контейнера действительно поднимается и
+    # отвечает на HTTP.
+    steps:
+      - uses: actions/checkout@v4
+      - name: Собрать образ
+        run: docker build -f tilda-server/Dockerfile -t solanapaykz-tilda-server:ci .
+      - name: Запустить контейнер
+        # Настройки — tilda-server/config.ci.json, без единого настоящего
+        # секрета (см. комментарий в самом файле): цель — поднять процесс и
+        # получить ответ на HTTP, а не провести настоящий платёж.
+        run: |
+          docker run -d --name tilda-ci -p 18080:8080 \
+            -v "$PWD/tilda-server/config.ci.json:/app/tilda-server/config.json:ro" \
+            solanapaykz-tilda-server:ci
+      - name: Подождать готовности
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS -o /dev/null http://127.0.0.1:18080/; then
+              echo "готов после ${i} попыток"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "сервер не ответил за 30 секунд" >&2
+          docker logs tilda-ci
+          exit 1
+      - name: Smoke — корневая страница отвечает 200
+        run: |
+          код=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18080/)
+          if [ "$код" != "200" ]; then
+            echo "GET / вернул $код, а не 200" >&2
+            docker logs tilda-ci
+            exit 1
+          fi
+      - name: Smoke — вход без подписи отвечает 400
+        # Дефект, воспроизведённый ревью в другом месте того же сервера
+        # (routes-pay.ts): непроверенный вход без подписи не должен приниматься
+        # ни от собранного вручную процесса, ни от процесса из этого образа.
+        run: |
+          код=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:18080/tilda/pay -d 'order_id=1')
+          if [ "$код" != "400" ]; then
+            echo "POST /tilda/pay без подписи вернул $код, а не 400" >&2
+            docker logs tilda-ci
+            exit 1
+          fi
+      - name: Логи контейнера
+        if: always()
+        run: docker logs tilda-ci || true
+      - name: Убрать контейнер и образ
+        if: always()
+        run: |
+          docker rm -f tilda-ci || true
+          docker rmi solanapaykz-tilda-server:ci || true
 
   plugin:
     name: Плагин WooCommerce — тесты

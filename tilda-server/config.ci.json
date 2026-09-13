@@ -1,0 +1,32 @@
+{
+  "_комментарий": "Настройки ТОЛЬКО для smoke-проверки в CI (.github/workflows/tests.yml, задание docker-image) — не боевые, секретов не содержат. Проверяет ровно то, что должна: образ собирается и запущенный из него контейнер отвечает на HTTP, а не то, что платёж реально пройдёт (rpcUrl/tildaNotifyUrl тут ненастоящие).",
+
+  "recipient": "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
+  "rpcUrl": "https://api.devnet.solana.com",
+  "cluster": "devnet",
+  "token": "USDC",
+
+  "orderSecret": "ci-order-secret-not-real",
+  "notifySecret": "ci-notify-secret-not-real",
+
+  "tildaNotifyUrl": "https://example.invalid/notify",
+  "publicUrl": "https://example.invalid",
+
+  "adminPassword": "ci-admin-password",
+  "smtp": {
+    "host": "smtp.invalid",
+    "port": 465,
+    "user": "ci",
+    "pass": "ci",
+    "from": "ci@example.invalid"
+  },
+  "merchantEmail": "ci@example.invalid",
+
+  "databasePath": "/app/tilda-server/data/orders.sqlite",
+  "listenPort": 8080,
+
+  "_комментарий_listenHost": "0.0.0.0, а не 127.0.0.1 по умолчанию: контейнер запускается разовым `docker run -p`, а не docker-compose.yml этого проекта — снаружи достучаться до 127.0.0.1 контейнера через проброс порта Docker нельзя (см. комментарий у Config.listenHost в src/config.ts).",
+  "listenHost": "0.0.0.0",
+
+  "enableFormWebhook": false
+}
