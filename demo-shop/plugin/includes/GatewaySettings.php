@@ -32,6 +32,51 @@ final class GatewaySettings
     private const REQUIRED_CURRENCY = 'KZT';
 
     /**
+     * Единственный список полей, которые идут в validate(), и их значений
+     * по умолчанию — единственное место, которое их перечисляет.
+     *
+     * И Gateway (классическое оформление), и BlocksSupport (блочное) берут
+     * список отсюда через collect_for_validation(), а не хранят собственную
+     * копию: раньше каждый класс перечислял имена полей и умолчания сам, и
+     * расхождение — забыли обновить одно из двух мест при добавлении новой
+     * настройки — прошло бы молча: в одном оформлении настройка учлась бы,
+     * в другом нет.
+     *
+     * @var array<string, string>
+     */
+    private const VALIDATION_FIELD_DEFAULTS = [
+        'recipient' => '',
+        'cluster' => 'devnet',
+        'rpc_url' => '',
+        'token' => 'USDC',
+        'markup_percent' => '0',
+        'quote_ttl' => '900',
+        'late_window' => '86400',
+    ];
+
+    /**
+     * Собирает значения настроек для validate() по единому списку полей и
+     * умолчаний (см. VALIDATION_FIELD_DEFAULTS). $reader получает имя поля
+     * и умолчание и возвращает значение — Gateway передаёт сюда
+     * $this->get_option(...) экземпляра шлюза, BlocksSupport — чтение из
+     * сырого массива $this->settings (wp_options). Источники разные, а
+     * список имён и умолчаний — один на двоих.
+     *
+     * @param callable(string, string): mixed $reader
+     * @return array<string, string>
+     */
+    public static function collect_for_validation(callable $reader): array
+    {
+        $values = [];
+
+        foreach (self::VALIDATION_FIELD_DEFAULTS as $key => $default) {
+            $values[$key] = (string) $reader($key, $default);
+        }
+
+        return $values;
+    }
+
+    /**
      * Валюта магазина передаётся аргументом, а не читается внутри через
      * get_woocommerce_currency(): эта функция WordPress недоступна в
      * тестовом окружении, а проверка настроек должна оставаться чистой

@@ -223,4 +223,59 @@ final class GatewaySettingsTest extends TestCase
         $description = mb_strtolower($fields['currency_notice']['description']);
         self::assertStringContainsString('eur', $description);
     }
+
+    /**
+     * Gateway (классическое оформление) и BlocksSupport (блочное) берут
+     * список полей для validate() из одного места —
+     * collect_for_validation() — вместо собственных копий. Проверяем, что
+     * этот общий список не разошёлся с полями, которые продавец видит в
+     * форме настроек: раньше расхождение было бы молчаливым — в одном
+     * оформлении новая настройка учлась бы, в другом нет.
+     */
+    public function test_список_полей_для_валидации_совпадает_с_полями_формы(): void
+    {
+        // Читатель просто возвращает умолчание — нас интересует только
+        // набор ключей, а не конкретные значения.
+        $validation_keys = array_keys(GatewaySettings::collect_for_validation(
+            static fn (string $key, string $default): string => $default
+        ));
+
+        // Поля формы, которые не участвуют в проверке настроек: чекбокс
+        // включения, информационный блок про валюту и текстовые поля
+        // названия/описания, которые видит только покупатель.
+        $non_validation_fields = ['currency_notice', 'enabled', 'title', 'description'];
+        $form_keys = array_values(array_diff(array_keys(GatewaySettings::fields('KZT')), $non_validation_fields));
+
+        sort($validation_keys);
+        sort($form_keys);
+
+        self::assertSame(
+            $form_keys,
+            $validation_keys,
+            'Список полей для validate() разошёлся со списком настроек формы — значит, '
+            . 'классическое и блочное оформление увидят разный набор настроек.'
+        );
+    }
+
+    /**
+     * Умолчания для validate() должны совпадать с умолчаниями, которые
+     * продавец видит в форме настроек (GatewaySettings::fields()) — иначе
+     * до первого сохранения формы шлюз считал бы настройку по одному
+     * значению, а форма показывала бы продавцу другое.
+     */
+    public function test_умолчания_для_валидации_совпадают_с_умолчаниями_формы(): void
+    {
+        $validation_defaults = GatewaySettings::collect_for_validation(
+            static fn (string $key, string $default): string => $default
+        );
+        $fields = GatewaySettings::fields('KZT');
+
+        foreach ($validation_defaults as $key => $default) {
+            self::assertSame(
+                $fields[$key]['default'],
+                $default,
+                "Умолчание поля «{$key}» для validate() разошлось с умолчанием в форме продавца."
+            );
+        }
+    }
 }
