@@ -1,7 +1,7 @@
 {
   "name": "@solanapaykz/core",
   "version": "0.1.0",
-  "description": "SDK для приёма платежей в USDC/SOL с конвертацией из тенге",
+  "description": "Accept USDC and SOL on Solana priced in Kazakhstani tenge: rate, quote, Solana Pay request, on-chain verification",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -22,7 +22,7 @@
     "type": "git",
     "url": "git+https://github.com/Tatancloud/solanapaykz.git"
   },
-  "homepage": "https://github.com/Tatancloud/solanapaykz#readme",
+  "homepage": "https://tatancloud.github.io/solanapaykz/",
   "bugs": {
     "url": "https://github.com/Tatancloud/solanapaykz/issues"
   },
