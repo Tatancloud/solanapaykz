@@ -19,7 +19,15 @@ WORKDIR /app
 # --- корневой SDK (@solanapaykz/core) ---
 COPY package.json package-lock.json tsconfig.json tsup.config.ts ./
 COPY src ./src
-RUN npm install --include=dev
+# npm ci, а не npm install: ci сверяет package.json с package-lock.json и
+# ОТКАЗЫВАЕТСЯ при расхождении, install в этом случае молча ставит версию
+# из package.json и переписывает замок ПРЯМО ВНУТРИ ОБРАЗА — тогда в
+# репозитории лежит один набор версий, а в собранном образе другой, и
+# увидеть это неоткуда: тесты в CI гоняются по package-lock.json
+# репозитория, а не по тому, что реально попало в слой образа. Проверено
+# ревью: подмена версии в package.json без правки замка — npm ci падает
+# сразу, npm install проходит и переписывает lock.
+RUN npm ci --include=dev
 RUN npm run build
 
 # --- tilda-server ---
@@ -27,10 +35,12 @@ WORKDIR /app/tilda-server
 COPY tilda-server/package.json tilda-server/package-lock.json tilda-server/tsconfig.json ./
 COPY tilda-server/src ./src
 COPY tilda-server/public ./public
-# npm install создаёт node_modules/@solanapaykz/core -> ../../.. только
-# после того, как в /app уже лежит package.json корневого пакета (см. выше) —
-# порядок шагов этого файла важен.
-RUN npm install --include=dev
+# npm ci создаёт node_modules/@solanapaykz/core -> ../../.. только после
+# того, как в /app уже лежит package.json корневого пакета (см. выше) —
+# порядок шагов этого файла важен. Проверено ревью: npm ci корректно
+# разрешает зависимость "file:.." символической ссылкой на соседний
+# каталог (не копией), как и npm install.
+RUN npm ci --include=dev
 RUN npm run build
 
 # Урезаем dev-зависимости в обоих пакетах перед переносом в финальный образ —

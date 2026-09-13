@@ -19,7 +19,13 @@ jobs:
           node-version: '22'
       # --include=dev обязателен: в окружениях с NODE_ENV=production npm
       # молча пропускает зависимости разработки, и тесты просто не запустятся.
-      - run: npm install --include=dev
+      #
+      # npm ci, а не npm install: ci отказывается, если package.json и
+      # package-lock.json разошлись (install в этом случае молча ставит
+      # версию из package.json и переписывает замок) — ровно то расхождение,
+      # из-за которого прошлая поломка сборки проехала мимо этих проверок
+      # незамеченной (см. Dockerfile, тот же аргумент).
+      - run: npm ci --include=dev
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
@@ -32,11 +38,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: npm install --include=dev
+      # npm ci — та же причина, что и в задании sdk выше.
+      - run: npm ci --include=dev
       - run: npm run build
       - name: Зависимости сервера
         working-directory: tilda-server
-        run: npm install --include=dev
+        run: npm ci --include=dev
       - name: Тесты сервера
         working-directory: tilda-server
         run: npm test
