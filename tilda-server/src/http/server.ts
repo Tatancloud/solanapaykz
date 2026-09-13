@@ -154,6 +154,16 @@ async function обработатьЗапрос(
   const url = new URL(req.url ?? '/', 'http://localhost');
   const метод = req.method ?? 'GET';
 
+  // Корень отдаёт короткую страницу о том, что это за сервер. Раньше здесь
+  // был общий 404: технически верно (маршрута нет), но человек, открывший
+  // адрес, видел сломанный сайт вместо объяснения. Адрес публичный — его
+  // видно в настройках интеграции Tilda и в документации.
+  if (метод === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) {
+    res.writeHead(200, { ...ЗАГОЛОВКИ_БЕЗОПАСНОСТИ, 'content-type': 'text/html; charset=utf-8' });
+    res.end(страницаОСервере());
+    return;
+  }
+
   if (метод === 'POST' && url.pathname === '/tilda/pay') {
     await обработатьTildaPay(req, res, deps);
     return;
@@ -320,4 +330,52 @@ if (этоТочкаВхода) {
       process.stderr.write(`${(е as Error).message}\n`);
       process.exitCode = 1;
     });
+}
+
+/**
+ * Страница по корневому адресу. Не витрина и не документация: её задача —
+ * объяснить случайному посетителю, куда он попал, и увести к настоящим
+ * источникам. Разметка встроена в код, а не лежит файлом, потому что она
+ * одна и меняется вместе с сервером.
+ */
+function страницаОСервере(): string {
+  return `<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SolanaPay-KZ — платёжный сервер</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    margin: 0; padding: 48px 20px;
+    font: 17px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+  }
+  main { max-width: 36rem; margin: 0 auto; }
+  h1 { font-size: 26px; margin: 0 0 16px; }
+  p { margin: 0 0 16px; }
+  .quiet { opacity: .7; font-size: 15px; }
+  a { color: #0b5ed7; }
+  @media (prefers-color-scheme: dark) { a { color: #79b8ff; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>SolanaPay-KZ — платёжный сервер</h1>
+  <p>Этот адрес обслуживает приём оплаты в USDC и SOL на Solana для магазинов
+     на платформе Tilda. Здесь нечего смотреть: страницы оплаты открываются
+     по ссылке, которую выдаёт магазин при оформлении заказа.</p>
+  <p>Деньги идут напрямую с кошелька покупателя на кошелёк продавца. Этот
+     сервер их не принимает, не хранит и не может задержать. Приватные ключи
+     он не запрашивает и не создаёт — для приёма платежа достаточно
+     публичного адреса.</p>
+  <p class="quiet">Если вас просят ввести здесь приватный ключ или
+     мнемоническую фразу — это мошенник. Ни одна страница этого сервера
+     такого не делает.</p>
+  <p><a href="https://tatancloud.github.io/solanapaykz/ru/">Документация</a>
+     · <a href="https://github.com/Tatancloud/solanapaykz">Исходный код</a>
+     · лицензия MIT</p>
+</main>
+</body>
+</html>`;
 }
