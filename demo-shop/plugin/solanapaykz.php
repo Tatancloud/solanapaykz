@@ -71,6 +71,7 @@ require_once __DIR__ . '/includes/Quote.php';
 require_once __DIR__ . '/includes/Base58.php';
 require_once __DIR__ . '/includes/PaymentRequest.php';
 require_once __DIR__ . '/includes/GatewaySettings.php';
+require_once __DIR__ . '/includes/BlocksPaymentMethodData.php';
 
 const REQUIREMENTS = [
     'php' => '8.1',
@@ -141,6 +142,40 @@ add_action('plugins_loaded', static function (): void {
 
     Ajax::register();
     Scheduler::register();
+
+    /**
+     * Блочное оформление заказа (Cart & Checkout blocks) — умолчание для
+     * новых установок WooCommerce — не подхватывает обычные шлюзы
+     * (наследников WC_Payment_Gateway) сам: ему нужна отдельная
+     * регистрация через AbstractPaymentMethodType. Без неё продавец
+     * включает плагин, видит его в списке способов оплаты в админке — и
+     * не видит на странице оформления заказа, без единой ошибки в
+     * журнале.
+     *
+     * woocommerce_blocks_loaded — хук, который сама WooCommerce Blocks
+     * рекомендует вместо plugins_loaded: колбэки на одном приоритете
+     * plugins_loaded выполняются в непредсказуемом порядке, а
+     * woocommerce_blocks_loaded гарантированно наступает уже после того,
+     * как класс AbstractPaymentMethodType либо существует (Blocks
+     * загружены), либо не появится вовсе (старая версия WooCommerce без
+     * Blocks) — тогда просто не регистрируемся и продолжаем работать в
+     * классическом оформлении, а не падаем фатальной ошибкой на
+     * `extends` несуществующего класса.
+     */
+    add_action('woocommerce_blocks_loaded', static function (): void {
+        if (!class_exists(\Automattic\WooCommerce\Blocks\Payments\Integrations\AbstractPaymentMethodType::class)) {
+            return;
+        }
+
+        require_once __DIR__ . '/includes/BlocksSupport.php';
+
+        add_action(
+            'woocommerce_blocks_payment_method_type_registration',
+            static function (\Automattic\WooCommerce\Blocks\Payments\PaymentMethodRegistry $registry): void {
+                $registry->register(new BlocksSupport());
+            }
+        );
+    });
 });
 
 /**
