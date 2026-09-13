@@ -335,16 +335,19 @@ if (этоТочкаВхода) {
 /**
  * Страница по корневому адресу. Не витрина и не документация: её задача —
  * объяснить случайному посетителю, куда он попал, и увести к настоящим
- * источникам. Разметка встроена в код, а не лежит файлом, потому что она
- * одна и меняется вместе с сервером.
+ * источникам.
+ *
+ * Оба языка на одной странице, без переключателя: страница короткая, а
+ * переключатель — это состояние, которое надо где-то хранить и которое
+ * ломается ровно тогда, когда человек пришёл разбираться в непонятном.
  */
 function страницаОСервере(): string {
   return `<!doctype html>
-<html lang="ru">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SolanaPay-KZ — платёжный сервер</title>
+<title>SolanaPay-KZ — payment server</title>
 <style>
   :root { color-scheme: light dark; }
   body {
@@ -352,26 +355,46 @@ function страницаОСервере(): string {
     font: 17px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
   }
   main { max-width: 36rem; margin: 0 auto; }
-  h1 { font-size: 26px; margin: 0 0 16px; }
+  h1 { font-size: 26px; margin: 0 0 18px; }
+  h2 { font-size: 15px; letter-spacing: .04em; text-transform: uppercase; opacity: .55;
+       margin: 40px 0 12px; font-weight: 600; }
   p { margin: 0 0 16px; }
-  .quiet { opacity: .7; font-size: 15px; }
+  .warn { font-size: 15px; opacity: .8; border-left: 3px solid currentColor; padding-left: 14px; }
   a { color: #0b5ed7; }
   @media (prefers-color-scheme: dark) { a { color: #79b8ff; } }
+  hr { border: 0; border-top: 1px solid; opacity: .15; margin: 40px 0 0; }
 </style>
 </head>
 <body>
 <main>
-  <h1>SolanaPay-KZ — платёжный сервер</h1>
+  <h1>SolanaPay-KZ — payment server</h1>
+
+  <p>This address serves USDC and SOL payments on Solana for shops running on
+     the Tilda platform. There is nothing to browse here: payment pages open
+     through the link a shop gives you when you place an order.</p>
+  <p>Money moves straight from the buyer's wallet to the merchant's wallet.
+     This server neither receives, holds nor can delay it. It does not ask for
+     private keys and cannot create them — a public address is all that
+     accepting a payment needs.</p>
+  <p class="warn">If anything here asks you for a private key or a seed
+     phrase, it is a fraud. No page on this server does that.</p>
+  <p><a href="https://tatancloud.github.io/solanapaykz/">Documentation</a>
+     · <a href="https://github.com/Tatancloud/solanapaykz">Source code</a>
+     · MIT licence</p>
+
+  <hr>
+  <h2>По-русски</h2>
+
   <p>Этот адрес обслуживает приём оплаты в USDC и SOL на Solana для магазинов
-     на платформе Tilda. Здесь нечего смотреть: страницы оплаты открываются
-     по ссылке, которую выдаёт магазин при оформлении заказа.</p>
+     на платформе Tilda. Здесь нечего смотреть: страницы оплаты открываются по
+     ссылке, которую выдаёт магазин при оформлении заказа.</p>
   <p>Деньги идут напрямую с кошелька покупателя на кошелёк продавца. Этот
      сервер их не принимает, не хранит и не может задержать. Приватные ключи
-     он не запрашивает и не создаёт — для приёма платежа достаточно
-     публичного адреса.</p>
-  <p class="quiet">Если вас просят ввести здесь приватный ключ или
-     мнемоническую фразу — это мошенник. Ни одна страница этого сервера
-     такого не делает.</p>
+     он не запрашивает и не создаёт — для приёма платежа достаточно публичного
+     адреса.</p>
+  <p class="warn">Если вас просят ввести здесь приватный ключ или
+     мнемоническую фразу — это мошенник. Ни одна страница этого сервера такого
+     не делает.</p>
   <p><a href="https://tatancloud.github.io/solanapaykz/ru/">Документация</a>
      · <a href="https://github.com/Tatancloud/solanapaykz">Исходный код</a>
      · лицензия MIT</p>

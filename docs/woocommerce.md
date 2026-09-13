@@ -62,6 +62,37 @@ bash build.sh
 # produces build/solanapaykz-0.1.0.zip, the same file
 ```
 
+## Which Solana node to use
+
+The plugin asks a Solana node whether a payment has arrived. A node is neither
+our server nor your shop's: it is a machine that talks to the blockchain.
+
+<div class="важно">
+<strong>A public node is not suitable for a live shop.</strong> It rate-limits
+requests — with several orders in a row it starts refusing, and payments stop
+being detected for everyone at once. And it does not keep the full history: we
+look a payment up by its reference, and if the node has already discarded that
+part of the history it will honestly answer "nothing here". The buyer has
+paid, the money is yours, and the order sits unpaid.
+</div>
+
+Get an endpoint from a node provider — Helius, QuickNode, Alchemy,
+Chainstack. All of them have free tiers that are enough for a small shop. The
+address looks roughly like this:
+
+```
+https://mainnet.helius-rpc.com/?api-key=your-key
+```
+
+It is yours alone. The plugin never sends it anywhere and never displays it:
+requests to the node go straight from your own server. We neither see nor
+store it — the project has no server for the plugin to send anything to.
+
+For testing, the public `https://api.devnet.solana.com` is fine: the test
+network carries no load and payments are fresh enough not to have fallen out
+of history. Our [demo shop](https://shop.pagafox.kz) runs exactly that way —
+a deliberate compromise for a demonstration, not a model for a live install.
+
 ## Installation
 
 1. Upload the plugin archive via **Plugins → Add New → Upload Plugin**, or
