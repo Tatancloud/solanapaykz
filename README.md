@@ -33,7 +33,7 @@ money.
 
 | Component | For | Tests | Status |
 |---|---|---|---|
-| [`@solanapaykz/core`](https://tatancloud.github.io/solanapaykz/sdk) | developers on any platform | 126 | working |
+| [`@solanapaykz/core`](https://www.npmjs.com/package/@solanapaykz/core) | developers on any platform | 126 | published on npm |
 | [WooCommerce plugin](https://tatancloud.github.io/solanapaykz/woocommerce) | WordPress shops | 213 | working |
 | [Tilda server](https://tatancloud.github.io/solanapaykz/tilda) | Tilda shops | 310 | working, integration under review by Tilda |
 

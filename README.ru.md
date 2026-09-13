@@ -36,7 +36,7 @@ SolanaPay-KZ отвечает на все три: считает курс по �
 
 | Составная часть | Для кого | Тестов | Состояние |
 |---|---|---|---|
-| [`@solanapaykz/core`](https://tatancloud.github.io/solanapaykz/ru/sdk) | разработчикам на любой платформе | 126 | работает |
+| [`@solanapaykz/core`](https://www.npmjs.com/package/@solanapaykz/core) | разработчикам на любой платформе | 126 | опубликован в npm |
 | [Плагин WooCommerce](https://tatancloud.github.io/solanapaykz/ru/woocommerce) | магазинам на WordPress | 213 | работает |
 | [Сервер для Tilda](https://tatancloud.github.io/solanapaykz/ru/tilda) | магазинам на Tilda | 310 | работает, интеграция на модерации Tilda |
 

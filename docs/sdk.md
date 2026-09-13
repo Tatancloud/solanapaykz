@@ -30,24 +30,13 @@ integration's job.
 
 ## Installation
 
-<div class="важно">
-<strong>The package is not published to npm yet.</strong> The first command
-below will work once it is; until then install straight from the repository —
-that is a working method, not a stopgap: npm installs packages from git.
-</div>
-
 ```bash
-# once published
 npm install @solanapaykz/core
-
-# for now — straight from the repository
-npm install github:Tatancloud/solanapaykz
 ```
 
-Installing from the repository pulls the sources and builds the package in
-place, so you need Node.js 22 and a few seconds for the build. The version is
-then pinned to whatever `main` currently holds; if you need reproducibility,
-name a commit: `npm install github:Tatancloud/solanapaykz#<commit hash>`.
+If you need an unpublished change from `main`, the package also installs
+straight from the repository and builds in place:
+`npm install github:Tatancloud/solanapaykz#<commit hash>`.
 
 The package already pins exact versions of `@solana/pay` and `@solana/kit`
 — there's no need to change them by hand (and `@solana/kit@8` must not be
