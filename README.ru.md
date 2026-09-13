@@ -37,10 +37,10 @@ SolanaPay-KZ отвечает на все три: считает курс по �
 | Составная часть | Для кого | Тестов | Состояние |
 |---|---|---|---|
 | [`@solanapaykz/core`](https://www.npmjs.com/package/@solanapaykz/core) | разработчикам на любой платформе | 126 | опубликован в npm |
-| [Плагин WooCommerce](https://tatancloud.github.io/solanapaykz/ru/woocommerce) | магазинам на WordPress | 213 | работает |
+| [Плагин WooCommerce](https://tatancloud.github.io/solanapaykz/ru/woocommerce) | магазинам на WordPress | 222 | [выпущен](https://github.com/Tatancloud/solanapaykz/releases/tag/v0.1.0) |
 | [Сервер для Tilda](https://tatancloud.github.io/solanapaykz/ru/tilda) | магазинам на Tilda | 310 | работает, интеграция на модерации Tilda |
 
-649 автоматических проверок на трёх языках плюс сквозная проверка настоящими
+658 автоматических проверок на трёх языках плюс сквозная проверка настоящими
 платежами в тестовой сети Solana.
 
 ## Как проходит платёж

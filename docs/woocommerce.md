@@ -37,7 +37,7 @@ migration.
 
 ## Where to get the plugin
 
-**[Download solanapaykz-0.1.0.zip](download/solanapaykz-0.1.0.zip)** — ready to
+**[Download solanapaykz-0.1.0.zip](https://github.com/Tatancloud/solanapaykz/releases/download/v0.1.0/solanapaykz-0.1.0.zip)** — ready to
 install in WordPress. It contains only what production needs: no tests, no
 development dependencies, no housekeeping files.
 
@@ -47,7 +47,9 @@ SHA-256 checksum, so you can confirm you got our file and not someone else's:
 4414b509482c6ae6088a447b716aaa6db07f56f51d2aaaa85d69411ae1dfb1f8
 ```
 
-Verify with `sha256sum solanapaykz-0.1.0.zip` — the value must match. This is
+Verify with `sha256sum solanapaykz-0.1.0.zip` — the value must match.
+Every release, with every version, is on the
+[releases page](https://github.com/Tatancloud/solanapaykz/releases). This is
 not a formality: the plugin handles money, and a substituted archive costs
 more than the minute spent checking.
 

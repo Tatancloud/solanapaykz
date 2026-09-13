@@ -34,10 +34,10 @@ money.
 | Component | For | Tests | Status |
 |---|---|---|---|
 | [`@solanapaykz/core`](https://www.npmjs.com/package/@solanapaykz/core) | developers on any platform | 126 | published on npm |
-| [WooCommerce plugin](https://tatancloud.github.io/solanapaykz/woocommerce) | WordPress shops | 213 | working |
+| [WooCommerce plugin](https://tatancloud.github.io/solanapaykz/woocommerce) | WordPress shops | 222 | [released](https://github.com/Tatancloud/solanapaykz/releases/tag/v0.1.0) |
 | [Tilda server](https://tatancloud.github.io/solanapaykz/tilda) | Tilda shops | 310 | working, integration under review by Tilda |
 
-649 automated tests across three languages, plus end-to-end verification with
+658 automated tests across three languages, plus end-to-end verification with
 real payments on Solana devnet.
 
 ## How a payment works

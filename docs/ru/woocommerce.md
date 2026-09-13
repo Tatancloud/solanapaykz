@@ -36,7 +36,7 @@ altlabel: English
 
 ## Где взять плагин
 
-**[Скачать solanapaykz-0.1.0.zip](download/solanapaykz-0.1.0.zip)** — готовый
+**[Скачать solanapaykz-0.1.0.zip](https://github.com/Tatancloud/solanapaykz/releases/download/v0.1.0/solanapaykz-0.1.0.zip)** — готовый
 архив для установки в WordPress. Внутри только то, что нужно в бою: без
 тестов, без зависимостей разработчика, без служебных файлов.
 
@@ -47,6 +47,8 @@ altlabel: English
 ```
 
 Проверить: `sha256sum solanapaykz-0.1.0.zip` — значение должно совпасть.
+Все выпуски со всеми версиями — на
+[странице релизов](https://github.com/Tatancloud/solanapaykz/releases).
 Это не формальность: плагин принимает деньги, и подменённый архив стоит
 дороже, чем минута на проверку.
 
