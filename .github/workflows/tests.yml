@@ -42,13 +42,17 @@ jobs:
         run: npm test
 
   plugin:
-    name: Плагин WooCommerce
+    name: Плагин WooCommerce — тесты
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.1'
+          # Тесты гоняются на 8.3, а не на заявленном минимуме 8.1: PHPUnit 11
+          # требует PHP 8.2 и выше. Сам плагин на 8.1 работает — это проверяет
+          # отдельное задание ниже, иначе обещание про 8.1 было бы словом без
+          # подтверждения.
+          php-version: '8.3'
           # bcmath обязателен: без него расчёт суммы теряет точность на
           # заказах дороже 92 233,72 ₸ — см. документацию.
           extensions: bcmath, curl, json
@@ -58,3 +62,23 @@ jobs:
       - name: Тесты плагина
         working-directory: demo-shop/plugin
         run: vendor/bin/phpunit
+
+  plugin-php81:
+    name: Плагин WooCommerce — минимальный PHP 8.1
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.1'
+          extensions: bcmath, curl, json
+      - name: Зависимости боевой поставки
+        working-directory: demo-shop/plugin
+        # Только то, что уезжает к продавцу: средства разработки требуют 8.2+
+        # и в поставку не входят.
+        run: composer install --no-interaction --no-progress --no-dev
+      - name: Разбор всех файлов плагина
+        working-directory: demo-shop/plugin
+        # Проверка синтаксиса, а не поведения: доказывает, что на 8.1 плагин
+        # хотя бы загрузится. Поведение проверяют тесты на 8.3.
+        run: find . -path ./vendor -prune -o -name '*.php' -print0 | xargs -0 -n1 php -l
