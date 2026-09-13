@@ -44,25 +44,32 @@ final class CustomerMessage
     {
         switch ($order_status) {
             case 'pending':
-                return ['status' => 'pending', 'message' => 'Ожидаем оплату.'];
+                return ['status' => 'pending', 'message' => __('Awaiting payment.', 'solanapaykz')];
 
             case 'processing':
             case 'completed':
-                return ['status' => 'paid', 'message' => 'Оплата получена. Спасибо!'];
+                return ['status' => 'paid', 'message' => __('Payment received. Thank you!', 'solanapaykz')];
 
             case 'refunded':
                 return [
                     'status' => 'paid',
-                    'message' => 'Заказ оплачен и возвращён. Если у вас остались вопросы, напишите в магазин.',
+                    'message' => __(
+                        'The order has been paid and refunded. If you still have questions, '
+                        . 'please contact the store.',
+                        'solanapaykz'
+                    ),
                 ];
 
             case 'cancelled':
-                return ['status' => 'expired', 'message' => 'Срок оплаты истёк, заказ отменён.'];
+                return [
+                    'status' => 'expired',
+                    'message' => __('The payment window has expired, the order has been cancelled.', 'solanapaykz'),
+                ];
 
             case 'on-hold':
                 return [
                     'status' => 'mismatch',
-                    'message' => 'Платёж проверяется вручную. Продавец свяжется с вами.',
+                    'message' => __('The payment is being verified manually. The seller will contact you.', 'solanapaykz'),
                 ];
 
             default:
@@ -73,7 +80,11 @@ final class CustomerMessage
                 // который плагин больше не тронет (см. PaymentDecision).
                 return [
                     'status' => 'mismatch',
-                    'message' => 'Оплата криптовалютой для этого заказа сейчас недоступна. Свяжитесь с магазином.',
+                    'message' => __(
+                        'Cryptocurrency payment for this order is currently unavailable. '
+                        . 'Please contact the store.',
+                        'solanapaykz'
+                    ),
                 ];
         }
     }
@@ -94,15 +105,24 @@ final class CustomerMessage
     public static function for_decision(string $action, string $order_status): array
     {
         return match ($action) {
-            'complete' => ['status' => 'paid', 'message' => 'Оплата получена. Спасибо!'],
-            'cancel' => ['status' => 'expired', 'message' => 'Срок оплаты истёк. Оформите заказ заново.'],
+            'complete' => ['status' => 'paid', 'message' => __('Payment received. Thank you!', 'solanapaykz')],
+            'cancel' => [
+                'status' => 'expired',
+                'message' => __('The payment window has expired. Please check out again.', 'solanapaykz'),
+            ],
             'hold' => [
                 'status' => 'mismatch',
-                'message' => 'Платёж найден, но не сошёлся с суммой заказа. Магазин свяжется с вами.',
+                'message' => __(
+                    'A payment was found, but it did not match the order amount. The store will contact you.',
+                    'solanapaykz'
+                ),
             ],
             'late' => [
                 'status' => 'late',
-                'message' => 'Платёж получен после отмены заказа. Магазин свяжется с вами.',
+                'message' => __(
+                    'The payment was received after the order was cancelled. The store will contact you.',
+                    'solanapaykz'
+                ),
             ],
             default => self::for_order_status($order_status),
         };

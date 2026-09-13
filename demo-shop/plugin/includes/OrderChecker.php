@@ -21,12 +21,24 @@ use WC_Order;
  */
 final class OrderChecker
 {
-    /** Заказ с испорченными данными оплаты — обе ветки ниже пишут один и тот же текст покупателю. */
-    private const CORRUPTED_PAYMENT_DATA_MESSAGE =
-        'Данные оплаты повреждены, автоматическая проверка невозможна. Магазин свяжется с вами.';
+    /**
+     * Заказ с испорченными данными оплаты — обе ветки ниже пишут один и тот же
+     * текст покупателю. Метод, а не константа: класс const не может держать
+     * результат вызова __() (не константное выражение).
+     */
+    private static function corrupted_payment_data_message(): string
+    {
+        return __(
+            'Payment data is corrupted, automatic verification is not possible. The store will contact you.',
+            'solanapaykz'
+        );
+    }
 
     /** Сбой связи с узлом или ошибка конфигурации — обе ветки не отвечают на вопрос о платеже. */
-    private const UNAVAILABLE_MESSAGE = 'Не удалось проверить оплату. Пробуем ещё раз.';
+    private static function unavailable_message(): string
+    {
+        return __('Could not verify the payment. We will try again.', 'solanapaykz');
+    }
 
     /**
      * @param ?SolanaChain $chain Только для тестов: подменяет настоящий
@@ -79,7 +91,7 @@ final class OrderChecker
                     $order_id
                 ));
 
-                return ['status' => 'unknown', 'message' => self::UNAVAILABLE_MESSAGE, 'mutated' => false];
+                return ['status' => 'unknown', 'message' => self::unavailable_message(), 'mutated' => false];
             }
 
             if ($quote === null || $reference === null || $recipient === null) {
@@ -101,17 +113,20 @@ final class OrderChecker
                 // ветка стоит до него, поэтому обязана соблюдать то же правило
                 // сама.
                 if ($order->get_status() !== 'pending') {
-                    return ['status' => 'error', 'message' => self::CORRUPTED_PAYMENT_DATA_MESSAGE, 'mutated' => false];
+                    return ['status' => 'error', 'message' => self::corrupted_payment_data_message(), 'mutated' => false];
                 }
 
                 $order->update_status(
                     'failed',
-                    'SolanaPay-KZ: не удалось прочитать данные оплаты (котировка, метка платежа '
-                    . 'или адрес получателя повреждены либо отсутствуют). Автоматическая проверка '
-                    . 'невозможна — оплату этого заказа нужно проверить вручную.'
+                    __(
+                        'SolanaPay-KZ: could not read the payment data (the quote, payment reference, '
+                        . 'or recipient address is missing or corrupted). Automatic verification is not '
+                        . 'possible — this order\'s payment needs to be checked manually.',
+                        'solanapaykz'
+                    )
                 );
 
-                return ['status' => 'error', 'message' => self::CORRUPTED_PAYMENT_DATA_MESSAGE, 'mutated' => true];
+                return ['status' => 'error', 'message' => self::corrupted_payment_data_message(), 'mutated' => true];
             }
 
             // rpc_url берётся из текущих настроек шлюза, а монета и число
@@ -134,7 +149,7 @@ final class OrderChecker
                     $quote->cluster
                 ));
 
-                return ['status' => 'unknown', 'message' => self::UNAVAILABLE_MESSAGE, 'mutated' => false];
+                return ['status' => 'unknown', 'message' => self::unavailable_message(), 'mutated' => false];
             }
 
             try {
@@ -155,7 +170,7 @@ final class OrderChecker
                 // покупателю говорим, что проверка временно недоступна.
                 error_log('SolanaPay-KZ: ' . $error->getMessage());
 
-                return ['status' => 'unknown', 'message' => self::UNAVAILABLE_MESSAGE, 'mutated' => false];
+                return ['status' => 'unknown', 'message' => self::unavailable_message(), 'mutated' => false];
             }
 
             // Перечитываем заказ перед мутацией — статус мог смениться другим
@@ -178,7 +193,7 @@ final class OrderChecker
             $fresh_order = wc_get_order($order_id);
 
             if (!$fresh_order instanceof WC_Order) {
-                return ['status' => 'error', 'message' => 'Заказ не найден.', 'mutated' => false];
+                return ['status' => 'error', 'message' => __('Order not found.', 'solanapaykz'), 'mutated' => false];
             }
 
             $decision = PaymentDecision::decide(

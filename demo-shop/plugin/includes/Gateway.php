@@ -26,15 +26,18 @@ final class Gateway extends WC_Payment_Gateway
     {
         $this->id = 'solanapaykz';
         $this->method_title = 'SolanaPay-KZ';
-        $this->method_description = 'Приём оплаты в криптовалюте на блокчейне Solana '
-            . 'с автоматическим пересчётом из тенге. Деньги идут напрямую на кошелёк продавца.';
+        $this->method_description = __(
+            'Accept cryptocurrency payments on the Solana blockchain, automatically converted '
+            . 'from tenge. Funds go directly to the merchant\'s wallet.',
+            'solanapaykz'
+        );
         $this->has_fields = false;
         $this->supports = ['products'];
 
         $this->init_form_fields();
         $this->init_settings();
 
-        $this->title = $this->get_option('title', 'Оплата криптовалютой (USDC)');
+        $this->title = $this->get_option('title', __('Pay with cryptocurrency (USDC)', 'solanapaykz'));
         $this->description = $this->get_option('description', '');
 
         add_action('woocommerce_update_options_payment_gateways_' . $this->id, [$this, 'process_admin_options']);
@@ -67,7 +70,7 @@ final class Gateway extends WC_Payment_Gateway
         if ($errors !== []) {
             $this->update_option('enabled', 'no');
             \WC_Admin_Settings::add_error(
-                'SolanaPay-KZ выключен, пока настройки не исправлены.'
+                __('SolanaPay-KZ has been disabled until the settings are corrected.', 'solanapaykz')
             );
         }
 
@@ -113,7 +116,10 @@ final class Gateway extends WC_Payment_Gateway
             // Без сообщения покупатель просто вернётся на форму оформления
             // без единого слова о причине: WooCommerce в этом случае никуда
             // не перенаправляет.
-            wc_add_notice('Не удалось найти заказ для оплаты. Попробуйте оформить заказ заново.', 'error');
+            wc_add_notice(
+                __('Could not find the order to pay for. Please try checking out again.', 'solanapaykz'),
+                'error'
+            );
 
             return ['result' => 'failure'];
         }
@@ -156,15 +162,21 @@ final class Gateway extends WC_Payment_Gateway
                 // хуже, чем не продать.
                 error_log('SolanaPay-KZ: ' . $error->getMessage());
                 wc_add_notice(
-                    'Оплата криптовалютой сейчас недоступна: не удалось получить курс. '
-                    . 'Выберите другой способ оплаты.',
+                    __(
+                        'Cryptocurrency payment is currently unavailable: could not fetch the '
+                        . 'exchange rate. Please choose another payment method.',
+                        'solanapaykz'
+                    ),
                     'error'
                 );
 
                 return ['result' => 'failure'];
             } catch (Throwable $error) {
                 error_log('SolanaPay-KZ: ' . $error->getMessage());
-                wc_add_notice('Не удалось подготовить оплату криптовалютой. Выберите другой способ.', 'error');
+                wc_add_notice(
+                    __('Could not prepare the cryptocurrency payment. Please choose another method.', 'solanapaykz'),
+                    'error'
+                );
 
                 return ['result' => 'failure'];
             }
@@ -183,8 +195,14 @@ final class Gateway extends WC_Payment_Gateway
 
         $order->update_status(
             'pending',
-            sprintf('Ожидается оплата %s %s. Курс %s от «%s».',
-                $quote->amount_token, $quote->token, $quote->rate, $quote->rate_source)
+            sprintf(
+                /* translators: 1: amount, 2: token symbol, 3: exchange rate, 4: rate source name */
+                __('Awaiting payment of %1$s %2$s. Rate %3$s from "%4$s".', 'solanapaykz'),
+                $quote->amount_token,
+                $quote->token,
+                $quote->rate,
+                $quote->rate_source
+            )
         );
 
         // Корзину очищаем только если она ещё соответствует этому заказу:
@@ -227,7 +245,8 @@ final class Gateway extends WC_Payment_Gateway
         $recipient = OrderMeta::read_recipient($order);
 
         if ($quote === null || $reference === null || $recipient === null) {
-            echo '<p>Не удалось загрузить данные оплаты. Свяжитесь с магазином.</p>';
+            echo '<p>' . esc_html__('Could not load the payment data. Please contact the store.', 'solanapaykz')
+                . '</p>';
 
             return;
         }
@@ -244,9 +263,16 @@ final class Gateway extends WC_Payment_Gateway
         // адрес самого USDC-минта).
         if ($quote->is_expired()) {
             printf(
-                '<p>Срок оплаты этого заказа истёк (цена действовала до %s). '
-                . 'Оформите заказ заново.</p>',
-                esc_html(wp_date('d.m.Y H:i', $quote->expires_at))
+                '<p>%s</p>',
+                sprintf(
+                    /* translators: %s: date/time until which the price was valid */
+                    esc_html__(
+                        'The payment window for this order has expired (the price was valid until %s). '
+                        . 'Please check out again.',
+                        'solanapaykz'
+                    ),
+                    esc_html(wp_date('d.m.Y H:i', $quote->expires_at))
+                )
             );
 
             return;
@@ -260,7 +286,8 @@ final class Gateway extends WC_Payment_Gateway
             $request = PaymentRequest::create($quote, $recipient, [
                 'reference' => $reference,
                 'label' => (string) get_bloginfo('name'),
-                'message' => sprintf('Заказ №%s', $order->get_order_number()),
+                /* translators: %s: order number */
+                'message' => sprintf(__('Order #%s', 'solanapaykz'), $order->get_order_number()),
             ]);
         } catch (Throwable $error) {
             // Котировка не истекла (проверено выше) — значит, дело в
@@ -272,7 +299,8 @@ final class Gateway extends WC_Payment_Gateway
                 $order->get_id(),
                 $error->getMessage()
             ));
-            echo '<p>Оплата временно недоступна, свяжитесь с продавцом.</p>';
+            echo '<p>' . esc_html__('Payment is temporarily unavailable, please contact the seller.', 'solanapaykz')
+                . '</p>';
 
             return;
         }
@@ -295,10 +323,14 @@ final class Gateway extends WC_Payment_Gateway
         wp_enqueue_script(
             'solanapaykz-checkout',
             plugins_url('assets/checkout.js', PLUGIN_FILE),
-            ['solanapaykz-qrcode'],
+            ['solanapaykz-qrcode', 'wp-i18n'],
             VERSION,
             true
         );
+
+        // Перевод строк checkout.js — см. комментарий у того же вызова в
+        // BlocksSupport.php про то, как WordPress ищет файл в languages/.
+        wp_set_script_translations('solanapaykz-checkout', 'solanapaykz', plugin_dir_path(PLUGIN_FILE) . 'languages');
 
         // Значения идут через wp_add_inline_script() с wp_json_encode(), а
         // не через wp_localize_script(): тот приводит все значения к
@@ -339,37 +371,40 @@ final class Gateway extends WC_Payment_Gateway
 
         ?>
         <section class="solanapaykz" id="solanapaykz">
-            <h2>Оплата криптовалютой</h2>
+            <h2><?php esc_html_e('Pay with cryptocurrency', 'solanapaykz'); ?></h2>
 
             <p class="solanapaykz__amount">
-                К оплате: <strong><?php echo esc_html($quote->amount_token); ?>
+                <?php esc_html_e('Amount due:', 'solanapaykz'); ?> <strong><?php echo esc_html($quote->amount_token); ?>
                 <?php echo esc_html($quote->token); ?></strong>
                 <span class="solanapaykz__kzt">(<?php echo esc_html($quote->amount_kzt_charged); ?> ₸
-                по курсу <?php echo esc_html($quote->rate); ?>)</span>
+                <?php esc_html_e('at rate', 'solanapaykz'); ?> <?php echo esc_html($quote->rate); ?>)</span>
             </p>
 
             <div class="solanapaykz__qr" id="solanapaykz-qr"></div>
 
             <p class="solanapaykz__hint">
-                Отсканируйте код кошельком Solana. Деньги придут продавцу напрямую.
+                <?php esc_html_e('Scan the code with a Solana wallet. Funds go directly to the seller.', 'solanapaykz'); ?>
             </p>
 
             <p class="solanapaykz__timer" id="solanapaykz-timer" aria-live="polite"></p>
 
             <p class="solanapaykz__status" id="solanapaykz-status" role="status" aria-live="polite">
-                Ожидаем оплату…
+                <?php esc_html_e('Awaiting payment…', 'solanapaykz'); ?>
             </p>
 
             <p class="solanapaykz__link">
-                <a href="<?php echo esc_url($request->url, ['solana']); ?>">Открыть в кошельке на этом устройстве</a>
+                <a href="<?php echo esc_url($request->url, ['solana']); ?>"><?php esc_html_e('Open in wallet on this device', 'solanapaykz'); ?></a>
             </p>
 
             <noscript>
                 <p class="solanapaykz__hint">
-                    В браузере отключён JavaScript: код QR и статус оплаты не отобразятся, а
-                    страница не обновится сама после оплаты. Платёж всё равно можно отправить
-                    по ссылке «Открыть в кошельке» выше — после оплаты обновите эту страницу
-                    вручную, чтобы увидеть её текущий статус.
+                    <?php esc_html_e(
+                        'JavaScript is disabled in your browser: the QR code and payment status will '
+                        . 'not appear, and the page will not refresh itself after payment. You can '
+                        . 'still send the payment using the "Open in wallet" link above — refresh this '
+                        . 'page manually after paying to see its current status.',
+                        'solanapaykz'
+                    ); ?>
                 </p>
             </noscript>
         </section>

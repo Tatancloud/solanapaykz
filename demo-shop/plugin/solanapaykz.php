@@ -1,7 +1,7 @@
 <?php
 /**
- * Plugin Name: SolanaPay-KZ для WooCommerce
- * Description: Приём оплаты в USDC и SOL на Solana с конвертацией из тенге. Деньги идут напрямую на кошелёк продавца.
+ * Plugin Name: SolanaPay-KZ for WooCommerce
+ * Description: Accepts USDC and SOL payments on Solana, converted from Kazakhstani tenge. Funds go directly to the merchant's wallet.
  * Version: 0.1.0
  * Requires at least: 7.0
  * Requires PHP: 8.1
@@ -11,6 +11,8 @@
  * Author: Tatancloud
  * License: MIT
  * Update URI: false
+ * Text Domain: solanapaykz
+ * Domain Path: /languages
  */
 
 declare(strict_types=1);
@@ -32,6 +34,16 @@ const PLUGIN_FILE = __FILE__;
  * может, и его придётся менять тем же значением при следующем бампе.
  */
 const VERSION = '0.1.0';
+
+/**
+ * Подключаем перевод плагина. init — раньше, чем понадобится любой __() из
+ * кода ниже (переводимые строки печатаются не раньше вывода в админке или
+ * на странице оплаты, то есть уже после init), но достаточно поздно, чтобы
+ * определение локали и связанные фильтры площадки были готовы.
+ */
+add_action('init', static function (): void {
+    load_plugin_textdomain('solanapaykz', false, dirname(plugin_basename(PLUGIN_FILE)) . '/languages');
+});
 
 /**
  * Объявляем совместимость с новым хранилием заказов (HPOS) явно: без
@@ -88,9 +100,9 @@ register_activation_hook(__FILE__, static function (): void {
     if ($missing !== []) {
         deactivate_plugins(plugin_basename(__FILE__));
         wp_die(
-            '<h1>SolanaPay-KZ не может быть включён</h1><p>'
+            '<h1>' . esc_html__('SolanaPay-KZ cannot be activated', 'solanapaykz') . '</h1><p>'
             . implode('</p><p>', array_map('esc_html', $missing))
-            . '</p><p>Обратитесь к вашему хостинг-провайдеру.</p>',
+            . '</p><p>' . esc_html__('Contact your hosting provider.', 'solanapaykz') . '</p>',
             'SolanaPay-KZ',
             ['back_link' => true]
         );
@@ -107,7 +119,8 @@ add_action('plugins_loaded', static function (): void {
     if ($missing !== []) {
         add_action('admin_notices', static function () use ($missing): void {
             printf(
-                '<div class="notice notice-error"><p><strong>SolanaPay-KZ отключён:</strong> %s</p></div>',
+                '<div class="notice notice-error"><p><strong>%s</strong> %s</p></div>',
+                esc_html__('SolanaPay-KZ disabled:', 'solanapaykz'),
                 esc_html(implode(' ', $missing))
             );
         });
@@ -118,7 +131,8 @@ add_action('plugins_loaded', static function (): void {
     if (!class_exists('WooCommerce')) {
         add_action('admin_notices', static function (): void {
             echo '<div class="notice notice-error"><p><strong>SolanaPay-KZ:</strong> '
-                . 'плагин требует установленный и включённый WooCommerce.</p></div>';
+                . esc_html__('this plugin requires WooCommerce to be installed and active.', 'solanapaykz')
+                . '</p></div>';
         });
 
         return;

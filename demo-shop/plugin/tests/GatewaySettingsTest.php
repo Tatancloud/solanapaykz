@@ -40,7 +40,7 @@ final class GatewaySettingsTest extends TestCase
         $errors = GatewaySettings::validate($this->valid(['recipient' => '']), self::CURRENCY);
 
         self::assertCount(1, $errors);
-        self::assertStringContainsString('адрес', mb_strtolower($errors[0]));
+        self::assertStringContainsString('address', mb_strtolower($errors[0]));
     }
 
     public function test_отвергает_адрес_неверной_длины_в_байтах(): void
@@ -58,7 +58,7 @@ final class GatewaySettingsTest extends TestCase
         $errors = GatewaySettings::validate($this->valid(['recipient' => self::USDC_MINT]), self::CURRENCY);
 
         self::assertCount(1, $errors);
-        self::assertStringContainsString('монет', mb_strtolower($errors[0]));
+        self::assertStringContainsString('coin', mb_strtolower($errors[0]));
     }
 
     public function test_адрес_монеты_другой_сети_тоже_отвергается(): void
@@ -76,7 +76,7 @@ final class GatewaySettingsTest extends TestCase
         $errors = GatewaySettings::validate($this->valid(['rpc_url' => '']), self::CURRENCY);
 
         self::assertCount(1, $errors);
-        self::assertStringContainsString('узл', mb_strtolower($errors[0]));
+        self::assertStringContainsString('node', mb_strtolower($errors[0]));
     }
 
     public function test_отвергает_адрес_узла_не_похожий_на_ссылку(): void
@@ -158,7 +158,7 @@ final class GatewaySettingsTest extends TestCase
         $errors = GatewaySettings::validate($this->valid(), 'USD');
 
         self::assertCount(1, $errors);
-        self::assertStringContainsString('тенге', mb_strtolower($errors[0]));
+        self::assertStringContainsString('tenge', mb_strtolower($errors[0]));
     }
 
     public function test_собирает_все_ошибки_а_не_первую(): void
@@ -197,7 +197,7 @@ final class GatewaySettingsTest extends TestCase
         self::assertSame('title', $fields['currency_notice']['type']);
 
         // Текст должен содержать "работает" и указание валюты
-        self::assertStringContainsString('работает', mb_strtolower($fields['currency_notice']['description']));
+        self::assertStringContainsString('works', mb_strtolower($fields['currency_notice']['description']));
         self::assertStringContainsString('kzt', mb_strtolower($fields['currency_notice']['description']));
     }
 
@@ -212,7 +212,7 @@ final class GatewaySettingsTest extends TestCase
 
         // Текст должен содержать "отключён" и название валюты
         $description = mb_strtolower($fields['currency_notice']['description']);
-        self::assertStringContainsString('отключён', $description);
+        self::assertStringContainsString('disabled', $description);
         self::assertStringContainsString('usd', $description);
     }
 

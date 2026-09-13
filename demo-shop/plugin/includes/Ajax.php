@@ -45,11 +45,11 @@ final class Ajax
         // гейт доступа к эндпоинту, а обычный !== может выдать через тайминг
         // ответа, сколько первых символов ключа угаданы верно.
         if (!$order instanceof WC_Order || !hash_equals($order->get_order_key(), $key)) {
-            wp_send_json_error(['message' => 'Заказ не найден.'], 404);
+            wp_send_json_error(['message' => __('Order not found.', 'solanapaykz')], 404);
         }
 
         if ($order->get_payment_method() !== 'solanapaykz') {
-            wp_send_json_error(['message' => 'Заказ оплачивается другим способом.'], 400);
+            wp_send_json_error(['message' => __('This order is being paid by another method.', 'solanapaykz')], 400);
         }
 
         // Ссылка на страницу «спасибо» содержит ключ заказа прямо в адресе
@@ -83,7 +83,7 @@ final class Ajax
         $gateway = $gateways['solanapaykz'] ?? null;
 
         if ($gateway === null) {
-            wp_send_json_error(['message' => 'Способ оплаты недоступен.'], 503);
+            wp_send_json_error(['message' => __('Payment method unavailable.', 'solanapaykz')], 503);
         }
 
         $result = (new OrderChecker())->check($order, [

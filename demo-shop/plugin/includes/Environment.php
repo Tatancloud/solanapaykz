@@ -26,7 +26,8 @@ final class Environment
 
         if (version_compare(PHP_VERSION, $requirements['php'], '<')) {
             $missing[] = sprintf(
-                'Требуется PHP %s или новее, установлен %s.',
+                /* translators: 1: required PHP version, 2: installed PHP version */
+                __('PHP %1$s or newer is required, %2$s is installed.', 'solanapaykz'),
                 $requirements['php'],
                 PHP_VERSION
             );
@@ -34,7 +35,11 @@ final class Environment
 
         foreach ($requirements['extensions'] as $extension) {
             if (!extension_loaded($extension)) {
-                $missing[] = sprintf('Не установлено расширение PHP «%s».', $extension);
+                $missing[] = sprintf(
+                    /* translators: %s: PHP extension name */
+                    __('The PHP extension "%s" is not installed.', 'solanapaykz'),
+                    $extension
+                );
             }
         }
 

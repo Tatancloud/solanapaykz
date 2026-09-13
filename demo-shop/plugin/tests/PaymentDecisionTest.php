@@ -55,7 +55,7 @@ final class PaymentDecisionTest extends TestCase
         );
 
         self::assertSame('cancel', $decision['action']);
-        self::assertStringContainsString('срок', mb_strtolower($decision['note']));
+        self::assertStringContainsString('expired', mb_strtolower($decision['note']));
     }
 
     public function test_платёж_подтверждён_завершаем_заказ(): void
@@ -121,7 +121,7 @@ final class PaymentDecisionTest extends TestCase
         );
 
         self::assertSame('late', $decision['action']);
-        self::assertStringContainsString('отменённ', mb_strtolower($decision['note']));
+        self::assertStringContainsString('cancelled', mb_strtolower($decision['note']));
         self::assertStringContainsString('поздняя', $decision['note']);
         self::assertStringContainsString('21.758051', $decision['note']);
     }
