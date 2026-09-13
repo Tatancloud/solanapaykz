@@ -146,12 +146,15 @@ final class Verify
             return $this->result(
                 'mismatch',
                 $signature,
-                'Ответ узла не содержит признака результата транзакции (meta.err отсутствует).'
+                __(
+                    'The blockchain node\'s response does not include a transaction outcome (meta.err is missing).',
+                    'solanapaykz'
+                )
             );
         }
 
         if ($meta['err'] !== null) {
-            return $this->result('mismatch', $signature, 'Транзакция завершилась с ошибкой.');
+            return $this->result('mismatch', $signature, __('The transaction failed with an error.', 'solanapaykz'));
         }
 
         // 2. Метка платежа должна присутствовать среди аккаунтов транзакции.
@@ -162,7 +165,11 @@ final class Verify
         // редкость: в блоке mainnet 42 из 48 транзакций с USDC их
         // используют.
         if (!in_array($reference, $this->account_keys($transaction, $meta), true)) {
-            return $this->result('mismatch', $signature, 'В транзакции нет метки платежа.');
+            return $this->result(
+                'mismatch',
+                $signature,
+                __('The transaction does not contain the payment reference.', 'solanapaykz')
+            );
         }
 
         // 3 и 4. Ищем поступление: для SPL-токена — по token-балансам, для
@@ -177,14 +184,18 @@ final class Verify
                 'mismatch',
                 $signature,
                 $mint === null
-                    ? 'В транзакции нет перевода SOL нужному получателю.'
-                    : 'В транзакции нет перевода нужного токена нужному получателю.'
+                    ? __('The transaction does not contain a SOL transfer to the expected recipient.', 'solanapaykz')
+                    : __(
+                        'The transaction does not contain a transfer of the expected token to the expected recipient.',
+                        'solanapaykz'
+                    )
             );
         }
 
         if (bccomp($received, $expected_units) < 0) {
             return $this->result('mismatch', $signature, sprintf(
-                'Сумма меньше ожидаемой: получено %s, требуется %s.',
+                /* translators: 1: amount received, 2: amount required */
+                __('Amount is less than expected: received %1$s, required %2$s.', 'solanapaykz'),
                 $received,
                 $expected_units
             ), $received);

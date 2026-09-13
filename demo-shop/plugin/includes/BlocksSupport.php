@@ -64,9 +64,19 @@ final class BlocksSupport extends AbstractPaymentMethodType
         wp_register_script(
             'solanapaykz-blocks-checkout',
             plugins_url('assets/blocks-checkout.js', PLUGIN_FILE),
-            ['wc-blocks-registry', 'wc-settings', 'wp-element', 'wp-html-entities'],
+            ['wc-blocks-registry', 'wc-settings', 'wp-element', 'wp-html-entities', 'wp-i18n'],
             VERSION,
             true
+        );
+
+        // Перевод строк самого скрипта (см. assets/blocks-checkout.js) — JSON
+        // ищется в languages/ по имени, которое WordPress строит из домена,
+        // локали и md5 от относительного пути скрипта (см. languages/README
+        // рядом, если файл появится, или build-translations.sh).
+        wp_set_script_translations(
+            'solanapaykz-blocks-checkout',
+            'solanapaykz',
+            plugin_dir_path(PLUGIN_FILE) . 'languages'
         );
 
         return ['solanapaykz-blocks-checkout'];
@@ -76,7 +86,7 @@ final class BlocksSupport extends AbstractPaymentMethodType
     public function get_payment_method_data(): array
     {
         return BlocksPaymentMethodData::payment_method_data(
-            (string) $this->get_setting('title', 'Оплата криптовалютой (USDC)'),
+            (string) $this->get_setting('title', __('Pay with cryptocurrency (USDC)', 'solanapaykz')),
             (string) $this->get_setting('description', '')
         );
     }

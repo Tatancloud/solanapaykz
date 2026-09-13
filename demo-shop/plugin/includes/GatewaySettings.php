@@ -95,8 +95,12 @@ final class GatewaySettings
             // считается так, будто она уже в тенге — продавец недополучит
             // деньги в разы, и заметит это не раньше, чем сверит выручку.
             $errors[] = sprintf(
-                'Плагин рассчитан на магазины с ценами в тенге, потому что курс берётся к тенге. '
-                . 'Валюта вашего магазина сейчас — «%s».',
+                /* translators: %s: store currency code, e.g. "USD" */
+                __(
+                    'This plugin is designed for stores priced in tenge, because the exchange rate is '
+                    . 'quoted in tenge. Your store currency is currently "%s".',
+                    'solanapaykz'
+                ),
                 $currency
             );
         }
@@ -105,11 +109,12 @@ final class GatewaySettings
         $token = (string) ($values['token'] ?? '');
 
         if (!in_array($cluster, ['mainnet', 'devnet'], true)) {
-            $errors[] = 'Выберите сеть: основную или тестовую.';
+            $errors[] = __('Choose a network: mainnet or devnet (test network).', 'solanapaykz');
         }
 
         if (!in_array($token, Tokens::SUPPORTED, true)) {
-            $errors[] = sprintf('Монета «%s» не поддерживается.', $token);
+            /* translators: %s: coin symbol, e.g. "BTC" */
+            $errors[] = sprintf(__('Coin "%s" is not supported.', 'solanapaykz'), $token);
         }
 
         $errors = array_merge($errors, self::check_recipient(
@@ -123,14 +128,14 @@ final class GatewaySettings
 
         $errors = array_merge($errors, self::check_seconds(
             (string) ($values['quote_ttl'] ?? ''),
-            'Срок жизни котировки',
+            __('Quote lifetime', 'solanapaykz'),
             1,
             self::MAX_QUOTE_TTL
         ));
 
         $errors = array_merge($errors, self::check_seconds(
             (string) ($values['late_window'] ?? ''),
-            'Срок проверки отменённых заказов',
+            __('Cancelled order check window', 'solanapaykz'),
             0,
             self::MAX_LATE_WINDOW
         ));
@@ -142,7 +147,7 @@ final class GatewaySettings
     private static function check_recipient(string $recipient, string $cluster, string $token): array
     {
         if ($recipient === '') {
-            return ['Укажите адрес кошелька Solana, на который будут приходить платежи.'];
+            return [__('Enter the Solana wallet address that will receive payments.', 'solanapaykz')];
         }
 
         // decode возвращает null на строке с недопустимыми символами, а не
@@ -150,11 +155,14 @@ final class GatewaySettings
         $decoded = Base58::decode($recipient);
 
         if ($decoded === null) {
-            return ['Адрес кошелька записан не в том формате: допустимы только символы base58.'];
+            return [__(
+                'The wallet address is in the wrong format: only base58 characters are allowed.',
+                'solanapaykz'
+            )];
         }
 
         if (strlen($decoded) !== 32) {
-            return ['Адрес кошелька неверной длины. Проверьте, что скопировали его целиком.'];
+            return [__('The wallet address has the wrong length. Check that you copied it in full.', 'solanapaykz')];
         }
 
         // Адрес монеты в поле кошелька — частая ошибка настройки, и платежи
@@ -169,8 +177,11 @@ final class GatewaySettings
                 }
 
                 if ($mint !== null && $recipient === $mint) {
-                    return ['Это адрес монеты, а не кошелька. Укажите адрес своего кошелька — '
-                        . 'платежи на адрес монеты вернуть невозможно.'];
+                    return [__(
+                        'This is the coin\'s address, not a wallet address. Enter your own wallet '
+                        . 'address — payments sent to the coin\'s address cannot be recovered.',
+                        'solanapaykz'
+                    )];
                 }
             }
         }
@@ -182,8 +193,11 @@ final class GatewaySettings
     private static function check_rpc_url(string $url): array
     {
         if ($url === '') {
-            return ['Укажите адрес узла Solana. Публичный узел для приёма платежей не подходит: '
-                . 'он ограничивает запросы и не хранит историю, нужную для поиска платежа.'];
+            return [__(
+                'Enter the Solana node URL. A public node is not suitable for accepting payments: '
+                . 'it rate-limits requests and does not keep the history needed to find a payment.',
+                'solanapaykz'
+            )];
         }
 
         $parts = parse_url($url);
@@ -191,7 +205,7 @@ final class GatewaySettings
         if ($parts === false || !isset($parts['scheme'], $parts['host'])
             || !in_array($parts['scheme'], ['http', 'https'], true)
         ) {
-            return ['Адрес узла должен начинаться с http:// или https://.'];
+            return [__('The node address must start with http:// or https://.', 'solanapaykz')];
         }
 
         return [];
@@ -201,19 +215,22 @@ final class GatewaySettings
     private static function check_markup(string $value): array
     {
         if (!is_numeric($value)) {
-            return ['Наценка должна быть числом.'];
+            return [__('Markup must be a number.', 'solanapaykz')];
         }
 
         $percent = (float) $value;
 
         if ($percent < 0 || $percent > 100) {
-            return ['Наценка должна быть от 0 до 100 процентов.'];
+            return [__('Markup must be between 0 and 100 percent.', 'solanapaykz')];
         }
 
         // Меньше сотой доли процента округлится до нуля, и продавец будет
         // думать, что наценка работает.
         if ($percent > 0 && (int) round($percent * 100) === 0) {
-            return ['Наценка меньше 0,01 процента не применяется. Укажите большее значение или ноль.'];
+            return [__(
+                'A markup smaller than 0.01 percent has no effect. Enter a larger value or zero.',
+                'solanapaykz'
+            )];
         }
 
         return [];
@@ -223,13 +240,20 @@ final class GatewaySettings
     private static function check_seconds(string $value, string $label, int $min, int $max): array
     {
         if (!is_numeric($value) || (string) (int) $value !== trim($value)) {
-            return [sprintf('%s должен быть целым числом секунд.', $label)];
+            /* translators: %s: name of the setting being validated */
+            return [sprintf(__('%s must be a whole number of seconds.', 'solanapaykz'), $label)];
         }
 
         $seconds = (int) $value;
 
         if ($seconds < $min || $seconds > $max) {
-            return [sprintf('%s должен быть от %d до %d секунд.', $label, $min, $max)];
+            return [sprintf(
+                /* translators: 1: name of the setting, 2: minimum seconds, 3: maximum seconds */
+                __('%1$s must be between %2$d and %3$d seconds.', 'solanapaykz'),
+                $label,
+                $min,
+                $max
+            )];
         }
 
         return [];
@@ -249,78 +273,98 @@ final class GatewaySettings
         return [
             'currency_notice' => self::build_currency_notice($currency),
             'enabled' => [
-                'title' => 'Включить',
+                'title' => __('Enable', 'solanapaykz'),
                 'type' => 'checkbox',
-                'label' => 'Принимать оплату криптовалютой',
+                'label' => __('Accept cryptocurrency payments', 'solanapaykz'),
                 'default' => 'no',
             ],
             'title' => [
-                'title' => 'Название способа оплаты',
+                'title' => __('Payment method title', 'solanapaykz'),
                 'type' => 'text',
-                'description' => 'Что увидит покупатель при оформлении заказа.',
-                'default' => 'Оплата криптовалютой (USDC)',
+                'description' => __('What the customer sees at checkout.', 'solanapaykz'),
+                'default' => __('Pay with cryptocurrency (USDC)', 'solanapaykz'),
                 'desc_tip' => true,
             ],
             'description' => [
-                'title' => 'Описание',
+                'title' => __('Description', 'solanapaykz'),
                 'type' => 'textarea',
-                'default' => 'Отсканируйте QR-код кошельком Solana. Деньги придут продавцу напрямую.',
+                'default' => __(
+                    'Scan the QR code with a Solana wallet. Funds go directly to the seller.',
+                    'solanapaykz'
+                ),
             ],
             'recipient' => [
-                'title' => 'Адрес кошелька продавца',
+                'title' => __('Merchant wallet address', 'solanapaykz'),
                 'type' => 'text',
-                'description' => 'Адрес Solana, на который придут платежи. Это адрес вашего кошелька, '
-                    . 'а не адрес монеты.',
+                'description' => __(
+                    'The Solana address that will receive payments. This is your wallet address, '
+                    . 'not the coin address.',
+                    'solanapaykz'
+                ),
                 'default' => '',
                 'desc_tip' => true,
             ],
             'cluster' => [
-                'title' => 'Сеть',
+                'title' => __('Network', 'solanapaykz'),
                 'type' => 'select',
                 'options' => [
-                    'mainnet' => 'Основная сеть (настоящие деньги)',
-                    'devnet' => 'Тестовая сеть (бесплатные монеты, для проверки)',
+                    'mainnet' => __('Mainnet (real money)', 'solanapaykz'),
+                    'devnet' => __('Devnet (free test coins)', 'solanapaykz'),
                 ],
                 'default' => 'devnet',
-                'description' => 'Начните с тестовой сети и переключитесь на основную, '
-                    . 'когда убедитесь, что всё работает.',
+                'description' => __(
+                    'Start on the test network and switch to mainnet once you\'ve confirmed everything works.',
+                    'solanapaykz'
+                ),
                 'desc_tip' => true,
             ],
             'rpc_url' => [
-                'title' => 'Адрес узла Solana',
+                'title' => __('Solana node URL', 'solanapaykz'),
                 'type' => 'text',
-                'description' => 'Публичный узел не подходит: он ограничивает запросы и не хранит '
-                    . 'историю, нужную для поиска платежа. Нужен собственный провайдер.',
+                'description' => __(
+                    'A public node is not suitable: it rate-limits requests and does not keep the '
+                    . 'history needed to find a payment. You need your own provider.',
+                    'solanapaykz'
+                ),
                 'default' => '',
                 'desc_tip' => true,
             ],
             'token' => [
-                'title' => 'Монета',
+                'title' => __('Coin', 'solanapaykz'),
                 'type' => 'select',
-                'options' => ['USDC' => 'USDC (стейблкоин)', 'SOL' => 'SOL'],
+                'options' => ['USDC' => __('USDC (stablecoin)', 'solanapaykz'), 'SOL' => 'SOL'],
                 'default' => 'USDC',
             ],
             'markup_percent' => [
-                'title' => 'Наценка, %',
+                'title' => __('Markup, %', 'solanapaykz'),
                 'type' => 'text',
-                'description' => 'Добавляется к сумме заказа до пересчёта в криптовалюту. '
-                    . 'Страховка от движения курса, пока покупатель платит.',
+                'description' => __(
+                    'Added to the order total before converting to cryptocurrency. '
+                    . 'Insurance against the rate moving while the customer is paying.',
+                    'solanapaykz'
+                ),
                 'default' => '0',
                 'desc_tip' => true,
             ],
             'quote_ttl' => [
-                'title' => 'Срок действия цены, секунд',
+                'title' => __('Price validity, seconds', 'solanapaykz'),
                 'type' => 'text',
-                'description' => 'Сколько времени действует зафиксированный курс. По умолчанию 15 минут.',
+                'description' => __(
+                    'How long the locked-in rate stays valid. 15 minutes by default.',
+                    'solanapaykz'
+                ),
                 'default' => '900',
                 'desc_tip' => true,
             ],
             'late_window' => [
-                'title' => 'Проверять отменённые заказы, секунд',
+                'title' => __('Check cancelled orders for, seconds', 'solanapaykz'),
                 'type' => 'text',
-                'description' => 'Отмена заказа не отменяет QR-код: покупатель может заплатить позже. '
-                    . 'В течение этого времени плагин продолжит проверять отменённые заказы и '
-                    . 'предупредит вас о позднем платеже. Ноль отключает проверку.',
+                'description' => __(
+                    'Cancelling an order does not cancel its QR code: the customer may still pay '
+                    . 'later. For this long, the plugin keeps checking cancelled orders and warns '
+                    . 'you about a late payment. Zero disables the check.',
+                    'solanapaykz'
+                ),
                 'default' => '86400',
                 'desc_tip' => true,
             ],
@@ -344,9 +388,10 @@ final class GatewaySettings
         if ($currency === self::REQUIRED_CURRENCY) {
             return [
                 'type' => 'title',
-                'title' => 'Статус плагина',
+                'title' => __('Plugin status', 'solanapaykz'),
                 'description' => sprintf(
-                    'Валюта магазина: <strong>%s</strong> — плагин работает.',
+                    /* translators: %s: store currency code */
+                    __('Store currency: <strong>%s</strong> — the plugin works.', 'solanapaykz'),
                     $safe_currency
                 ),
             ];
@@ -354,11 +399,15 @@ final class GatewaySettings
 
         return [
             'type' => 'title',
-            'title' => 'Статус плагина',
+            'title' => __('Plugin status', 'solanapaykz'),
             'description' => sprintf(
-                'Валюта магазина: <strong>%s</strong> — плагин отключён. '
-                . 'Курс берётся к тенге, поэтому нужен магазин с ценами в тенге. '
-                . 'Смените валюту в настройках WooCommerce: Настройки → Основные → Валюта.',
+                /* translators: %s: store currency code */
+                __(
+                    'Store currency: <strong>%s</strong> — the plugin is disabled. '
+                    . 'The exchange rate is quoted in tenge, so the store must price in tenge. '
+                    . 'Change the currency in WooCommerce settings: Settings → General → Currency.',
+                    'solanapaykz'
+                ),
                 $safe_currency
             ),
         ];

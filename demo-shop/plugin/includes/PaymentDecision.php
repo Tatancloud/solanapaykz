@@ -57,7 +57,8 @@ final class PaymentDecision
             return [
                 'action' => 'complete',
                 'note' => sprintf(
-                    'Платёж получен. Транзакция: %s. Ожидалось: %s %s. Получено: %s %s.',
+                    /* translators: 1: transaction signature, 2: expected amount, 3: token symbol, 4: received amount, 5: token symbol */
+                    __('Payment received. Transaction: %1$s. Expected: %2$s %3$s. Received: %4$s %5$s.', 'solanapaykz'),
                     $signature,
                     $quote->amount_token,
                     $quote->token,
@@ -73,10 +74,14 @@ final class PaymentDecision
             return [
                 'action' => 'hold',
                 'note' => sprintf(
-                    'Найдена транзакция %s, но она не прошла проверку: %s '
-                    . 'Проверьте её вручную, прежде чем отгружать заказ.',
+                    /* translators: 1: transaction signature, 2: reason the check failed */
+                    __(
+                        'Found transaction %1$s, but it failed verification: %2$s '
+                        . 'Please check it manually before shipping the order.',
+                        'solanapaykz'
+                    ),
                     $signature,
-                    (string) ($result['reason'] ?? 'причина не указана.')
+                    (string) ($result['reason'] ?? __('no reason given.', 'solanapaykz'))
                 ),
             ];
         }
@@ -89,7 +94,8 @@ final class PaymentDecision
             return [
                 'action' => 'cancel',
                 'note' => sprintf(
-                    'Срок оплаты истёк: цена была зафиксирована до %s.',
+                    /* translators: %s: the date/time until which the price was locked */
+                    __('Payment window expired: the price was locked until %s.', 'solanapaykz'),
                     gmdate('d.m.Y H:i', $quote->expires_at) . ' UTC'
                 ),
             ];
@@ -117,8 +123,13 @@ final class PaymentDecision
         return [
             'action' => 'late',
             'note' => sprintf(
-                'Внимание: на отменённый заказ пришёл платёж. Транзакция: %s. Ожидалось: %s %s. '
-                . 'Получено: %s %s. Решите, восстановить заказ или вернуть деньги покупателю.',
+                /* translators: 1: transaction signature, 2: expected amount, 3: token symbol, 4: received amount, 5: token symbol */
+                __(
+                    'Warning: a payment was received for a cancelled order. Transaction: %1$s. '
+                    . 'Expected: %2$s %3$s. Received: %4$s %5$s. Decide whether to restore the order '
+                    . 'or refund the customer.',
+                    'solanapaykz'
+                ),
                 (string) ($result['signature'] ?? ''),
                 $quote->amount_token,
                 $quote->token,

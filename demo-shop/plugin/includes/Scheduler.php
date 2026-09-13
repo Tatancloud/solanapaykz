@@ -30,7 +30,7 @@ final class Scheduler
         add_filter('cron_schedules', static function (array $schedules): array {
             $schedules['solanapaykz_five_minutes'] = [
                 'interval' => 300,
-                'display' => 'Каждые 5 минут (SolanaPay-KZ)',
+                'display' => __('Every 5 minutes (SolanaPay-KZ)', 'solanapaykz'),
             ];
 
             return $schedules;
@@ -68,11 +68,12 @@ final class Scheduler
 
         printf(
             '<div class="notice notice-warning"><p><strong>SolanaPay-KZ:</strong> %s</p></div>',
-            esc_html(
-                'На сайте отключён встроенный псевдо-cron WordPress (константа DISABLE_WP_CRON). '
-                . 'Без настоящего системного cron на wp-cron.php фоновая проверка оплаты не '
-                . 'сработает никогда — подтверждение платежа будет работать только пока '
-                . 'покупатель держит вкладку с оплатой открытой.'
+            esc_html__(
+                'The site has the built-in WordPress pseudo-cron disabled (the DISABLE_WP_CRON '
+                . 'constant). Without a real system cron on wp-cron.php, the background payment '
+                . 'check will never run — payment confirmation will only work while the customer '
+                . 'keeps the payment tab open.',
+                'solanapaykz'
             )
         );
     }

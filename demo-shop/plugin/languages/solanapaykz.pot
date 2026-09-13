@@ -1,0 +1,497 @@
+# Translations template for SolanaPay-KZ for WooCommerce.
+# Copyright (C) 2026 SolanaPay-KZ
+# This file is distributed under the same license as the SolanaPay-KZ plugin.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: SolanaPay-KZ for WooCommerce 0.1.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-09-13 09:20+0000\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"Language: en_US\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+#: solanapaykz.php:103
+msgid "SolanaPay-KZ cannot be activated"
+msgstr ""
+
+#: solanapaykz.php:105
+msgid "Contact your hosting provider."
+msgstr ""
+
+#: solanapaykz.php:123
+msgid "SolanaPay-KZ disabled:"
+msgstr ""
+
+#: solanapaykz.php:134
+msgid "this plugin requires WooCommerce to be installed and active."
+msgstr ""
+
+#: includes/Environment.php:30
+#, php-format
+msgid "PHP %1$s or newer is required, %2$s is installed."
+msgstr ""
+
+#: includes/Environment.php:40
+#, php-format
+msgid "The PHP extension \"%s\" is not installed."
+msgstr ""
+
+#: includes/Gateway.php:30
+msgid ""
+"Accept cryptocurrency payments on the Solana blockchain, automatically "
+"converted from tenge. Funds go directly to the merchant's wallet."
+msgstr ""
+
+#: includes/Gateway.php:40 includes/GatewaySettings.php:285
+#: includes/BlocksSupport.php:89
+msgid "Pay with cryptocurrency (USDC)"
+msgstr ""
+
+#: includes/Gateway.php:73
+msgid "SolanaPay-KZ has been disabled until the settings are corrected."
+msgstr ""
+
+#: includes/Gateway.php:120
+msgid "Could not find the order to pay for. Please try checking out again."
+msgstr ""
+
+#: includes/Gateway.php:166
+msgid ""
+"Cryptocurrency payment is currently unavailable: could not fetch the "
+"exchange rate. Please choose another payment method."
+msgstr ""
+
+#: includes/Gateway.php:177
+msgid ""
+"Could not prepare the cryptocurrency payment. Please choose another method."
+msgstr ""
+
+#: includes/Gateway.php:200
+#, php-format
+msgid "Awaiting payment of %1$s %2$s. Rate %3$s from \"%4$s\"."
+msgstr ""
+
+#: includes/Gateway.php:248
+msgid "Could not load the payment data. Please contact the store."
+msgstr ""
+
+#: includes/Gateway.php:270
+#, php-format
+msgid ""
+"The payment window for this order has expired (the price was valid until "
+"%s). Please check out again."
+msgstr ""
+
+#: includes/Gateway.php:290
+#, php-format
+msgid "Order #%s"
+msgstr ""
+
+#: includes/Gateway.php:302
+msgid "Payment is temporarily unavailable, please contact the seller."
+msgstr ""
+
+#: includes/Gateway.php:374
+msgid "Pay with cryptocurrency"
+msgstr ""
+
+#: includes/Gateway.php:377
+msgid "Amount due:"
+msgstr ""
+
+#: includes/Gateway.php:380
+msgid "at rate"
+msgstr ""
+
+#: includes/Gateway.php:386
+msgid "Scan the code with a Solana wallet. Funds go directly to the seller."
+msgstr ""
+
+#: includes/Gateway.php:392
+msgid "Awaiting payment…"
+msgstr ""
+
+#: includes/Gateway.php:396
+msgid "Open in wallet on this device"
+msgstr ""
+
+#: includes/Gateway.php:402
+msgid ""
+"JavaScript is disabled in your browser: the QR code and payment status will "
+"not appear, and the page will not refresh itself after payment. You can "
+"still send the payment using the \"Open in wallet\" link above — refresh "
+"this page manually after paying to see its current status."
+msgstr ""
+
+#: includes/GatewaySettings.php:100
+#, php-format
+msgid ""
+"This plugin is designed for stores priced in tenge, because the exchange "
+"rate is quoted in tenge. Your store currency is currently \"%s\"."
+msgstr ""
+
+#: includes/GatewaySettings.php:112
+msgid "Choose a network: mainnet or devnet (test network)."
+msgstr ""
+
+#: includes/GatewaySettings.php:117
+#, php-format
+msgid "Coin \"%s\" is not supported."
+msgstr ""
+
+#: includes/GatewaySettings.php:131
+msgid "Quote lifetime"
+msgstr ""
+
+#: includes/GatewaySettings.php:138
+msgid "Cancelled order check window"
+msgstr ""
+
+#: includes/GatewaySettings.php:150
+msgid "Enter the Solana wallet address that will receive payments."
+msgstr ""
+
+#: includes/GatewaySettings.php:159
+msgid ""
+"The wallet address is in the wrong format: only base58 characters are "
+"allowed."
+msgstr ""
+
+#: includes/GatewaySettings.php:165
+msgid ""
+"The wallet address has the wrong length. Check that you copied it in full."
+msgstr ""
+
+#: includes/GatewaySettings.php:181
+msgid ""
+"This is the coin's address, not a wallet address. Enter your own wallet "
+"address — payments sent to the coin's address cannot be recovered."
+msgstr ""
+
+#: includes/GatewaySettings.php:197
+msgid ""
+"Enter the Solana node URL. A public node is not suitable for accepting "
+"payments: it rate-limits requests and does not keep the history needed to "
+"find a payment."
+msgstr ""
+
+#: includes/GatewaySettings.php:208
+msgid "The node address must start with http:// or https://."
+msgstr ""
+
+#: includes/GatewaySettings.php:218
+msgid "Markup must be a number."
+msgstr ""
+
+#: includes/GatewaySettings.php:224
+msgid "Markup must be between 0 and 100 percent."
+msgstr ""
+
+#: includes/GatewaySettings.php:231
+msgid ""
+"A markup smaller than 0.01 percent has no effect. Enter a larger value or "
+"zero."
+msgstr ""
+
+#: includes/GatewaySettings.php:244
+#, php-format
+msgid "%s must be a whole number of seconds."
+msgstr ""
+
+#: includes/GatewaySettings.php:252
+#, php-format
+msgid "%1$s must be between %2$d and %3$d seconds."
+msgstr ""
+
+#: includes/GatewaySettings.php:276
+msgid "Enable"
+msgstr ""
+
+#: includes/GatewaySettings.php:278
+msgid "Accept cryptocurrency payments"
+msgstr ""
+
+#: includes/GatewaySettings.php:282
+msgid "Payment method title"
+msgstr ""
+
+#: includes/GatewaySettings.php:284
+msgid "What the customer sees at checkout."
+msgstr ""
+
+#: includes/GatewaySettings.php:289
+msgid "Description"
+msgstr ""
+
+#: includes/GatewaySettings.php:292
+msgid "Scan the QR code with a Solana wallet. Funds go directly to the seller."
+msgstr ""
+
+#: includes/GatewaySettings.php:297
+msgid "Merchant wallet address"
+msgstr ""
+
+#: includes/GatewaySettings.php:300
+msgid ""
+"The Solana address that will receive payments. This is your wallet address, "
+"not the coin address."
+msgstr ""
+
+#: includes/GatewaySettings.php:308
+msgid "Network"
+msgstr ""
+
+#: includes/GatewaySettings.php:311
+msgid "Mainnet (real money)"
+msgstr ""
+
+#: includes/GatewaySettings.php:312
+msgid "Devnet (free test coins)"
+msgstr ""
+
+#: includes/GatewaySettings.php:316
+msgid ""
+"Start on the test network and switch to mainnet once you've confirmed "
+"everything works."
+msgstr ""
+
+#: includes/GatewaySettings.php:322
+msgid "Solana node URL"
+msgstr ""
+
+#: includes/GatewaySettings.php:325
+msgid ""
+"A public node is not suitable: it rate-limits requests and does not keep the "
+"history needed to find a payment. You need your own provider."
+msgstr ""
+
+#: includes/GatewaySettings.php:333
+msgid "Coin"
+msgstr ""
+
+#: includes/GatewaySettings.php:335
+msgid "USDC (stablecoin)"
+msgstr ""
+
+#: includes/GatewaySettings.php:339
+msgid "Markup, %"
+msgstr ""
+
+#: includes/GatewaySettings.php:342
+msgid ""
+"Added to the order total before converting to cryptocurrency. Insurance "
+"against the rate moving while the customer is paying."
+msgstr ""
+
+#: includes/GatewaySettings.php:350
+msgid "Price validity, seconds"
+msgstr ""
+
+#: includes/GatewaySettings.php:353
+msgid "How long the locked-in rate stays valid. 15 minutes by default."
+msgstr ""
+
+#: includes/GatewaySettings.php:360
+msgid "Check cancelled orders for, seconds"
+msgstr ""
+
+#: includes/GatewaySettings.php:363
+msgid ""
+"Cancelling an order does not cancel its QR code: the customer may still pay "
+"later. For this long, the plugin keeps checking cancelled orders and warns "
+"you about a late payment. Zero disables the check."
+msgstr ""
+
+#: includes/GatewaySettings.php:391 includes/GatewaySettings.php:402
+msgid "Plugin status"
+msgstr ""
+
+#: includes/GatewaySettings.php:394
+#, php-format
+msgid "Store currency: <strong>%s</strong> — the plugin works."
+msgstr ""
+
+#: includes/GatewaySettings.php:406
+#, php-format
+msgid ""
+"Store currency: <strong>%s</strong> — the plugin is disabled. The exchange "
+"rate is quoted in tenge, so the store must price in tenge. Change the "
+"currency in WooCommerce settings: Settings → General → Currency."
+msgstr ""
+
+#: includes/CustomerMessage.php:47
+msgid "Awaiting payment."
+msgstr ""
+
+#: includes/CustomerMessage.php:51 includes/CustomerMessage.php:108
+msgid "Payment received. Thank you!"
+msgstr ""
+
+#: includes/CustomerMessage.php:57
+msgid ""
+"The order has been paid and refunded. If you still have questions, please "
+"contact the store."
+msgstr ""
+
+#: includes/CustomerMessage.php:66
+msgid "The payment window has expired, the order has been cancelled."
+msgstr ""
+
+#: includes/CustomerMessage.php:72
+msgid "The payment is being verified manually. The seller will contact you."
+msgstr ""
+
+#: includes/CustomerMessage.php:84
+msgid ""
+"Cryptocurrency payment for this order is currently unavailable. Please "
+"contact the store."
+msgstr ""
+
+#: includes/CustomerMessage.php:111
+msgid "The payment window has expired. Please check out again."
+msgstr ""
+
+#: includes/CustomerMessage.php:116
+msgid ""
+"A payment was found, but it did not match the order amount. The store will "
+"contact you."
+msgstr ""
+
+#: includes/CustomerMessage.php:123
+msgid ""
+"The payment was received after the order was cancelled. The store will "
+"contact you."
+msgstr ""
+
+#: includes/OrderChecker.php:32
+msgid ""
+"Payment data is corrupted, automatic verification is not possible. The store "
+"will contact you."
+msgstr ""
+
+#: includes/OrderChecker.php:40
+msgid "Could not verify the payment. We will try again."
+msgstr ""
+
+#: includes/OrderChecker.php:122
+msgid ""
+"SolanaPay-KZ: could not read the payment data (the quote, payment reference, "
+"or recipient address is missing or corrupted). Automatic verification is not "
+"possible — this order's payment needs to be checked manually."
+msgstr ""
+
+#: includes/OrderChecker.php:196 includes/Ajax.php:48
+msgid "Order not found."
+msgstr ""
+
+#: includes/Ajax.php:52
+msgid "This order is being paid by another method."
+msgstr ""
+
+#: includes/Ajax.php:86
+msgid "Payment method unavailable."
+msgstr ""
+
+#: includes/PaymentDecision.php:61
+#, php-format
+msgid ""
+"Payment received. Transaction: %1$s. Expected: %2$s %3$s. Received: %4$s "
+"%5$s."
+msgstr ""
+
+#: includes/PaymentDecision.php:79
+#, php-format
+msgid ""
+"Found transaction %1$s, but it failed verification: %2$s Please check it "
+"manually before shipping the order."
+msgstr ""
+
+#: includes/PaymentDecision.php:84
+msgid "no reason given."
+msgstr ""
+
+#: includes/PaymentDecision.php:98
+#, php-format
+msgid "Payment window expired: the price was locked until %s."
+msgstr ""
+
+#: includes/PaymentDecision.php:128
+#, php-format
+msgid ""
+"Warning: a payment was received for a cancelled order. Transaction: %1$s. "
+"Expected: %2$s %3$s. Received: %4$s %5$s. Decide whether to restore the "
+"order or refund the customer."
+msgstr ""
+
+#: includes/Scheduler.php:33
+msgid "Every 5 minutes (SolanaPay-KZ)"
+msgstr ""
+
+#: includes/Scheduler.php:72
+msgid ""
+"The site has the built-in WordPress pseudo-cron disabled (the "
+"DISABLE_WP_CRON constant). Without a real system cron on wp-cron.php, the "
+"background payment check will never run — payment confirmation will only "
+"work while the customer keeps the payment tab open."
+msgstr ""
+
+#: includes/Verify.php:150
+msgid ""
+"The blockchain node's response does not include a transaction outcome (meta."
+"err is missing)."
+msgstr ""
+
+#: includes/Verify.php:157
+msgid "The transaction failed with an error."
+msgstr ""
+
+#: includes/Verify.php:171
+msgid "The transaction does not contain the payment reference."
+msgstr ""
+
+#: includes/Verify.php:187
+msgid ""
+"The transaction does not contain a SOL transfer to the expected recipient."
+msgstr ""
+
+#: includes/Verify.php:189
+msgid ""
+"The transaction does not contain a transfer of the expected token to the "
+"expected recipient."
+msgstr ""
+
+#: includes/Verify.php:198
+#, php-format
+msgid "Amount is less than expected: received %1$s, required %2$s."
+msgstr ""
+
+#: assets/checkout.js:65
+msgid "QR code for payment via a Solana wallet"
+msgstr ""
+
+#: assets/checkout.js:77
+msgid "Price valid for another "
+msgstr ""
+
+#: assets/checkout.js:87
+msgid ""
+"The price has expired. If you already sent the payment, please wait for "
+"confirmation — this can take up to a minute."
+msgstr ""
+
+#: assets/checkout.js:92
+msgid ""
+"The payment window has expired. If you did send the payment, please contact "
+"the store."
+msgstr ""
+
+#: assets/checkout.js:176
+msgid ""
+"Automatic payment verification is not available in this browser. Please "
+"refresh the page manually after paying."
+msgstr ""

@@ -31,7 +31,7 @@ final class CustomerMessageTest extends TestCase
         $view = CustomerMessage::for_order_status($status);
 
         self::assertSame('paid', $view['status']);
-        self::assertStringContainsString('оплат', mb_strtolower($view['message']));
+        self::assertStringContainsString('payment', mb_strtolower($view['message']));
     }
 
     /** @return list<array{string}> */
@@ -45,7 +45,7 @@ final class CustomerMessageTest extends TestCase
         $view = CustomerMessage::for_order_status('cancelled');
 
         self::assertSame('expired', $view['status']);
-        self::assertStringContainsString('отменён', mb_strtolower($view['message']));
+        self::assertStringContainsString('cancelled', mb_strtolower($view['message']));
     }
 
     public function test_текст_для_заказа_на_удержании(): void
@@ -53,7 +53,7 @@ final class CustomerMessageTest extends TestCase
         $view = CustomerMessage::for_order_status('on-hold');
 
         self::assertSame('mismatch', $view['status']);
-        self::assertStringContainsString('вручную', mb_strtolower($view['message']));
+        self::assertStringContainsString('manually', mb_strtolower($view['message']));
     }
 
     public function test_текст_для_неизвестного_статуса_нейтральный(): void

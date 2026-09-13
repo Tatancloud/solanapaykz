@@ -28,12 +28,22 @@
 
     var h = element.createElement;
 
+    // wp-i18n подключён как зависимость скрипта (см.
+    // BlocksSupport::get_payment_method_script_handles()), а перевод строк —
+    // через wp_set_script_translations(). В норме defaultTitle никогда не
+    // используется: сервер уже проверил доступность способа оплаты и прислал
+    // настоящее название (см. is_active() и его вызов ниже), но на случай,
+    // если данные всё же не пришли, показываем английский исходник, а не
+    // падаем без wp-i18n.
+    var i18n = window.wp && window.wp.i18n;
+    var __ = i18n ? i18n.__ : function (text) { return text; };
+
     // 'solanapaykz' — id способа оплаты: BlocksSupport::$name в PHP,
     // тот же, что и Gateway::$id. Второй аргумент — данные по умолчанию
     // на случай, если сервер почему-то не прислал их.
     var data = settingsApi.getPaymentMethodData('solanapaykz', {});
 
-    var defaultTitle = 'Оплата криптовалютой (USDC)';
+    var defaultTitle = __('Pay with cryptocurrency (USDC)', 'solanapaykz');
     var title = data.title || defaultTitle;
     var description = data.description || '';
 

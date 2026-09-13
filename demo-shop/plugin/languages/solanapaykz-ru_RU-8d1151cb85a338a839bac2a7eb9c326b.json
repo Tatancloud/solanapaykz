@@ -1,0 +1,30 @@
+{
+    "translation-revision-date": "2026-09-13 09:23+0000",
+    "generator": "build-js-json.php",
+    "source": "assets/checkout.js",
+    "domain": "messages",
+    "locale_data": {
+        "messages": {
+            "": {
+                "domain": "messages",
+                "lang": "ru_RU",
+                "plural-forms": "nplurals=3; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 && n%10<=4 && (n%100<12 || n%100>14) ? 1 : 2);"
+            },
+            "QR code for payment via a Solana wallet": [
+                "QR-код для оплаты через кошелёк Solana"
+            ],
+            "Price valid for another ": [
+                "Цена действует ещё "
+            ],
+            "The price has expired. If you already sent the payment, please wait for confirmation — this can take up to a minute.": [
+                "Срок цены истёк. Если вы уже отправили платёж, дождитесь подтверждения — это занимает до минуты."
+            ],
+            "The payment window has expired. If you did send the payment, please contact the store.": [
+                "Срок оплаты истёк. Если вы всё же отправили платёж, свяжитесь с магазином."
+            ],
+            "Automatic payment verification is not available in this browser. Please refresh the page manually after paying.": [
+                "Автоматическая проверка оплаты недоступна в этом браузере. Обновите страницу вручную после оплаты."
+            ]
+        }
+    }
+}

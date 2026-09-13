@@ -8,6 +8,16 @@
         return;
     }
 
+    // wp-i18n подключён как зависимость скрипта (см. Gateway.php), а JSON с
+    // переводом строк — через wp_set_script_translations(). На старой сборке
+    // WordPress без wp-i18n просто показываем английский исходник, а не
+    // падаем.
+    var i18n = window.wp && window.wp.i18n;
+
+    function t(text) {
+        return i18n ? i18n.__(text, 'solanapaykz') : text;
+    }
+
     var qrBox = document.getElementById('solanapaykz-qr');
     var statusBox = document.getElementById('solanapaykz-status');
     var timerBox = document.getElementById('solanapaykz-timer');
@@ -52,7 +62,7 @@
             cellSize: 5,
             margin: 2,
             scalable: true,
-            alt: 'QR-код для оплаты через кошелёк Solana'
+            alt: t('QR code for payment via a Solana wallet')
         });
     }
 
@@ -64,7 +74,7 @@
         var left = remainingSeconds();
 
         if (left > 0) {
-            timerBox.textContent = 'Цена действует ещё ' + pad(Math.floor(left / 60)) + ':' + pad(left % 60);
+            timerBox.textContent = t('Price valid for another ') + pad(Math.floor(left / 60)) + ':' + pad(left % 60);
             return;
         }
 
@@ -74,12 +84,13 @@
             // Таймер истёк, но опрос продолжается: если платёж уже
             // отправлен, ждём его подтверждения, а не молча объявляем
             // деньги потерянными.
-            timerBox.textContent = 'Срок цены истёк. Если вы уже отправили платёж, '
-                + 'дождитесь подтверждения — это занимает до минуты.';
+            timerBox.textContent = t('The price has expired. If you already sent the payment, '
+                + 'please wait for confirmation — this can take up to a minute.');
             return;
         }
 
-        timerBox.textContent = 'Срок оплаты истёк. Если вы всё же отправили платёж, свяжитесь с магазином.';
+        timerBox.textContent = t('The payment window has expired. If you did send the payment, '
+            + 'please contact the store.');
         stop();
     }
 
@@ -162,8 +173,8 @@
         // оплату автоматически нечем. Покупатель должен узнать об этом
         // явно — иначе страница молча висит на «Ожидаем оплату…» вечно,
         // и не отличить рабочий опрос от сломанного.
-        show('unknown', 'Автоматическая проверка оплаты недоступна в этом браузере. '
-            + 'Обновите страницу вручную после оплаты.');
+        show('unknown', t('Automatic payment verification is not available in this browser. '
+            + 'Please refresh the page manually after paying.'));
         return;
     }
 

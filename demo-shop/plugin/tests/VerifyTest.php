@@ -47,7 +47,7 @@ final class VerifyTest extends TestCase
         $result = $verify->check('Метка', 'Продавец', self::USDC, '1');
 
         self::assertSame('mismatch', $result['status']);
-        self::assertStringContainsString('ошибк', mb_strtolower((string) $result['reason']));
+        self::assertStringContainsString('error', mb_strtolower((string) $result['reason']));
     }
 
     public function test_успешная_транзакция_подтверждается(): void
@@ -88,7 +88,7 @@ final class VerifyTest extends TestCase
         $result = $verify->check($reference, $recipient, self::USDC, '99999999999');
 
         self::assertSame('mismatch', $result['status']);
-        self::assertStringContainsString('сумм', mb_strtolower((string) $result['reason']));
+        self::assertStringContainsString('amount', mb_strtolower((string) $result['reason']));
     }
 
     public function test_чужой_получатель_отвергается(): void
@@ -100,7 +100,7 @@ final class VerifyTest extends TestCase
         $result = $verify->check($reference, 'СовсемДругойПродавец', self::USDC, '1');
 
         self::assertSame('mismatch', $result['status']);
-        self::assertStringContainsString('получател', mb_strtolower((string) $result['reason']));
+        self::assertStringContainsString('recipient', mb_strtolower((string) $result['reason']));
     }
 
     public function test_отсутствие_метки_в_транзакции_отвергается(): void
@@ -112,7 +112,7 @@ final class VerifyTest extends TestCase
         $result = $verify->check('МеткиЗдесьНет', $recipient, self::USDC, '1');
 
         self::assertSame('mismatch', $result['status']);
-        self::assertStringContainsString('метк', mb_strtolower((string) $result['reason']));
+        self::assertStringContainsString('reference', mb_strtolower((string) $result['reason']));
     }
 
     public function test_новый_токен_аккаунт_считается_с_нулевого_баланса(): void
@@ -348,7 +348,7 @@ final class VerifyTest extends TestCase
         $result = $verify->check($reference, $recipient, null, '999999999999');
 
         self::assertSame('mismatch', $result['status']);
-        self::assertStringContainsString('сумм', mb_strtolower((string) $result['reason']));
+        self::assertStringContainsString('amount', mb_strtolower((string) $result['reason']));
     }
 
     public function test_нативный_перевод_получателя_нет_среди_ключей_отвергается(): void
