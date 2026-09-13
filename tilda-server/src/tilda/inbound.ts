@@ -34,11 +34,12 @@
  * из запроса.
  */
 import { randomBytes } from 'node:crypto';
-import type {
-  CreatePaymentRequestOptions,
-  PaymentRequest,
-  Quote,
-  TokenSymbol,
+import {
+  KZT_DECIMALS,
+  type CreatePaymentRequestOptions,
+  type PaymentRequest,
+  type Quote,
+  type TokenSymbol,
 } from '@solanapaykz/core';
 import type { Config } from '../config.js';
 import { DuplicateOrderError, type NewOrder, type Order, type Store } from '../db.js';
@@ -196,17 +197,21 @@ export function parseTildaOrder(body: Record<string, string>): TildaOrder {
 
 /**
  * Формат допустимой суммы: цифры и, возможно, точка с дробной частью не
- * длиннее двух знаков. Тенге у нас хранятся с точностью до тиына
- * (`KZT_DECIMALS = 2` в `@solanapaykz/core/src/money.ts`), и SDK разбирает
- * сумму с этой же точностью, отказываясь на большей (`allowTruncation:
- * false` в `createQuote`) — необработанным исключением, а не понятным
- * отказом у входа. Найдено ревью: `0.0000001` и
+ * длиннее `KZT_DECIMALS` знаков. Тенге у нас хранятся с точностью до тиына,
+ * и SDK разбирает сумму с этой же точностью, отказываясь на большей
+ * (`allowTruncation: false` в `createQuote`) — необработанным исключением,
+ * а не понятным отказом у входа. Найдено ревью: `0.0000001` и
  * `15000.000000000000001` проходили старый предикат (`\d+(\.\d+)?`, без
- * ограничения на число знаков) и падали уже внутри SDK. Предикат
- * продублирован ЗДЕСЬ (а не импортирован из `@solanapaykz/core`): SDK не
- * выносит точность тенге в публичный API (`src/index.ts` её не
- * экспортирует), а менять экспорт `@solanapaykz/core` — вне рамок этой
- * задачи.
+ * ограничения на число знаков) и падали уже внутри SDK.
+ *
+ * Выражение строится из `KZT_DECIMALS`, а не повторяет число руками —
+ * правка ревью (задача 8): раньше здесь был отдельный литерал `\.\d{1,2}`,
+ * никак не связанный с `KZT_DECIMALS` в `@solanapaykz/core/src/money.ts`
+ * (тот тоже не был экспортирован наружу). Измени `KZT_DECIMALS` — и
+ * литерал продолжил бы жить по старому значению молча: либо отвергал бы
+ * верные суммы, либо пропускал те, на которых `parseDecimalToUnits` уже
+ * падает. `KZT_DECIMALS` теперь в публичном экспорте `@solanapaykz/core`
+ * (`src/index.ts`) ровно за этим.
  *
  * Экспортируется — запасной вход (`../http/routes-webhook.ts`) проверяет
  * ту же самую сумму тем же самым правилом. Правка финального ревью
@@ -216,7 +221,7 @@ export function parseTildaOrder(body: Record<string, string>): TildaOrder {
  * неизбежно разошлись бы при первой же правке одного без другого. Один
  * и тот же запасной вход — тот же самый источник истины.
  */
-export const ФОРМАТ_СУММЫ = /^\d+(\.\d{1,2})?$/;
+export const ФОРМАТ_СУММЫ = new RegExp(`^\\d+(\\.\\d{1,${KZT_DECIMALS}})?$`);
 
 /**
  * Верхняя граница суммы заказа в тенге. Не техническое ограничение SDK (там
