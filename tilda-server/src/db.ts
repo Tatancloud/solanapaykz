@@ -282,6 +282,65 @@ export interface Store {
    * обнулять счётчик и тем самым оживлять токены, которые уже были отозваны.
    */
   bumpSessionGeneration(): number;
+
+  /**
+   * Живые заказы с ровно такой суммой в минимальных единицах — кандидаты
+   * на опознание поступления по сумме.
+   *
+   * «Живой» здесь — то же самое, что в `listPending`: «ожидает» в
+   * пределах срока цены плюс окно поздних платежей, «просрочен» и «не
+   * сошлось» в пределах окна от создания. Закрытый заказ сумму
+   * освобождает, и поступление на неё к нему уже не относится.
+   *
+   * Отбираются только заказы с `unique_amount = 1`: у остальных сумма
+   * могла совпасть с чужой, и опознавать по ней платёж нельзя.
+   */
+  findLiveOrdersByAmountUnits(params: {
+    amountUnits: string;
+    tokenSymbol: TokenSymbol;
+    cluster: Cluster;
+    lateWindowSeconds: number;
+    now: number;
+  }): Order[];
+
+  /**
+   * Помечает транзакцию использованной этим заказом. `false` — подпись
+   * уже была использована раньше (кем угодно), и второй раз засчитывать
+   * её нельзя.
+   *
+   * Держит это первичный ключ таблицы, а не проверка «есть ли такая»
+   * перед записью: между проверкой и записью — гонка, а цена ошибки —
+   * два заказа, закрытых одним платежом.
+   */
+  claimSignature(signature: string, orderId: number, at: number): boolean;
+
+  /** Докуда сканер разобрал историю поступлений; `null` — ещё ни разу. */
+  scanCursor(): { signature: string; blockTime: number | null } | null;
+  /** Двигает курсор сканера. Вызывается только по РАЗОБРАННОМУ. */
+  setScanCursor(курсор: { signature: string; blockTime: number | null }): void;
+
+  /** Записывает поступление, не подошедшее ни одному заказу. Повтор той же подписи ничего не меняет. */
+  recordUnmatched(поступление: Omit<UnmatchedReceipt, 'mailedAt'>): void;
+  /** Неопознанные поступления, новые первыми. */
+  listUnmatched(limit: number): UnmatchedReceipt[];
+  /** Отмечает, что о поступлении написали продавцу. */
+  markUnmatchedMailed(signature: string, at: number): void;
+  /** Момент последнего письма о неопознанном поступлении — для ограничения частоты. */
+  lastUnmatchedMailAt(): number | null;
+}
+
+/** Поступление на кошелёк магазина, не подошедшее ни одному заказу. */
+export interface UnmatchedReceipt {
+  signature: string;
+  /** Сумма поступления в минимальных единицах токена, строкой. */
+  amountUnits: string;
+  tokenSymbol: TokenSymbol;
+  blockTime: number | null;
+  /** Почему не опознано — человеку в списке заказов, а не коду. */
+  reason: string;
+  seenAt: number;
+  /** Когда о нём написали продавцу; `null` — ещё не писали. */
+  mailedAt: number | null;
 }
 
 const СХЕМА = `
@@ -953,6 +1012,118 @@ export function openDatabase(путь: string, busyTimeoutMs = 5000): Store {
     return sessionGeneration();
   }
 
+  // --- Оплата по уникальной сумме ---
+
+  // Те же окна, что и в `ожидающие` выше: закрытый или безнадёжно
+  // просроченный заказ сумму освободил, и поступление на неё к нему уже
+  // не относится. `unique_amount = 1` — потому что у остальных заказов
+  // сумма могла совпасть с чужой, опознавать по ней нельзя.
+  const живыеПоСумме = db.prepare(`
+    SELECT * FROM orders
+    WHERE amount_units = ? AND token_symbol = ? AND cluster = ? AND unique_amount = 1
+      AND (
+        (state = 'ожидает'     AND expires_at + ? >= ?)
+        OR (state = 'просрочен'  AND created_at + ? >= ?)
+        OR (state = 'не сошлось' AND created_at + ? >= ?)
+      )
+    ORDER BY created_at ASC
+  `);
+  const занятьПодпись = db.prepare(
+    'INSERT OR IGNORE INTO matched_signatures (signature, order_id, matched_at) VALUES (?, ?, ?)',
+  );
+  const прочитатьКурсор = db.prepare(
+    'SELECT last_signature, last_block_time FROM scan_state WHERE id = 1',
+  );
+  const записатьКурсор = db.prepare(
+    'UPDATE scan_state SET last_signature = ?, last_block_time = ? WHERE id = 1',
+  );
+  const записатьНеопознанное = db.prepare(`
+    INSERT OR IGNORE INTO unmatched_receipts
+      (signature, amount_units, token_symbol, block_time, reason, seen_at, mailed_at)
+    VALUES (?, ?, ?, ?, ?, ?, NULL)
+  `);
+  const неопознанные = db.prepare('SELECT * FROM unmatched_receipts ORDER BY seen_at DESC LIMIT ?');
+  const отметитьПисьмо = db.prepare('UPDATE unmatched_receipts SET mailed_at = ? WHERE signature = ?');
+  const последнееПисьмо = db.prepare('SELECT MAX(mailed_at) AS последнее FROM unmatched_receipts');
+
+  function findLiveOrdersByAmountUnits(params: {
+    amountUnits: string;
+    tokenSymbol: TokenSymbol;
+    cluster: Cluster;
+    lateWindowSeconds: number;
+    now: number;
+  }): Order[] {
+    const строки = живыеПоСумме.all(
+      params.amountUnits,
+      params.tokenSymbol,
+      params.cluster,
+      params.lateWindowSeconds,
+      params.now,
+      params.lateWindowSeconds,
+      params.now,
+      params.lateWindowSeconds,
+      params.now,
+    ) as unknown as СтрокаЗаказа[];
+    return строки.map(изСтроки);
+  }
+
+  function claimSignature(signature: string, orderId: number, at: number): boolean {
+    return занятьПодпись.run(signature, orderId, at).changes === 1;
+  }
+
+  function scanCursor(): { signature: string; blockTime: number | null } | null {
+    const строка = прочитатьКурсор.get() as unknown as
+      | { last_signature: string | null; last_block_time: number | null }
+      | undefined;
+    if (!строка || строка.last_signature === null) return null;
+    return { signature: строка.last_signature, blockTime: строка.last_block_time };
+  }
+
+  function setScanCursor(курсор: { signature: string; blockTime: number | null }): void {
+    записатьКурсор.run(курсор.signature, курсор.blockTime);
+  }
+
+  function recordUnmatched(поступление: Omit<UnmatchedReceipt, 'mailedAt'>): void {
+    записатьНеопознанное.run(
+      поступление.signature,
+      поступление.amountUnits,
+      поступление.tokenSymbol,
+      поступление.blockTime,
+      поступление.reason,
+      поступление.seenAt,
+    );
+  }
+
+  function listUnmatched(limit: number): UnmatchedReceipt[] {
+    const строки = неопознанные.all(limit) as unknown as Array<{
+      signature: string;
+      amount_units: string;
+      token_symbol: string;
+      block_time: number | null;
+      reason: string;
+      seen_at: number;
+      mailed_at: number | null;
+    }>;
+    return строки.map((с) => ({
+      signature: с.signature,
+      amountUnits: с.amount_units,
+      tokenSymbol: с.token_symbol as TokenSymbol,
+      blockTime: с.block_time,
+      reason: с.reason,
+      seenAt: с.seen_at,
+      mailedAt: с.mailed_at,
+    }));
+  }
+
+  function markUnmatchedMailed(signature: string, at: number): void {
+    отметитьПисьмо.run(at, signature);
+  }
+
+  function lastUnmatchedMailAt(): number | null {
+    const строка = последнееПисьмо.get() as unknown as { последнее: number | null } | undefined;
+    return строка?.последнее ?? null;
+  }
+
   return {
     createOrder,
     findByTildaOrderId,
@@ -964,5 +1135,13 @@ export function openDatabase(путь: string, busyTimeoutMs = 5000): Store {
     recordMailOutcome,
     sessionGeneration,
     bumpSessionGeneration,
+    findLiveOrdersByAmountUnits,
+    claimSignature,
+    scanCursor,
+    setScanCursor,
+    recordUnmatched,
+    listUnmatched,
+    markUnmatchedMailed,
+    lastUnmatchedMailAt,
   };
 }

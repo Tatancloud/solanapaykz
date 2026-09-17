@@ -3,7 +3,14 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { PaymentStatus } from '@solanapaykz/core';
-import { checkOrder, startChecker, обходОдинРаз, type CheckerDeps, type PaymentCheckerClient } from '../src/checker.js';
+import {
+  checkOrder,
+  startChecker,
+  обходОдинРаз,
+  подтвердитьПлатёжПоСумме,
+  type CheckerDeps,
+  type PaymentCheckerClient,
+} from '../src/checker.js';
 import type { Config } from '../src/config.js';
 import { openDatabase, type NewOrder, type Order, type Store } from '../src/db.js';
 import { createLog } from '../src/log.js';
@@ -931,5 +938,82 @@ describe('startChecker', () => {
     стоп();
     await vi.advanceTimersByTimeAsync(120_000);
     expect(проходов).toBe(2);
+  });
+});
+
+describe('подтвердитьПлатёжПоСумме', () => {
+  let каталог: string;
+  let store: Store;
+  let журнал: string[];
+  let deps: CheckerDeps;
+  let отправки: ReturnType<typeof счётчикОтправок>;
+
+  beforeEach(() => {
+    каталог = mkdtempSync(join(tmpdir(), 'spkz-сумма-'));
+    store = openDatabase(join(каталог, 'orders.sqlite'));
+    журнал = [];
+    отправки = счётчикОтправок();
+    deps = {
+      config,
+      store,
+      // Узел здесь не нужен вовсе: факт платежа уже установлен сканером,
+      // и повторно спрашивать блокчейн незачем. Клиент, который падает
+      // на любой проверке, это и доказывает.
+      client: клиентКоторыйПадает(),
+      log: createLog((строка) => журнал.push(строка)),
+      тест: {
+        задержкиMs: [1, 1, 1, 1],
+        отправка: отправки.отправка,
+        отправкаПисьма: счётчикПисем().отправкаПисьма,
+      },
+    };
+  });
+
+  afterEach(() => {
+    rmSync(каталог, { recursive: true, force: true });
+  });
+
+  it('переводит ожидающий заказ в «оплачен», записывает подпись и уведомляет Tilda', async () => {
+    const заказ = store.createOrder(образец, { потолокДобавки: 10_000 });
+
+    const решение = await подтвердитьПлатёжПоСумме(заказ, 'ПодписьA', deps);
+
+    expect(решение.action).toBe('оплачен');
+    await дождатьсяЗавершенияОтправки(store, заказ.token);
+    const свежий = store.findByToken(заказ.token);
+    expect(свежий?.state).toBe('уведомлён');
+    expect(свежий?.txSignature).toBe('ПодписьA');
+    expect(отправки.значение).toBe(1);
+  });
+
+  it('просроченный заказ закрывает как «поздний», а не как оплаченный', async () => {
+    const заказ = store.createOrder(образец, { потолокДобавки: 10_000 });
+    store.updateState(заказ.id, 'просрочен');
+
+    const решение = await подтвердитьПлатёжПоСумме(store.findByToken(заказ.token)!, 'ПодписьA', deps);
+
+    expect(решение.action).toBe('поздний');
+    expect(store.findByToken(заказ.token)?.state).toBe('поздний');
+  });
+
+  it('не трогает заказ, уже закрытый другим путём, и не шлёт второго уведомления', async () => {
+    const заказ = store.createOrder(образец, { потолокДобавки: 10_000 });
+    store.updateState(заказ.id, 'уведомлён');
+
+    const решение = await подтвердитьПлатёжПоСумме(заказ, 'ПодписьA', deps);
+
+    expect(решение.action).toBe('ждать');
+    expect(отправки.значение).toBe(0);
+  });
+
+  it('решает по свежей записи, а не по той, что была на входе', async () => {
+    // Сканер мог держать заказ в руках с прошлого прохода, пока опрос из
+    // вкладки покупателя уже закрыл его платежом по метке.
+    const заказ = store.createOrder(образец, { потолокДобавки: 10_000 });
+    store.updateState(заказ.id, 'уведомлён');
+
+    const решение = await подтвердитьПлатёжПоСумме({ ...заказ, state: 'ожидает' }, 'ПодписьA', deps);
+
+    expect(решение.action).toBe('ждать');
   });
 });
