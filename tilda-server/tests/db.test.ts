@@ -32,6 +32,79 @@ const образец: NewOrder = {
   productsJson: '[]',
 };
 
+/**
+ * Схема базы версии 4 — точная копия того, что создавал сервер ДО
+ * появления оплаты по уникальной сумме.
+ *
+ * Копия намеренная, а не импорт из `src/db.ts`: тест обязан проверять
+ * переход с настоящей старой схемы (такая база прямо сейчас работает на
+ * pay.kabyldau.digital), а импорт подставил бы сюда новую схему, и тест
+ * перестал бы проверять миграцию вовсе, продолжая при этом «проходить».
+ */
+const СХЕМА_ВЕРСИИ_4 = `
+CREATE TABLE IF NOT EXISTS orders (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  tilda_order_id  TEXT    NOT NULL UNIQUE,
+  token           TEXT    NOT NULL UNIQUE,
+  state           TEXT    NOT NULL,
+  amount_kzt      TEXT    NOT NULL,
+  currency        TEXT    NOT NULL DEFAULT 'KZT',
+  amount_token    TEXT    NOT NULL,
+  token_symbol    TEXT    NOT NULL,
+  cluster         TEXT    NOT NULL,
+  recipient       TEXT    NOT NULL,
+  reference       TEXT    NOT NULL,
+  rate            TEXT    NOT NULL,
+  rate_source     TEXT    NOT NULL,
+  payment_url     TEXT    NOT NULL,
+  quote_json      TEXT    NOT NULL,
+  created_at      INTEGER NOT NULL,
+  expires_at      INTEGER NOT NULL,
+  test_mode       INTEGER NOT NULL DEFAULT 0,
+  tilda_signature TEXT,
+  tx_signature    TEXT,
+  paid_at         INTEGER,
+  notify_attempts INTEGER NOT NULL DEFAULT 0,
+  notified_ok     INTEGER NOT NULL DEFAULT 0,
+  customer_email  TEXT,
+  description     TEXT,
+  products_json   TEXT,
+  mail_failed_at  INTEGER,
+  mail_error      TEXT
+);
+CREATE INDEX IF NOT EXISTS orders_state_created ON orders (state, created_at);
+
+CREATE TABLE IF NOT EXISTS admin_session (
+  id         INTEGER NOT NULL CHECK (id = 1),
+  generation INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (id)
+);
+INSERT OR IGNORE INTO admin_session (id, generation) VALUES (1, 0);
+`;
+
+/** Создаёт файл базы версии 4 с заданными заказами и закрывает его. */
+function базаВерсии4(
+  путь: string,
+  заказы: Array<{ tildaOrderId: string; token: string; amountToken: string; tokenSymbol: string }>,
+): void {
+  const db = new DatabaseSync(путь);
+  db.exec(СХЕМА_ВЕРСИИ_4);
+  const вставить = db.prepare(`
+    INSERT INTO orders (
+      tilda_order_id, token, state, amount_kzt, currency, amount_token, token_symbol,
+      cluster, recipient, reference, rate, rate_source, payment_url, quote_json,
+      created_at, expires_at, test_mode, notify_attempts, notified_ok
+    ) VALUES (?, ?, 'ожидает', '15000', 'KZT', ?, ?, 'mainnet',
+      'A4dSmSbNkJbPxnv3k3BH351xZm5iwvpubqevDHAaBM4P', 'метка', '459.55', 'binance',
+      'solana:A4dSm...', '{}', 1789200000, 1789200900, 0, 0, 0)
+  `);
+  for (const з of заказы) {
+    вставить.run(з.tildaOrderId, з.token, з.amountToken, з.tokenSymbol);
+  }
+  db.exec('PRAGMA user_version = 4');
+  db.close();
+}
+
 beforeEach(() => {
   каталог = mkdtempSync(join(tmpdir(), 'spkz-'));
   store = openDatabase(join(каталог, 'orders.sqlite'));
@@ -348,16 +421,19 @@ describe('Store', () => {
     expect(этоДубльНомераTilda(поймана)).toBe(false);
   });
 
-  it('отказывается открывать базу другой версии схемы, а не падает молча на первой вставке', () => {
+  it('отказывается открывать базу версии, которую не умеет перенести, а не падает молча на первой вставке', () => {
     // CREATE TABLE IF NOT EXISTS на файле с чужой версией ничего не делает —
     // без явной проверки версии сервер бы упал на первой же вставке в
     // несуществующую колонку, без единого внятного сообщения о причине.
+    // С появлением миграций (версия 5) знакомая старая версия переносится
+    // (см. тест ниже), а незнакомая по-прежнему отвергается — молчаливой
+    // порчи данных не должно быть ни в том, ни в другом случае.
     const путь = join(каталог, 'чужая-версия.sqlite');
     const чужая = new DatabaseSync(путь);
     чужая.exec('PRAGMA user_version = 999');
     чужая.close();
 
-    expect(() => openDatabase(путь)).toThrow(/версией схемы/);
+    expect(() => openDatabase(путь)).toThrow(/Не умею переносить базу с версии 999/);
   });
 
   it('открывает новый файл (версия 0) и повторно — свою же версию — без ошибок', () => {
@@ -366,5 +442,34 @@ describe('Store', () => {
     // Повторное открытие того же файла — версия уже проставлена и совпадает
     // с ожидаемой, это штатный случай (перезапуск сервера), а не отказ.
     expect(() => openDatabase(путь)).not.toThrow();
+  });
+
+  it('переносит базу версии 4 в версию 5, не теряя заказов', () => {
+    const путь = join(каталог, 'версия-4.sqlite');
+    базаВерсии4(путь, [
+      { tildaOrderId: 'T-1', token: 'т-1', amountToken: '0.000420000', tokenSymbol: 'SOL' },
+      { tildaOrderId: 'T-2', token: 'т-2', amountToken: '32.640000', tokenSymbol: 'USDC' },
+    ]);
+
+    const store = openDatabase(путь);
+
+    // Единицы посчитаны при миграции из суммы и точности СВОЕГО токена:
+    // 0.000420000 SOL = 420 000 лампортов, 32.640000 USDC = 32 640 000
+    // микро-USDC. Оставить колонку пустой было нельзя — сопоставление по
+    // сумме молча промахивалось бы мимо всех старых заказов.
+    expect(store.findByTildaOrderId('T-1')?.amountUnits).toBe('420000');
+    expect(store.findByTildaOrderId('T-2')?.amountUnits).toBe('32640000');
+    // Уникальную сумму старым заказам никто не подбирал — способ включается
+    // позже и только для новых.
+    expect(store.findByTildaOrderId('T-1')?.uniqueAmount).toBe(0);
+  });
+
+  it('отказывается переносить базу версии, которой не знает', () => {
+    const путь = join(каталог, 'версия-3.sqlite');
+    const старая = new DatabaseSync(путь);
+    старая.exec('PRAGMA user_version = 3');
+    старая.close();
+
+    expect(() => openDatabase(путь)).toThrow(/Не умею переносить базу с версии 3/);
   });
 });

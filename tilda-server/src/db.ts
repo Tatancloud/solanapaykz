@@ -21,6 +21,7 @@
  */
 
 import { DatabaseSync, type SupportedValueType } from 'node:sqlite';
+import { formatUnits, parseDecimalToUnits, resolveToken } from '@solanapaykz/core';
 import type { Cluster, TokenSymbol } from './config.js';
 
 type БазаSQLite = InstanceType<typeof DatabaseSync>;
@@ -69,6 +70,29 @@ export interface Order {
    */
   currency: string;
   amountToken: string;
+  /**
+   * Та же сумма в целых минимальных единицах токена (лампорты для SOL,
+   * микро-USDC для USDC), строкой — `BigInt.toString()`.
+   *
+   * По ней идёт опознание платежа по сумме и проверка её уникальности
+   * (см. индекс `orders_amount_units_live`). Десятичная запись для этого
+   * не годится: «0.0023» и «0.00230» — одно число и две разные строки, а
+   * сравнение чисел с плавающей точкой в деньгах — источник молчаливых
+   * ошибок округления, запрещённый во всём проекте.
+   *
+   * Считается хранилищем из `amountToken` при создании заказа — отдельно
+   * передавать его не нужно и нельзя (см. `NewOrder`): два независимых
+   * представления одной суммы разошлись бы.
+   */
+  amountUnits: string;
+  /**
+   * 1 — сумма заказа уникальна среди живых заказов, и платёж по ней
+   * опознаётся без метки. 0 — уникальную сумму не подбирали (способ
+   * выключен) либо не смогли подобрать (исчерпан потолок докрутки);
+   * такому заказу страница оплаты покажет только QR, а сопоставление по
+   * сумме его не увидит.
+   */
+  uniqueAmount: 0 | 1;
   tokenSymbol: TokenSymbol;
   cluster: Cluster;
   recipient: string;
@@ -139,7 +163,19 @@ export interface Order {
  */
 export type NewOrder = Omit<
   Order,
-  'id' | 'state' | 'paidAt' | 'notifyAttempts' | 'notifiedOk' | 'mailFailedAt' | 'mailError'
+  | 'id'
+  | 'state'
+  | 'paidAt'
+  | 'notifyAttempts'
+  | 'notifiedOk'
+  | 'mailFailedAt'
+  | 'mailError'
+  // Сумма в минимальных единицах — производная от `amountToken` и токена,
+  // её считает само хранилище; `uniqueAmount` — исход подбора уникальной
+  // суммы, а не пожелание вызывающего кода (подбор запрашивается вторым
+  // аргументом `createOrder`).
+  | 'amountUnits'
+  | 'uniqueAmount'
 >;
 
 /**
@@ -163,8 +199,16 @@ export class DuplicateOrderError extends Error {
 }
 
 export interface Store {
-  /** Заводит заказ. Бросает `DuplicateOrderError`, если `tildaOrderId` уже занят. */
-  createOrder(o: NewOrder): Order;
+  /**
+   * Заводит заказ. Бросает `DuplicateOrderError`, если `tildaOrderId` уже
+   * занят.
+   *
+   * С `подбор` сумма заказа докручивается вверх до свободной среди живых
+   * заказов (оплата по уникальной сумме); без него заказ получает ровно
+   * ту сумму, что посчитана по курсу. Итог подбора виден в полях
+   * `amountUnits`/`amountToken`/`uniqueAmount` возвращённого заказа.
+   */
+  createOrder(o: NewOrder, подбор?: ПодборСуммы): Order;
   findByTildaOrderId(id: string): Order | null;
   findByToken(token: string): Order | null;
   /** Последние заказы, новые первыми. */
@@ -249,6 +293,8 @@ CREATE TABLE IF NOT EXISTS orders (
   amount_kzt      TEXT    NOT NULL,
   currency        TEXT    NOT NULL DEFAULT 'KZT',
   amount_token    TEXT    NOT NULL,
+  amount_units    TEXT    NOT NULL DEFAULT '0',
+  unique_amount   INTEGER NOT NULL DEFAULT 0,
   token_symbol    TEXT    NOT NULL,
   cluster         TEXT    NOT NULL,
   recipient       TEXT    NOT NULL,
@@ -273,6 +319,58 @@ CREATE TABLE IF NOT EXISTS orders (
 );
 CREATE INDEX IF NOT EXISTS orders_state_created ON orders (state, created_at);
 
+-- Уникальность суммы среди ЖИВЫХ заказов — та единственная защита, на
+-- которой держится опознание платежа по сумме. Проверка «свободна ли
+-- сумма» перед вставкой её не даёт: между проверкой и вставкой — гонка,
+-- и два заказа получили бы одну сумму, а платёж по ней стал бы
+-- неразличим. Индекс частичный: сумма закрытого или безнадёжно
+-- просроченного заказа свободна и может достаться новому (окно поздних
+-- платежей ограничивает это по времени уже в запросах, см. listPending).
+-- Сравнение идёт по целым минимальным единицам строкой, а не по
+-- десятичной записи: «0.0023» и «0.00230» — одно число и две разные
+-- строки.
+CREATE UNIQUE INDEX IF NOT EXISTS orders_amount_units_live
+  ON orders (amount_units, token_symbol, cluster)
+  WHERE unique_amount = 1
+    AND state IN ('ожидает', 'просрочен', 'не сошлось');
+
+-- Транзакции, уже закрывшие какой-то заказ. Первичный ключ по подписи —
+-- единственная настоящая защита от того, что одна транзакция закроет два
+-- заказа: проверка «есть ли уже такая» перед записью оставляет ту же
+-- гонку, что и проверка суммы выше.
+CREATE TABLE IF NOT EXISTS matched_signatures (
+  signature   TEXT    NOT NULL PRIMARY KEY,
+  order_id    INTEGER NOT NULL REFERENCES orders (id),
+  matched_at  INTEGER NOT NULL
+);
+
+-- Поступления на кошелёк магазина, не подошедшие ни одному заказу.
+-- Продавец видит их в списке заказов: это чужие деньги, уже лежащие на
+-- его кошельке, и молчать о них нельзя — покупатель, отправивший не ту
+-- сумму или заплативший с биржи с удержанной комиссией, иначе просто
+-- исчезает из поля зрения вместе со своим заказом.
+CREATE TABLE IF NOT EXISTS unmatched_receipts (
+  signature     TEXT    NOT NULL PRIMARY KEY,
+  amount_units  TEXT    NOT NULL,
+  token_symbol  TEXT    NOT NULL,
+  block_time    INTEGER,
+  reason        TEXT    NOT NULL,
+  seen_at       INTEGER NOT NULL,
+  mailed_at     INTEGER
+);
+CREATE INDEX IF NOT EXISTS unmatched_seen ON unmatched_receipts (seen_at DESC);
+
+-- Одна строка на весь сервер: докуда сканер разобрал историю поступлений.
+-- CHECK(id = 1) — по образцу admin_session ниже: вторая строка была бы
+-- бессмысленной и молча перестала бы на что-либо влиять.
+CREATE TABLE IF NOT EXISTS scan_state (
+  id              INTEGER NOT NULL CHECK (id = 1),
+  last_signature  TEXT,
+  last_block_time INTEGER,
+  PRIMARY KEY (id)
+);
+INSERT OR IGNORE INTO scan_state (id, last_signature, last_block_time) VALUES (1, NULL, NULL);
+
 -- Одна строка на весь сервер: текущее поколение сессий администратора
 -- (задача 8). CHECK(id = 1) не даёт завести вторую строку по ошибке —
 -- поколение одно на весь процесс, второе было бы бессмысленно и молча
@@ -294,6 +392,8 @@ interface СтрокаЗаказа {
   amount_kzt: string;
   currency: string;
   amount_token: string;
+  amount_units: string;
+  unique_amount: number;
   token_symbol: string;
   cluster: string;
   recipient: string;
@@ -326,6 +426,8 @@ function изСтроки(р: СтрокаЗаказа): Order {
     amountKzt: р.amount_kzt,
     currency: р.currency,
     amountToken: р.amount_token,
+    amountUnits: р.amount_units,
+    uniqueAmount: р.unique_amount === 1 ? 1 : 0,
     tokenSymbol: р.token_symbol as TokenSymbol,
     cluster: р.cluster as Cluster,
     recipient: р.recipient,
@@ -358,6 +460,8 @@ const КОЛОНКА: Record<Exclude<keyof Order, 'id'>, string> = {
   amountKzt: 'amount_kzt',
   currency: 'currency',
   amountToken: 'amount_token',
+  amountUnits: 'amount_units',
+  uniqueAmount: 'unique_amount',
   tokenSymbol: 'token_symbol',
   cluster: 'cluster',
   recipient: 'recipient',
@@ -436,6 +540,37 @@ export function этоДубльНомераTilda(е: unknown): boolean {
 }
 
 /**
+ * Нарушение уникальности СУММЫ (индекс `orders_amount_units_live`) — не
+ * дубль номера Tilda и не дубль ключа страницы.
+ *
+ * Отличается от них подстрокой в сообщении, как и `этоДубльНомераTilda`:
+ * код ошибки у всех трёх один и тот же, а спутать их нельзя — занятая
+ * сумма означает «возьми следующую», занятый номер заказа означает
+ * «такой заказ уже есть», и подмена одного другим создала бы второй заказ
+ * на ту же оплату.
+ */
+export function этоЗанятаяСумма(е: unknown): boolean {
+  return (
+    этоОшибкаSQLite(е) &&
+    е.errcode === SQLITE_CONSTRAINT_UNIQUE &&
+    е.message.includes('orders.amount_units')
+  );
+}
+
+/**
+ * Просьба подобрать заказу уникальную сумму: докручивать вверх по одной
+ * минимальной единице токена, пока база не примет вставку.
+ *
+ * Отсутствие этого аргумента у `createOrder` означает «способ выключен» —
+ * заказ получает ровно посчитанную сумму и не участвует в опознании по
+ * сумме вовсе.
+ */
+export interface ПодборСуммы {
+  /** Сколько минимальных единиц разрешено добавить сверх посчитанной суммы. */
+  потолокДобавки: number;
+}
+
+/**
  * Версия схемы `orders`, записывается в `PRAGMA user_version` файла базы.
  *
  * `CREATE TABLE IF NOT EXISTS` на файле со старой схемой молча ничего не
@@ -471,8 +606,69 @@ export function этоДубльНомераTilda(е: unknown): boolean {
  * а не отдаёт старую запись как есть; без своего столбца валюту сверять
  * было бы не с чем). Боевой базы по-прежнему нет — снова просто отказ на
  * несовпадении версии.
+ *
+ * Версия 5 (была 4): оплата по уникальной сумме — колонки
+ * `amount_units`/`unique_amount` у заказа и таблицы `matched_signatures`,
+ * `unmatched_receipts`, `scan_state`. Здесь впервые появляется настоящая
+ * миграция вместо отказа открывать файл: боевая база с настоящими
+ * заказами к этому моменту уже работает (pay.kabyldau.digital), и
+ * «обновите сервер и базу согласованно» означало бы «сотрите заказы».
  */
-const ВЕРСИЯ_СХЕМЫ = 4;
+const ВЕРСИЯ_СХЕМЫ = 5;
+
+/**
+ * Переносит открытый файл базы с версии `изВерсии` на `ВЕРСИЯ_СХЕМЫ`.
+ *
+ * Всё одной транзакцией: половина применённой миграции хуже отказа
+ * стартовать — следующая попытка увидела бы базу в состоянии, которого
+ * нет ни в одной версии, и чинить это пришлось бы руками по живому.
+ *
+ * Новые таблицы и индексы здесь не создаются: их добавляет общая `СХЕМА`
+ * (`CREATE ... IF NOT EXISTS`) сразу после миграции. Вторая копия того же
+ * DDL разошлась бы с первой при следующем изменении схемы.
+ *
+ * `amount_units` существующим заказам считается здесь же, из
+ * `amount_token` и точности их собственного токена: в SQL этого не
+ * сделать, а оставить нули нельзя — сопоставление по сумме молча
+ * промахивалось бы мимо всех старых заказов.
+ */
+function мигрировать(db: БазаSQLite, изВерсии: number): void {
+  if (изВерсии !== 4) {
+    throw new Error(
+      `Не умею переносить базу с версии ${изВерсии} на ${ВЕРСИЯ_СХЕМЫ}. ` +
+        'Обновляйте сервер последовательно, не перепрыгивая версии.',
+    );
+  }
+
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    db.exec(`ALTER TABLE orders ADD COLUMN amount_units TEXT NOT NULL DEFAULT '0'`);
+    db.exec('ALTER TABLE orders ADD COLUMN unique_amount INTEGER NOT NULL DEFAULT 0');
+
+    const заказы = db
+      .prepare('SELECT id, amount_token, token_symbol, cluster FROM orders')
+      .all() as unknown as Array<{
+      id: number;
+      amount_token: string;
+      token_symbol: string;
+      cluster: string;
+    }>;
+    const обновить = db.prepare('UPDATE orders SET amount_units = ? WHERE id = ?');
+    for (const з of заказы) {
+      const { decimals } = resolveToken(з.cluster as Cluster, з.token_symbol as TokenSymbol);
+      обновить.run(parseDecimalToUnits(з.amount_token, decimals).toString(), з.id);
+    }
+
+    db.exec(`PRAGMA user_version = ${ВЕРСИЯ_СХЕМЫ}`);
+    db.exec('COMMIT');
+  } catch (е) {
+    db.exec('ROLLBACK');
+    throw new Error(
+      `Миграция базы с версии ${изВерсии} на ${ВЕРСИЯ_СХЕМЫ} не удалась: ${(е as Error).message}`,
+    );
+  }
+}
+
 
 /**
  * Открывает (создаёт при отсутствии) файл базы и возвращает хранилище
@@ -517,12 +713,16 @@ export function openDatabase(путь: string, busyTimeoutMs = 5000): Store {
     user_version: number;
   };
   if (версияБазы !== 0 && версияБазы !== ВЕРСИЯ_СХЕМЫ) {
-    db.close();
-    throw new Error(
-      `База данных «${путь}» создана версией схемы ${версияБазы}, а сервер ожидает версию ` +
-        `${ВЕРСИЯ_СХЕМЫ}. Миграций пока нет: обновите сервер и базу согласованно, не открывайте ` +
-        'несовместимые версии одну поверх другой.',
-    );
+    try {
+      мигрировать(db, версияБазы);
+    } catch (е) {
+      // Незакрытое соединение на непринятой базе — это заблокированный
+      // файл, который не отпустится до конца процесса: следующая попытка
+      // запуска (перезапуск контейнера) упёрлась бы в блокировку вместо
+      // понятного сообщения о причине.
+      db.close();
+      throw е;
+    }
   }
 
   db.exec(СХЕМА);
@@ -530,13 +730,13 @@ export function openDatabase(путь: string, busyTimeoutMs = 5000): Store {
 
   const вставить = db.prepare(`
     INSERT INTO orders (
-      tilda_order_id, token, state, amount_kzt, currency, amount_token, token_symbol,
+      tilda_order_id, token, state, amount_kzt, currency, amount_token, amount_units, unique_amount, token_symbol,
       cluster, recipient, reference, rate, rate_source, payment_url,
       quote_json, created_at, expires_at, test_mode, tilda_signature, tx_signature, paid_at,
       notify_attempts, notified_ok, customer_email, description, products_json,
       mail_failed_at, mail_error
     ) VALUES (
-      @tilda_order_id, @token, @state, @amount_kzt, @currency, @amount_token, @token_symbol,
+      @tilda_order_id, @token, @state, @amount_kzt, @currency, @amount_token, @amount_units, @unique_amount, @token_symbol,
       @cluster, @recipient, @reference, @rate, @rate_source, @payment_url,
       @quote_json, @created_at, @expires_at, @test_mode, @tilda_signature, @tx_signature, @paid_at,
       @notify_attempts, @notified_ok, @customer_email, @description, @products_json,
@@ -576,7 +776,13 @@ export function openDatabase(путь: string, busyTimeoutMs = 5000): Store {
     LIMIT ?
   `);
 
-  function createOrder(o: NewOrder): Order {
+  /**
+   * Вставляет заказ ровно с той суммой, что ей передали. Подбор
+   * уникальной суммы — снаружи, в `createOrder`: здесь только одна
+   * попытка, потому что каждая попытка подбора обязана быть отдельной
+   * вставкой — нарушение уникального индекса откатывает именно её.
+   */
+  function вставитьЗаказ(o: NewOrder, сумма: { units: string; amountToken: string; уникальна: 0 | 1 }): Order {
     let результат: { lastInsertRowid: number | bigint };
     try {
       результат = вставить.run({
@@ -585,7 +791,9 @@ export function openDatabase(путь: string, busyTimeoutMs = 5000): Store {
         state: 'ожидает',
         amount_kzt: o.amountKzt,
         currency: o.currency,
-        amount_token: o.amountToken,
+        amount_token: сумма.amountToken,
+        amount_units: сумма.units,
+        unique_amount: сумма.уникальна,
         token_symbol: o.tokenSymbol,
         cluster: o.cluster,
         recipient: o.recipient,
@@ -619,6 +827,41 @@ export function openDatabase(путь: string, busyTimeoutMs = 5000): Store {
     }
     const строка = найтиПоId.get(результат.lastInsertRowid) as СтрокаЗаказа;
     return изСтроки(строка);
+  }
+
+  function createOrder(o: NewOrder, подбор?: ПодборСуммы): Order {
+    const { decimals } = resolveToken(o.cluster, o.tokenSymbol);
+    const база = parseDecimalToUnits(o.amountToken, decimals);
+
+    // Способ выключен — заказ живёт как раньше: сумма как посчитали,
+    // опознание только по метке в ссылке.
+    if (!подбор) {
+      return вставитьЗаказ(o, { units: база.toString(), amountToken: o.amountToken, уникальна: 0 });
+    }
+
+    // Подбор — это цепочка попыток вставки, а не поиск свободной суммы
+    // запросом: между «свободна ли» и вставкой — гонка, и два заказа,
+    // созданных одновременно, получили бы одну сумму. Уникальность держит
+    // частичный индекс `orders_amount_units_live`, то есть сама база.
+    for (let добавка = 0; добавка <= подбор.потолокДобавки; добавка += 1) {
+      const units = база + BigInt(добавка);
+      try {
+        return вставитьЗаказ(o, {
+          units: units.toString(),
+          amountToken: formatUnits(units, decimals),
+          уникальна: 1,
+        });
+      } catch (е) {
+        if (этоЗанятаяСумма(е)) continue;
+        throw е;
+      }
+    }
+
+    // Потолок исчерпан — заводим заказ без уникальной суммы. Отказать
+    // покупателю в оплате из-за нехватки лампортов было бы хуже: платёж
+    // по метке (QR) у такого заказа работает как прежде, а страница
+    // оплаты не покажет ему адрес для перевода вручную.
+    return вставитьЗаказ(o, { units: база.toString(), amountToken: o.amountToken, уникальна: 0 });
   }
 
   function findByTildaOrderId(id: string): Order | null {
