@@ -444,6 +444,69 @@ describe('Store', () => {
     expect(() => openDatabase(путь)).not.toThrow();
   });
 
+  describe('подбор уникальной суммы', () => {
+    const вSOL: NewOrder = { ...образец, tokenSymbol: 'SOL', amountToken: '0.000420000' };
+    const подбор = { потолокДобавки: 10_000 };
+
+    it('первому заказу достаётся посчитанная сумма, второму — следующая свободная', () => {
+      const первый = store.createOrder({ ...вSOL, tildaOrderId: 'T-1', token: 'т-1' }, подбор);
+      const второй = store.createOrder({ ...вSOL, tildaOrderId: 'T-2', token: 'т-2' }, подбор);
+
+      expect(первый.amountUnits).toBe('420000');
+      expect(второй.amountUnits).toBe('420001');
+      // Десятичная сумма пересчитана из подобранных единиц: покупателю
+      // показывается ровно то, чего ждёт сопоставление.
+      expect(второй.amountToken).toBe('0.000420001');
+      expect(второй.uniqueAmount).toBe(1);
+    });
+
+    it('освобождает сумму, когда заказ закрыт', () => {
+      const первый = store.createOrder({ ...вSOL, tildaOrderId: 'T-1', token: 'т-1' }, подбор);
+      store.updateState(первый.id, 'уведомлён');
+
+      const второй = store.createOrder({ ...вSOL, tildaOrderId: 'T-2', token: 'т-2' }, подбор);
+
+      expect(второй.amountUnits).toBe('420000');
+    });
+
+    it('не путает суммы разных токенов', () => {
+      const вSOLЗаказ = store.createOrder({ ...вSOL, tildaOrderId: 'T-1', token: 'т-1' }, подбор);
+      // Та же цифра единиц, другой токен — это другая сумма, докручивать нечего.
+      const вUSDC = store.createOrder(
+        { ...образец, tildaOrderId: 'T-2', token: 'т-2', tokenSymbol: 'USDC', amountToken: '0.420000' },
+        подбор,
+      );
+
+      expect(вSOLЗаказ.amountUnits).toBe('420000');
+      expect(вUSDC.amountUnits).toBe('420000');
+    });
+
+    it('при исчерпании потолка заводит заказ без уникальной суммы, а не отказывает покупателю', () => {
+      store.createOrder({ ...вSOL, tildaOrderId: 'T-1', token: 'т-1' }, { потолокДобавки: 0 });
+
+      const второй = store.createOrder({ ...вSOL, tildaOrderId: 'T-2', token: 'т-2' }, { потолокДобавки: 0 });
+
+      expect(второй.uniqueAmount).toBe(0);
+      expect(второй.amountUnits).toBe('420000');
+    });
+
+    it('без просьбы о подборе сумма остаётся посчитанной и в опознании по сумме не участвует', () => {
+      const первый = store.createOrder({ ...вSOL, tildaOrderId: 'T-1', token: 'т-1' });
+      const второй = store.createOrder({ ...вSOL, tildaOrderId: 'T-2', token: 'т-2' });
+
+      expect(первый.amountUnits).toBe(второй.amountUnits);
+      expect(второй.uniqueAmount).toBe(0);
+    });
+
+    it('дубль номера Tilda остаётся дублем, а не превращается в подбор суммы', () => {
+      store.createOrder({ ...вSOL, tildaOrderId: 'T-1', token: 'т-1' }, подбор);
+
+      expect(() => store.createOrder({ ...вSOL, tildaOrderId: 'T-1', token: 'т-2' }, подбор)).toThrow(
+        DuplicateOrderError,
+      );
+    });
+  });
+
   it('переносит базу версии 4 в версию 5, не теряя заказов', () => {
     const путь = join(каталог, 'версия-4.sqlite');
     базаВерсии4(путь, [

@@ -36,6 +36,7 @@
 import { randomBytes } from 'node:crypto';
 import {
   KZT_DECIMALS,
+  generateReference,
   type CreatePaymentRequestOptions,
   type PaymentRequest,
   type Quote,
@@ -318,9 +319,23 @@ export interface PaymentClient {
 export interface CreatePaymentForDeps {
   store: Store;
   client: PaymentClient;
-  config: Pick<Config, 'token' | 'recipient' | 'shopName' | 'tildaNotifyUrl'>;
+  config: Pick<
+    Config,
+    'token' | 'recipient' | 'shopName' | 'tildaNotifyUrl' | 'enableAmountMatching'
+  >;
   log: Log;
 }
+
+/**
+ * Сколько минимальных единиц токена разрешено добавить сверх посчитанной
+ * суммы, подбирая неповторимую (спецификация, §4).
+ *
+ * Десять тысяч лампортов — 0,00001 SOL, доли тиына; для USDC это 0,01 —
+ * тоже незаметно в цене. Исчерпать потолок значит держать больше десяти
+ * тысяч живых заказов с одинаковой ценой; такой заказ заводится без
+ * уникальной суммы и платится по QR, как раньше.
+ */
+const ПОТОЛОК_ДОБАВКИ_ЕДИНИЦ = 10_000;
 
 /**
  * Идемпотентно создаёт (или возвращает уже существующий) заказ и платёжный
@@ -412,14 +427,15 @@ export async function createPaymentFor(order: TildaOrder, deps: CreatePaymentFor
   // курсу хуже отказа. Промах ниже намеренно не перехвачен: он всплывает
   // вызывающему коду как есть.
   const quote = await deps.client.createQuote({ amountKzt: order.amountKzt, token: deps.config.token });
-  const paymentRequest = await deps.client.createPaymentRequest(quote, {
-    // Покупатель видит label в своём кошельке в момент подтверждения
-    // платежа: безликая метка вызывает подозрение — человек, который не
-    // понимает, кому платит, платёж отменяет. Название магазина, если
-    // продавец его задал в настройках, — понятнее общей фразы.
-    label: deps.config.shopName || 'Оплата заказа',
-    message: `Заказ №${order.orderId}`,
-  });
+
+  // Метка платежа создаётся здесь, а не внутри createPaymentRequest.
+  // Причина — порядок: при включённой оплате по уникальной сумме заказ
+  // ложится в базу ПЕРВЫМ (сумму подбирает сама база, это единственная
+  // защита от двух заказов с одной суммой), и ссылка строится уже от
+  // подобранной суммы. Дай мы createPaymentRequest сгенерировать метку
+  // самому, второй вызов выдал бы новую метку, разошедшуюся с той, что
+  // уже записана в заказе, — платёж по такой ссылке не нашёлся бы никогда.
+  const reference = generateReference();
 
   const новыйЗаказ: NewOrder = {
     tildaOrderId: order.orderId,
@@ -437,10 +453,12 @@ export async function createPaymentFor(order: TildaOrder, deps: CreatePaymentFor
     tokenSymbol: quote.token,
     cluster: quote.cluster,
     recipient: deps.config.recipient,
-    reference: paymentRequest.reference,
+    reference,
     rate: quote.rate,
     rateSource: quote.rateSource,
-    paymentUrl: paymentRequest.url,
+    // Ссылка и QR зависят от суммы, а сумма известна только после
+    // вставки — дописываются сразу следующим шагом (см. ниже).
+    paymentUrl: '',
     quoteJson: JSON.stringify(quote),
     // Order.createdAt/expiresAt — Unix-секунды (см. db.ts), а Quote несёт
     // ISO-строки: переводим один раз здесь, при заморозке записи заказа.
@@ -464,8 +482,14 @@ export async function createPaymentFor(order: TildaOrder, deps: CreatePaymentFor
     productsJson: order.products ? JSON.stringify(order.products) : null,
   };
 
+  let заказ: Order;
   try {
-    return deps.store.createOrder(новыйЗаказ);
+    заказ = deps.store.createOrder(
+      новыйЗаказ,
+      // Подбор запрашивается, только когда способ включён: иначе заказ
+      // получает ровно посчитанную сумму и живёт как прежде.
+      deps.config.enableAmountMatching ? { потолокДобавки: ПОТОЛОК_ДОБАВКИ_ЕДИНИЦ } : undefined,
+    );
   } catch (е) {
     if (е instanceof DuplicateOrderError) {
       const конкурентный = deps.store.findByTildaOrderId(order.orderId);
@@ -479,4 +503,45 @@ export async function createPaymentFor(order: TildaOrder, deps: CreatePaymentFor
     }
     throw е;
   }
+
+  return достроитьСсылку(заказ, quote, order.orderId, deps);
+}
+
+/**
+ * Достраивает заказу платёжную ссылку и записывает её.
+ *
+ * Отдельным шагом после вставки, потому что сумма заказа становится
+ * известна только из вставки: при включённом способе её подбирает база.
+ * Ссылка строится от СУММЫ ЗАКАЗА, а не от суммы котировки — иначе QR
+ * просил бы не то число, которого ждёт опознание по сумме, и платёж по
+ * коду не сошёлся бы с заказом ни по сумме, ни по проверке перевода.
+ *
+ * Сюда же приходит заказ, у которого ссылки нет по другой причине:
+ * процесс упал между вставкой и этой записью. Тогда страница оплаты
+ * вызывает эту же функцию при первом открытии (см. `routes-page.ts`) —
+ * метка и сумма у заказа уже есть, а больше для ссылки ничего не нужно.
+ */
+export async function достроитьСсылку(
+  заказ: Order,
+  quote: Quote,
+  tildaOrderId: string,
+  deps: Pick<CreatePaymentForDeps, 'client' | 'config' | 'store'>,
+): Promise<Order> {
+  const котировкаЗаказа: Quote = { ...quote, amountToken: заказ.amountToken };
+  const paymentRequest = await deps.client.createPaymentRequest(котировкаЗаказа, {
+    // Покупатель видит label в своём кошельке в момент подтверждения
+    // платежа: безликая метка вызывает подозрение — человек, который не
+    // понимает, кому платит, платёж отменяет. Название магазина, если
+    // продавец его задал в настройках, — понятнее общей фразы.
+    label: deps.config.shopName || 'Оплата заказа',
+    message: `Заказ №${tildaOrderId}`,
+    reference: заказ.reference,
+  });
+
+  deps.store.updateState(заказ.id, заказ.state, {
+    paymentUrl: paymentRequest.url,
+    quoteJson: JSON.stringify(котировкаЗаказа),
+  });
+
+  return { ...заказ, paymentUrl: paymentRequest.url, quoteJson: JSON.stringify(котировкаЗаказа) };
 }

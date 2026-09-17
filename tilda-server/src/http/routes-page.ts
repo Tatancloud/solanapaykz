@@ -9,7 +9,9 @@
 import type { ServerResponse } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import { toString as qrCodeToString } from 'qrcode';
+import type { Quote } from '@solanapaykz/core';
 import { checkOrder } from '../checker.js';
+import { достроитьСсылку } from '../tilda/inbound.js';
 import type { Order } from '../db.js';
 import { страница404, страницаИтога, страницаОплаты, страницаСообщения, текстСостояния } from './html.js';
 import type { ЗависимостиСервера } from './server.js';
@@ -113,7 +115,7 @@ export async function обработатьСтраницуОплаты(
   res: ServerResponse,
   deps: ЗависимостиСервера,
 ): Promise<void> {
-  const заказ = найтиЗаказПоТокену(token, deps.store);
+  let заказ = найтиЗаказПоТокену(token, deps.store);
   if (!заказ) {
     res.writeHead(404, ЗАГОЛОВКИ_HTML);
     res.end(страница404());
@@ -156,6 +158,35 @@ export async function обработатьСтраницуОплаты(
     res.writeHead(200, ЗАГОЛОВКИ_HTML);
     res.end(страницаИтога(заказ));
     return;
+  }
+
+  // Заказ без ссылки — след падения процесса ровно между вставкой заказа
+  // и записью ссылки (см. `достроитьСсылку` в `tilda/inbound.ts`: при
+  // включённой оплате по уникальной сумме ссылка строится после вставки,
+  // потому что сумму подбирает база). Достраиваем здесь, а не заводим
+  // заказ заново: метка и сумма у него уже есть, и они — единственное,
+  // что делает ссылку правильной.
+  if (заказ.paymentUrl === '') {
+    try {
+      заказ = await достроитьСсылку(заказ, JSON.parse(заказ.quoteJson) as Quote, заказ.tildaOrderId, {
+        client: deps.client,
+        config: deps.config,
+        store: deps.store,
+      });
+    } catch (е) {
+      deps.log.error('Не удалось достроить платёжную ссылку заказа', {
+        tildaOrderId: заказ.tildaOrderId,
+        сообщение: (е as Error).message,
+      });
+      res.writeHead(200, ЗАГОЛОВКИ_HTML);
+      res.end(
+        страницаСообщения(
+          заказ,
+          'Оплата временно недоступна: не удалось подготовить платёжную ссылку. Свяжитесь с магазином.',
+        ),
+      );
+      return;
+    }
   }
 
   let qrSvg: string;
