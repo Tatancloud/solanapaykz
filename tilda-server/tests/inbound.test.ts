@@ -154,11 +154,16 @@ function фейковыйКлиент(): PaymentClient & {
   вызововКотировки: number;
   вызововЗапроса: number;
   последняяМетка: string | undefined;
+  последнийВызовЗапроса: { amountToken: string; reference: string | undefined } | undefined;
 } {
   let котировка = 0;
   let запрос = 0;
   let последняяМетка: string | undefined;
+  let последнийВызовЗапроса: { amountToken: string; reference: string | undefined } | undefined;
   return {
+    get последнийВызовЗапроса() {
+      return последнийВызовЗапроса;
+    },
     get вызововКотировки() {
       return котировка;
     },
@@ -186,6 +191,7 @@ function фейковыйКлиент(): PaymentClient & {
     async createPaymentRequest(quote, options): Promise<PaymentRequest> {
       запрос += 1;
       последняяМетка = options?.label;
+      последнийВызовЗапроса = { amountToken: quote.amountToken, reference: options?.reference };
       return {
         quote,
         url: `solana:пример-${запрос}`,
@@ -229,6 +235,7 @@ describe('createPaymentFor', () => {
         // Совпадает с notify_url в телоЗаказа() по умолчанию — предупреждение
         // о рассинхроне не должно сработать на «нормальном» заказе.
         tildaNotifyUrl: 'https://tilda.cc/payment/notify/abc',
+        enableAmountMatching: false,
       },
       log: createLog((строка) => журнал.push(строка)),
     };
@@ -295,6 +302,39 @@ describe('createPaymentFor', () => {
     expect(строка).toContain('https://evil.example');
     expect(строка).not.toContain('/steal');
     expect(строка).not.toContain('token=x');
+  });
+
+  it('предупреждение не обещает, что запрос проигнорирован — заказ создаётся', async () => {
+    // Прежняя формулировка заканчивалась словами «запрос игнорируется»,
+    // хотя код только пишет в журнал. Проверяется и текст, и факт: заказ
+    // на месте.
+    заказ = парс(телоЗаказа({ notify_url: 'https://tilda.cc/payment/notify/other' }));
+    const созданный = await createPaymentFor(заказ, deps);
+    expect(созданный.tildaOrderId).toBe(заказ.orderId);
+    const строка = журнал.find((с) => с.includes('notify_url'));
+    expect(строка).toBeDefined();
+    expect(строка).not.toContain('игнорируется');
+  });
+
+  it('предупреждение показывает, чем адреса различаются: путь своего и совпадение хостов', async () => {
+    // Логгер обрезает у адресов путь, поэтому два адреса, различающиеся
+    // только путём, печатались одинаково — и предупреждение выглядело как
+    // ошибка сравнения. Недостающую половину даёт СВОЙ путь: чужой
+    // остаётся обрезанным (см. тест выше).
+    заказ = парс(телоЗаказа({ notify_url: 'https://tilda.cc/payment/notify/other' }));
+    await createPaymentFor(заказ, deps);
+    const строка = журнал.find((с) => с.includes('notify_url'));
+    expect(строка).toContain(new URL(deps.config.tildaNotifyUrl).pathname);
+    expect(строка).toContain('"хостСовпадает":true');
+    // Чужой путь по-прежнему не попадает в журнал.
+    expect(строка).not.toContain('/payment/notify/other');
+  });
+
+  it('предупреждение отличает чужой хост от другого пути на том же хосте', async () => {
+    заказ = парс(телоЗаказа({ notify_url: 'https://evil.example/notify' }));
+    await createPaymentFor(заказ, deps);
+    const строка = журнал.find((с) => с.includes('notify_url'));
+    expect(строка).toContain('"хостСовпадает":false');
   });
 
   it('совпадающий с настройками notify_url не пишет предупреждение', async () => {
@@ -399,6 +439,43 @@ describe('createPaymentFor', () => {
       const первый = await createPaymentFor(заказ, deps);
       const второй = await createPaymentFor({ ...заказ }, deps);
       expect(второй.id).toBe(первый.id);
+    });
+  });
+
+  describe('оплата по уникальной сумме', () => {
+    beforeEach(() => {
+      deps = { ...deps, config: { ...deps.config, enableAmountMatching: true } };
+    });
+
+    it('двум заказам на одну цену достаются разные суммы', async () => {
+      const первый = await createPaymentFor(заказ, deps);
+      const второй = await createPaymentFor({ ...заказ, orderId: '10868059:99' }, deps);
+
+      expect(первый.amountUnits).not.toBe(второй.amountUnits);
+      expect(второй.amountUnits).toBe((BigInt(первый.amountUnits) + 1n).toString());
+      expect(второй.uniqueAmount).toBe(1);
+    });
+
+    it('ссылку строит от суммы ЗАКАЗА и с меткой заказа, а не от суммы котировки', async () => {
+      await createPaymentFor(заказ, deps);
+      const второй = await createPaymentFor({ ...заказ, orderId: '10868059:99' }, deps);
+      const клиент = deps.client as ReturnType<typeof фейковыйКлиент>;
+
+      // Сумма котировки у обоих заказов одна (курс тот же), а у второго
+      // заказа она докручена — ссылка обязана нести докрученную.
+      expect(клиент.последнийВызовЗапроса?.amountToken).toBe(второй.amountToken);
+      expect(клиент.последнийВызовЗапроса?.reference).toBe(второй.reference);
+      expect(второй.paymentUrl).not.toBe('');
+    });
+
+    it('при выключенном способе суммы не докручиваются', async () => {
+      deps = { ...deps, config: { ...deps.config, enableAmountMatching: false } };
+
+      const первый = await createPaymentFor(заказ, deps);
+      const второй = await createPaymentFor({ ...заказ, orderId: '10868059:99' }, deps);
+
+      expect(первый.amountUnits).toBe(второй.amountUnits);
+      expect(второй.uniqueAmount).toBe(0);
     });
   });
 });

@@ -9,11 +9,13 @@ import { readFileSync } from 'node:fs';
 import http from 'node:http';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { startChecker, type PaymentCheckerClient } from '../checker.js';
+import { startChecker, подтвердитьПлатёжПоСумме, type PaymentCheckerClient } from '../checker.js';
 import { loadConfig, type Config } from '../config.js';
 import { openDatabase, type Store } from '../db.js';
 import { createLog, type Log } from '../log.js';
 import { создатьКлиент } from '../payments.js';
+import { startScanner } from '../scanner.js';
+import { создатьRpc } from '../solana-rpc.js';
 import type { PaymentClient } from '../tilda/inbound.js';
 import type { Отправка } from '../tilda/notify.js';
 import { страница404 } from './html.js';
@@ -283,6 +285,24 @@ export async function запуститьСервер(): Promise<{ server: http.S
   const server = createServer({ config, store, client, log });
   const остановитьОбход = startChecker({ config, store, client, log });
 
+  // Наблюдение за поступлениями на кошелёк магазина — только при
+  // включённой оплате по уникальной сумме. Выключенный способ не должен
+  // ни ходить к узлу, ни расходовать его квоту (см. `scanner.ts`).
+  const остановитьСканер = config.enableAmountMatching
+    ? startScanner({
+        config,
+        store,
+        rpc: создатьRpc(config.rpcUrl),
+        log,
+        закрытьЗаказ: (order, signature) =>
+          подтвердитьПлатёжПоСумме(order, signature, { config, store, client, log }),
+      })
+    : () => {};
+
+  if (config.enableAmountMatching) {
+    log.info('Оплата по уникальной сумме включена', { token: config.token, cluster: config.cluster });
+  }
+
   // По умолчанию только loopback (см. `config.listenHost`) — обратный
   // прокси (nginx) достаёт до процесса либо с того же хоста напрямую, либо
   // через Docker (`docker-compose.yml`: порт публикуется наружу только на
@@ -301,6 +321,7 @@ export async function запуститьСервер(): Promise<{ server: http.S
     if (остановлен) return;
     остановлен = true;
     остановитьОбход();
+    остановитьСканер();
     await new Promise<void>((res) => server.close(() => res()));
   }
 

@@ -274,6 +274,22 @@ describe('config.example.json (правка финального ревью — 
     expect(() => loadConfig(сырой)).toThrow();
   });
 
+  describe('enableAmountMatching', () => {
+    it('по умолчанию выключен: способ смотрит на все поступления кошелька, включать это должен человек', () => {
+      expect(loadConfig(полные).enableAmountMatching).toBe(false);
+    });
+
+    it('принимает true', () => {
+      expect(loadConfig({ ...полные, enableAmountMatching: true }).enableAmountMatching).toBe(true);
+    });
+
+    it('отвергает не-булево значение, а не приводит его к истине', () => {
+      expect(() => loadConfig({ ...полные, enableAmountMatching: 'да' })).toThrow(
+        /enableAmountMatching/,
+      );
+    });
+  });
+
   describe('секреты описаны верно (находка 7 — пример расходился с реализацией)', () => {
     // orderSecret проверяет ВХОДЯЩИЙ заказ, notifySecret подписывает НАШЕ
     // исходящее уведомление — пример раньше описывал их наоборот. Длина

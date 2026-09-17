@@ -54,6 +54,31 @@ describe('создание платёжного запроса', () => {
     expect(RECIPIENT).not.toBe(USDC_MINT_MAINNET);
   });
 
+  it('использует переданную метку, а не генерирует свою', async () => {
+    const метка = generateReference();
+
+    const request = await createPaymentRequest(quoteFixture(), {
+      recipient: RECIPIENT,
+      reference: метка,
+    });
+
+    expect(request.reference).toBe(метка);
+    expect(request.url).toContain(`reference=${метка}`);
+  });
+
+  it('без переданной метки генерирует свою, как раньше', async () => {
+    const первый = await createPaymentRequest(quoteFixture(), { recipient: RECIPIENT });
+    const второй = await createPaymentRequest(quoteFixture(), { recipient: RECIPIENT });
+
+    expect(первый.reference).not.toBe(второй.reference);
+  });
+
+  it('переданную метку, не являющуюся адресом, отвергает ошибкой настроек', async () => {
+    await expect(
+      createPaymentRequest(quoteFixture(), { recipient: RECIPIENT, reference: 'не-адрес' }),
+    ).rejects.toThrow(ConfigError);
+  });
+
   it('для SOL не добавляет spl-token', async () => {
     const quote = quoteFixture({ token: 'SOL', amountToken: '0.209387074' });
     const request = await createPaymentRequest(quote, { recipient: RECIPIENT });

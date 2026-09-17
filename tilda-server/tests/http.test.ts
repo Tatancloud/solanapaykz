@@ -36,6 +36,7 @@ const config: Config = {
   listenHost: '127.0.0.1',
   trustedProxyAddresses: ['127.0.0.1', '::1', '::ffff:127.0.0.1'],
   enableFormWebhook: false,
+  enableAmountMatching: false,
 };
 
 /** Тело заказа Tilda, подписанное тестовым секретом — как в tests/inbound.test.ts. */
@@ -261,6 +262,96 @@ describe('GET /pay/:token', () => {
     expect(ответ.status).toBe(200);
     expect(ответ.body).not.toContain('<script>alert(1)</script>');
     expect(ответ.body).toContain('&lt;script&gt;');
+  });
+
+  describe('блок с адресом и суммой (оплата по уникальной сумме)', () => {
+    /** Свой сервер: у общего в этом файле способ выключен. */
+    async function серверСоСпособом(): Promise<{ базовыйUrl: string; закрыть: () => Promise<void> }> {
+      const deps: ЗависимостиСервера = {
+        config: { ...config, enableAmountMatching: true },
+        store,
+        client: фейковыйКлиент(),
+        log: createLog(() => {}),
+      };
+      const сервер = createServer(deps);
+      await new Promise<void>((resolve) => сервер.listen(0, '127.0.0.1', resolve));
+      const адрес = сервер.address() as AddressInfo;
+      return {
+        базовыйUrl: `http://127.0.0.1:${адрес.port}`,
+        закрыть: () => new Promise<void>((resolve) => сервер.close(() => resolve())),
+      };
+    }
+
+    it('показывает адрес кошелька и точную сумму, когда способ включён', async () => {
+      const заказ = store.createOrder(
+        { ...образецНовогоЗаказа, token: 'f'.repeat(32), tildaOrderId: '10868059:102' },
+        { потолокДобавки: 10_000 },
+      );
+      const { базовыйUrl: url, закрыть } = await серверСоСпособом();
+      try {
+        const ответ = await fetch(`${url}/pay/${заказ.token}`);
+        const тело = await ответ.text();
+
+        expect(тело).toContain(config.recipient);
+        expect(тело).toContain(заказ.amountToken);
+        expect(тело).toContain('ровно эту сумму');
+        expect(тело).toContain('data-copy="amount"');
+      } finally {
+        await закрыть();
+      }
+    });
+
+    it('не показывает адрес, когда способ выключен: перевод по нему никто не опознает', async () => {
+      const заказ = store.createOrder({
+        ...образецНовогоЗаказа,
+        token: 'g'.repeat(32),
+        tildaOrderId: '10868059:103',
+      });
+
+      const ответ = await запрос('GET', `/pay/${заказ.token}`);
+
+      expect(ответ.body).not.toContain('data-copy="address"');
+    });
+
+    it('не показывает адрес заказу без уникальной суммы, даже когда способ включён', async () => {
+      // Исчерпан потолок докрутки (uniqueAmount = 0) — сопоставление по
+      // сумме такой заказ не увидит, и звать покупателя переводить
+      // вручную нельзя.
+      const заказ = store.createOrder({
+        ...образецНовогоЗаказа,
+        token: 'h'.repeat(32),
+        tildaOrderId: '10868059:104',
+      });
+      const { базовыйUrl: url, закрыть } = await серверСоСпособом();
+      try {
+        const ответ = await fetch(`${url}/pay/${заказ.token}`);
+        const тело = await ответ.text();
+
+        expect(тело).not.toContain('data-copy="address"');
+      } finally {
+        await закрыть();
+      }
+    });
+  });
+
+  it('достраивает ссылку заказу, у которого её нет: процесс мог упасть между вставкой и её записью', async () => {
+    // Пустой paymentUrl бывает ровно в одном случае — падение процесса
+    // между вставкой заказа и записью ссылки (ссылка строится после
+    // вставки, потому что уникальную сумму подбирает база, см.
+    // `достроитьСсылку` в tilda/inbound.ts). Страница обязана достроить
+    // её сама, а не показать покупателю сломанный QR.
+    const заказ = store.createOrder({
+      ...образецНовогоЗаказа,
+      token: 'e'.repeat(32),
+      tildaOrderId: '10868059:101',
+      paymentUrl: '',
+    });
+
+    const ответ = await запрос('GET', `/pay/${заказ.token}`);
+
+    expect(ответ.status).toBe(200);
+    expect(ответ.body).toContain('<svg');
+    expect(store.findByToken(заказ.token)?.paymentUrl).not.toBe('');
   });
 
   it('экранирует названия товаров из состава корзины', async () => {

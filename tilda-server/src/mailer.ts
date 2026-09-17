@@ -24,7 +24,8 @@
 import nodemailer from 'nodemailer';
 import type { Cluster, Config } from './config.js';
 import type { Decision } from './decision.js';
-import type { Order, Store } from './db.js';
+import { formatUnits, resolveToken } from '@solanapaykz/core';
+import type { Order, Store, UnmatchedReceipt } from './db.js';
 import type { Log } from './log.js';
 import { экранироватьHtml } from './http/html.js';
 
@@ -177,6 +178,85 @@ export async function sendMerchantMail(order: Order, decision: Decision, deps: M
       { tildaOrderId: order.tildaOrderId, subject, сообщение },
     );
     deps.store.recordMailOutcome(order.id, { at: Math.floor(Date.now() / 1000), message: сообщение });
+    return false;
+  }
+}
+
+/**
+ * Не чаще одного письма о неопознанных поступлениях в час.
+ *
+ * Кошелёк, которым пользуются не только под магазин, иначе завалил бы
+ * почту продавца: каждое постороннее поступление — письмо. Одного письма
+ * в час достаточно, чтобы человек узнал о происходящем и открыл список,
+ * где видны все поступления сразу.
+ */
+export const МИНИМАЛЬНЫЙ_ИНТЕРВАЛ_ПИСЬМА_О_ПОСТУПЛЕНИИ_SECONDS = 3600;
+
+/** Зависимости письма о неопознанном поступлении: свои методы базы, не заказов. */
+export interface UnmatchedMailDeps {
+  config: Pick<Config, 'smtp' | 'merchantEmail' | 'publicUrl' | 'cluster'>;
+  store: Pick<Store, 'markUnmatchedMailed' | 'lastUnmatchedMailAt'>;
+  log: Log;
+  /** Только для тестов: подменяет настоящую отправку через SMTP и часы. */
+  тест?: { отправка?: ОтправкаПисьма; сейчас?: () => number };
+}
+
+/**
+ * Письмо продавцу о поступлении, которое не подошло ни одному заказу.
+ *
+ * Возвращает `false`, если письмо не отправлялось — либо слишком скоро
+ * после предыдущего (см. интервал выше), либо отправка не удалась.
+ *
+ * Текст намеренно не утверждает, что деньги потеряны: они у продавца, на
+ * его же кошельке. Потеряна связь поступления с заказом, и разобрать её
+ * может только человек — сверив сумму и время с заказом покупателя.
+ */
+export async function sendUnmatchedMail(
+  поступление: UnmatchedReceipt,
+  deps: UnmatchedMailDeps,
+): Promise<boolean> {
+  const сейчас = deps.тест?.сейчас?.() ?? Math.floor(Date.now() / 1000);
+  const последнее = deps.store.lastUnmatchedMailAt();
+  if (последнее !== null && сейчас - последнее < МИНИМАЛЬНЫЙ_ИНТЕРВАЛ_ПИСЬМА_О_ПОСТУПЛЕНИИ_SECONDS) {
+    return false;
+  }
+
+  const { decimals } = resolveToken(deps.config.cluster, поступление.tokenSymbol);
+  const сумма = `${formatUnits(BigInt(поступление.amountUnits), decimals)} ${поступление.tokenSymbol}`;
+  const ссылкаТранзакции = ссылкаНаТранзакцию(поступление.signature, deps.config.cluster);
+  const ссылкаСписка = ссылкаНаСписокЗаказов(deps.config.publicUrl);
+  const когда = new Date((поступление.blockTime ?? поступление.seenAt) * 1000).toISOString();
+
+  const subject = `SolanaPay-KZ: поступление ${сумма} не опознано`;
+  const text =
+    `На кошелёк магазина пришло ${сумма}, но ни один заказ по этому платежу не закрылся.\n` +
+    `Причина: ${поступление.reason}.\n` +
+    `Время: ${когда}\n` +
+    `Транзакция: ${ссылкаТранзакции}\n\n` +
+    'Деньги у вас — потеряна связь платежа с заказом. Сверьте сумму и время с заказом покупателя,\n' +
+    'прежде чем отгружать товар.\n\n' +
+    `Список заказов и поступлений: ${ссылкаСписка}`;
+  const html =
+    `<p>На кошелёк магазина пришло <strong>${экранироватьHtml(сумма)}</strong>, но ни один заказ по этому платежу не закрылся.</p>` +
+    `<p>Причина: ${экранироватьHtml(поступление.reason)}<br>Время: ${экранироватьHtml(когда)}<br>` +
+    `Транзакция: <a href="${экранироватьHtml(ссылкаТранзакции)}">${экранироватьHtml(поступление.signature)}</a></p>` +
+    '<p>Деньги у вас — потеряна связь платежа с заказом. Сверьте сумму и время с заказом покупателя, прежде чем отгружать товар.</p>' +
+    `<p><a href="${экранироватьHtml(ссылкаСписка)}">Список заказов и поступлений</a></p>`;
+
+  const отправить = deps.тест?.отправка ?? ((о: ПисьмоОпции) => реальнаяОтправка(deps.config.smtp, о));
+
+  try {
+    await отправить({ from: deps.config.smtp.from, to: deps.config.merchantEmail, subject, text, html });
+    deps.store.markUnmatchedMailed(поступление.signature, сейчас);
+    return true;
+  } catch (е) {
+    // Неудача письма не должна ничего менять и ничего ронять: само
+    // поступление уже записано и видно в списке заказов, а это —
+    // всего лишь оповещение о нём.
+    deps.log.error('Не удалось отправить письмо о неопознанном поступлении', {
+      signature: поступление.signature,
+      сообщение: (е as Error).message,
+    });
     return false;
   }
 }

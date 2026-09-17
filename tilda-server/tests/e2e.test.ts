@@ -52,6 +52,7 @@ function базовыйConfig(notifyUrl: string): Config {
     listenHost: '127.0.0.1',
     trustedProxyAddresses: ['127.0.0.1', '::1', '::ffff:127.0.0.1'],
     enableFormWebhook: false,
+    enableAmountMatching: false,
   };
 }
 

@@ -98,6 +98,22 @@ export interface Config {
    * пользы взамен.
    */
   enableFormWebhook: boolean;
+  /**
+   * Оплата по уникальной сумме: докрутка суммы заказа до неповторимой,
+   * наблюдение за поступлениями на кошелёк магазина и показ адреса с
+   * суммой на странице оплаты.
+   *
+   * Три части одного способа, поэтому одна настройка, а не три: докрутка
+   * без наблюдения бесполезна, а показ адреса без наблюдения вреден —
+   * покупатель отправит деньги, которых никто не ждёт, и решит, что
+   * магазин его обманул.
+   *
+   * По умолчанию выключено. При включении кошелёк магазина стоит держать
+   * только под магазин: сервер смотрит на ВСЕ поступления адреса, и
+   * посторонние переводы лягут в список неопознанных (а при совпадении
+   * суммы до последнего знака могут закрыть чужой заказ).
+   */
+  enableAmountMatching: boolean;
 }
 
 /** Ошибка настроек: несёт список всех найденных проблем разом. */
@@ -175,6 +191,7 @@ const ИЗВЕСТНЫЕ_КЛЮЧИ = new Set<string>([
   'listenHost',
   'trustedProxyAddresses',
   'enableFormWebhook',
+  'enableAmountMatching',
 ]);
 
 /** Известные ключи внутри `smtp` — та же защита от опечаток на вложенном уровне. */
@@ -192,6 +209,7 @@ const ПО_УМОЛЧАНИЮ = {
   listenHost: '127.0.0.1',
   trustedProxyAddresses: ['127.0.0.1', '::1', '::ffff:127.0.0.1'] as string[],
   enableFormWebhook: false,
+  enableAmountMatching: false,
 };
 
 function этоОбъект(значение: unknown): значение is Record<string, unknown> {
@@ -499,6 +517,16 @@ export function loadConfig(raw: unknown): Config {
     }
   }
 
+  // --- enableAmountMatching ---
+  let enableAmountMatching: boolean = ПО_УМОЛЧАНИЮ.enableAmountMatching;
+  if (raw.enableAmountMatching !== undefined) {
+    if (typeof raw.enableAmountMatching === 'boolean') {
+      enableAmountMatching = raw.enableAmountMatching;
+    } else {
+      проблемы.push('enableAmountMatching: должен быть true или false');
+    }
+  }
+
   if (проблемы.length > 0) {
     throw new ConfigError(проблемы);
   }
@@ -529,5 +557,6 @@ export function loadConfig(raw: unknown): Config {
     listenHost,
     trustedProxyAddresses,
     enableFormWebhook,
+    enableAmountMatching,
   };
 }

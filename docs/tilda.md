@@ -268,6 +268,45 @@ over:
   integration.
 </div>
 
+## Payment by unique amount
+
+Normally a payment is recognised by the reference in the Solana Pay link —
+set by the wallet that read that link. A buyer whose wallet can only scan a
+bare address transfers the money by hand, and such a payment is never found
+by reference: the money is gone and the order stays unpaid.
+
+The second trait that identifies a payment without a reference is the
+amount. When an order is created, the calculated amount is bumped up by a
+few minimal units of the token until it is unique among live orders; the
+server watches incoming payments to the shop's wallet and closes the order
+whose amount matches to the last digit. The payment page shows the wallet
+address and the exact amount next to the QR code.
+
+Enabled by `"enableAmountMatching": true` in `config.json`; off by default.
+
+<div class="note" markdown="1">
+**Before switching it on**
+
+- **Keep the shop wallet for the shop only.** The server watches every
+  incoming payment to that address: unrelated transfers land in the
+  unrecognised list, and one matching an order's amount to the last digit
+  could close that order.
+- **A payment from an exchange will usually not be recognised.** Exchanges
+  deduct their fee from the transferred amount, so less arrives and the
+  amount no longer matches. This method reliably covers wallets without
+  Solana Pay support, but not exchanges.
+- **Overpayment is not credited.** Only an exact match counts; everything
+  else goes to the unrecognised list for a human to decide.
+- **Watching starts when you switch it on** — the wallet's past history is
+  not scanned.
+</div>
+
+Anything that arrives and matches no order appears in the order list
+(`/admin`) as a separate section — amount, date, reason and a link to the
+transaction; an email is sent about such payments, at most one per hour.
+That money is already on the merchant's wallet, and staying silent about it
+is not an option.
+
 ## Testing with a test payment
 
 1. `GET https://your-server/admin` — should ask for a password (a login

@@ -38,6 +38,7 @@ const config: Config = {
   listenHost: '127.0.0.1',
   trustedProxyAddresses: ['127.0.0.1', '::1', '::ffff:127.0.0.1'],
   enableFormWebhook: false,
+  enableAmountMatching: false,
 };
 
 /** Фейковый клиент SDK — тесты этого файла не про оплату, сеть не нужна (см. tests/http.test.ts). */
@@ -546,5 +547,102 @@ describe('создатьСчётчикПопытокВхода — карта н
     счётчик.отметитьНеудачу('1.1.1.1', 0);
     счётчик.сброситьПопытки('1.1.1.1');
     expect(счётчик.размер()).toBe(0);
+  });
+});
+
+describe('GET /admin — неопознанные поступления', () => {
+  /**
+   * Свой сервер с включённым способом: у общего в этом файле он выключен,
+   * а раздел неопознанных показывается только при включённом — без
+   * наблюдения за поступлениями пустая таблица означала бы не «всё в
+   * порядке», а «здесь ничего и не могло появиться».
+   */
+  let серверСоСпособом: Server;
+  let url: string;
+
+  beforeEach(async () => {
+    серверСоСпособом = createServer({
+      config: { ...config, enableAmountMatching: true },
+      store,
+      client: фейковыйКлиент(),
+      log: createLog(() => {}),
+    });
+    await new Promise<void>((resolve) => серверСоСпособом.listen(0, '127.0.0.1', resolve));
+    url = `http://127.0.0.1:${(серверСоСпособом.address() as AddressInfo).port}`;
+  });
+
+  afterEach(async () => {
+    await new Promise<void>((resolve) => серверСоСпособом.close(() => resolve()));
+  });
+
+  /** Вход и запрос списка на сервере со включённым способом. */
+  async function списокСоСпособом(): Promise<string> {
+    const вход = await fetch(`${url}/admin/login`, {
+      method: 'POST',
+      body: new URLSearchParams({ password: config.adminPassword }).toString(),
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      redirect: 'manual',
+    });
+    const кука = (вход.headers.getSetCookie?.()[0] ?? '').split(';')[0] ?? '';
+    const ответ = await fetch(`${url}/admin`, { headers: { cookie: кука }, redirect: 'manual' });
+    return ответ.text();
+  }
+
+  it('при выключенном способе раздела нет вовсе', async () => {
+    store.recordUnmatched({
+      signature: 'ПодписьЧужая',
+      amountUnits: '420001',
+      tokenSymbol: 'SOL',
+      blockTime: 1789300000,
+      reason: 'нет заказа с такой суммой',
+      seenAt: 1789300010,
+    });
+
+    const ответ = await запросСВходом('GET', '/admin');
+
+    expect(ответ.body).not.toContain('Неопознанные поступления');
+  });
+
+  it('показывает поступление с суммой в токене, датой, причиной и ссылкой на транзакцию', async () => {
+    store.recordUnmatched({
+      signature: 'ПодписьЧужая',
+      amountUnits: '420001',
+      tokenSymbol: 'SOL',
+      blockTime: 1789300000,
+      reason: 'нет заказа с такой суммой',
+      seenAt: 1789300010,
+    });
+
+    const тело = await списокСоСпособом();
+
+    expect(тело).toContain('Неопознанные поступления');
+    // Сумма показывается человеку в токене, а не в лампортах: в базе она
+    // в минимальных единицах, потому что по ним идёт сопоставление.
+    expect(тело).toContain('0.000420001');
+    expect(тело).toContain('ПодписьЧужая');
+    expect(тело).toContain('нет заказа с такой суммой');
+  });
+
+  it('пустой список объясняет себя, а не выглядит поломкой', async () => {
+    const тело = await списокСоСпособом();
+
+    expect(тело).toContain('Неопознанные поступления');
+    expect(тело).toContain('Пока ничего');
+  });
+
+  it('экранирует причину и подпись: они попадают в список из внешнего мира', async () => {
+    store.recordUnmatched({
+      signature: '<script>alert(1)</script>',
+      amountUnits: '1',
+      tokenSymbol: 'SOL',
+      blockTime: null,
+      reason: 'нет заказа с такой суммой',
+      seenAt: 1789300010,
+    });
+
+    const тело = await списокСоСпособом();
+
+    expect(тело).not.toContain('<script>alert(1)</script>');
+    expect(тело).toContain('&lt;script&gt;');
   });
 });
