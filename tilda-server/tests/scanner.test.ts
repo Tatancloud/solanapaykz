@@ -115,6 +115,7 @@ let каталог: string;
 let store: Store;
 let закрытые: Array<{ tildaOrderId: string; signature: string }>;
 let журнал: string[];
+let письма: string[];
 
 function стенд(
   поступления: Поступление[],
@@ -129,7 +130,15 @@ function стенд(
     закрытьЗаказ: async (order: Order, signature: string) => {
       закрытые.push({ tildaOrderId: order.tildaOrderId, signature });
     },
-    тест: { сейчас: () => СЕЙЧАС },
+    тест: {
+      сейчас: () => СЕЙЧАС,
+      // Без подмены `sendUnmatchedMail` бил бы по настоящему SMTP на
+      // config.smtp.host в каждом тесте, где поступление не опознано.
+      отправкаПисьма: async () => {
+        письма.push('письмо');
+        return { messageId: 'тест' };
+      },
+    },
   };
 }
 
@@ -143,6 +152,7 @@ beforeEach(() => {
   store = openDatabase(join(каталог, 'orders.sqlite'));
   закрытые = [];
   журнал = [];
+  письма = [];
 });
 
 afterEach(() => {
@@ -310,7 +320,8 @@ describe('сканироватьОдинРаз', () => {
     for (let i = 1; i <= 5; i += 1) {
       поступления.push({ signature: `Подпись${i}`, blockTime: СЕЙЧАС - 500 + i, amountUnits: '7' });
     }
-    const deps = { ...стенд(поступления), тест: { потолокПодписейЗаПроход: 2, сейчас: () => СЕЙЧАС } };
+    const базовый = стенд(поступления);
+    const deps = { ...базовый, тест: { ...базовый.тест, потолокПодписейЗаПроход: 2 } };
 
     await сканироватьОдинРаз(deps);
 
@@ -318,5 +329,34 @@ describe('сканироватьОдинРаз', () => {
     // две самые новые, курсор встал на самой новой из них.
     expect(deps.rpc.запросовТел).toBe(2);
     expect(store.scanCursor()?.signature).toBe('Подпись5');
+  });
+});
+
+describe('письмо о неопознанном поступлении', () => {
+  it('уходит продавцу, когда поступление не подошло ни одному заказу', async () => {
+    курсорНа('Начало');
+    const deps = стенд([
+      { signature: 'Начало', blockTime: СЕЙЧАС - 1000, amountUnits: '1' },
+      { signature: 'ПодписьЧужая', blockTime: СЕЙЧАС - 100, amountUnits: '777' },
+    ]);
+
+    await сканироватьОдинРаз(deps);
+
+    expect(письма).toHaveLength(1);
+    expect(store.listUnmatched(10)[0]?.mailedAt).toBe(СЕЙЧАС);
+  });
+
+  it('не уходит второй раз в тот же час, но поступление всё равно записано', async () => {
+    курсорНа('Начало');
+    const deps = стенд([
+      { signature: 'Начало', blockTime: СЕЙЧАС - 1000, amountUnits: '1' },
+      { signature: 'Чужая1', blockTime: СЕЙЧАС - 200, amountUnits: '777' },
+      { signature: 'Чужая2', blockTime: СЕЙЧАС - 100, amountUnits: '778' },
+    ]);
+
+    await сканироватьОдинРаз(deps);
+
+    expect(письма).toHaveLength(1);
+    expect(store.listUnmatched(10)).toHaveLength(2);
   });
 });

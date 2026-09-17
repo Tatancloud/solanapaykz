@@ -21,6 +21,7 @@
 import type { Config } from './config.js';
 import type { Order, Store } from './db.js';
 import type { Log } from './log.js';
+import { sendUnmatchedMail, type ОтправкаПисьма } from './mailer.js';
 import { поступлениеИзТранзакции, type ПодписьВИстории, type SolanaRpc } from './solana-rpc.js';
 import { resolveToken } from '@solanapaykz/core';
 
@@ -64,6 +65,8 @@ export interface ScannerDeps {
     потолокПодписейЗаПроход?: number;
     /** Текущее время, Unix-секунды. По умолчанию — настоящие часы. */
     сейчас?: () => number;
+    /** Подменяет настоящую отправку письма о неопознанном поступлении. */
+    отправкаПисьма?: ОтправкаПисьма;
   };
 }
 
@@ -211,20 +214,44 @@ async function разобратьПоступление(
 ): Promise<void> {
   const сейчас = deps.тест?.сейчас?.() ?? Math.floor(Date.now() / 1000);
 
-  const вНеопознанные = (причина: string): void => {
-    deps.store.recordUnmatched({
+  const вНеопознанные = async (причина: string): Promise<void> => {
+    const запись = {
       signature: поступление.signature,
       amountUnits: поступление.amountUnits,
       tokenSymbol: deps.config.token,
       blockTime: поступление.blockTime,
       reason: причина,
       seenAt: сейчас,
-    });
+    };
+    deps.store.recordUnmatched(запись);
     deps.log.info('Поступление не опознано', {
       signature: поступление.signature,
       amountUnits: поступление.amountUnits,
       причина,
     });
+
+    // Письмо — оповещение о том, что уже записано и видно в списке
+    // заказов: его неудача ничего не меняет и не должна рвать проход.
+    // Частоту ограничивает сам `sendUnmatchedMail` (не чаще раза в час).
+    try {
+      await sendUnmatchedMail(
+        { ...запись, mailedAt: null },
+        {
+          config: deps.config,
+          store: deps.store,
+          log: deps.log,
+          тест: {
+            ...(deps.тест?.отправкаПисьма ? { отправка: deps.тест.отправкаПисьма } : {}),
+            ...(deps.тест?.сейчас ? { сейчас: deps.тест.сейчас } : {}),
+          },
+        },
+      );
+    } catch (е) {
+      deps.log.error('Письмо о неопознанном поступлении не отправилось', {
+        signature: поступление.signature,
+        сообщение: (е as Error).message,
+      });
+    }
   };
 
   const кандидаты = deps.store.findLiveOrdersByAmountUnits({
@@ -236,7 +263,7 @@ async function разобратьПоступление(
   });
 
   if (кандидаты.length === 0) {
-    вНеопознанные(ПРИЧИНЫ.нетЗаказа);
+    await вНеопознанные(ПРИЧИНЫ.нетЗаказа);
     return;
   }
 
@@ -249,7 +276,7 @@ async function разобратьПоступление(
       amountUnits: поступление.amountUnits,
       заказы: кандидаты.map((з) => з.tildaOrderId),
     });
-    вНеопознанные(ПРИЧИНЫ.несколькоЗаказов);
+    await вНеопознанные(ПРИЧИНЫ.несколькоЗаказов);
     return;
   }
 
@@ -260,14 +287,14 @@ async function разобратьПоступление(
   // без этой проверки старый платёж по старой странице закрыл бы чужой
   // свежий заказ.
   if (поступление.blockTime !== null && поступление.blockTime < заказ.createdAt) {
-    вНеопознанные(ПРИЧИНЫ.транзакцияСтаршеЗаказа);
+    await вНеопознанные(ПРИЧИНЫ.транзакцияСтаршеЗаказа);
     return;
   }
 
   // Занимаем подпись ДО закрытия заказа: если та же транзакция уже
   // закрыла какой-то заказ, второй раз её засчитывать нельзя.
   if (!deps.store.claimSignature(поступление.signature, заказ.id, сейчас)) {
-    вНеопознанные(ПРИЧИНЫ.подписьУжеИспользована);
+    await вНеопознанные(ПРИЧИНЫ.подписьУжеИспользована);
     return;
   }
 

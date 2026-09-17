@@ -54,7 +54,9 @@
  */
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import type { Order } from '../db.js';
+import { formatUnits, resolveToken } from '@solanapaykz/core';
+import type { Cluster } from '../config.js';
+import type { Order, UnmatchedReceipt } from '../db.js';
 import { ссылкаНаТранзакцию } from '../mailer.js';
 import { экранироватьHtml } from './html.js';
 import { прочитатьТело, разобратьUrlencoded, ТелоСлишкомБольшое } from './routes-pay.js';
@@ -398,7 +400,66 @@ function строкаЗаказа(order: Order): string {
 /** Сколько последних заказов показывать. Список — рабочий инструмент разбора спорных случаев, а не архив: старые заказы, которые давно закрыты (уведомлён), человеку здесь искать незачем. */
 const КОЛИЧЕСТВО_ЗАКАЗОВ_В_СПИСКЕ = 200;
 
-function страницаСписка(заказы: Order[]): string {
+/** Сколько неопознанных поступлений показывать — столько же, сколько заказов. */
+const КОЛИЧЕСТВО_ПОСТУПЛЕНИЙ_В_СПИСКЕ = 200;
+
+/**
+ * Сумма поступления человеку: в базе она в целых минимальных единицах (по
+ * ним идёт сопоставление), а продавцу нужна привычная запись токена.
+ */
+function суммаПоступления(п: UnmatchedReceipt, cluster: Cluster): string {
+  const { decimals } = resolveToken(cluster, п.tokenSymbol);
+  return `${formatUnits(BigInt(п.amountUnits), decimals)} ${п.tokenSymbol}`;
+}
+
+function строкаПоступления(п: UnmatchedReceipt, cluster: Cluster): string {
+  const url = ссылкаНаТранзакцию(п.signature, cluster);
+  const когда = п.blockTime !== null ? датаЗаказа(п.blockTime) : датаЗаказа(п.seenAt);
+  return `<tr>
+<td>${экранироватьHtml(когда)}</td>
+<td>${экранироватьHtml(суммаПоступления(п, cluster))}</td>
+<td>${экранироватьHtml(п.reason)}</td>
+<td><a href="${экранироватьHtml(url)}">${экранироватьHtml(п.signature)}</a></td>
+</tr>`;
+}
+
+/**
+ * Раздел неопознанных поступлений — деньги, пришедшие на кошелёк магазина
+ * и не подошедшие ни одному заказу.
+ *
+ * Показывается только при включённой оплате по уникальной сумме: без неё
+ * сервер за поступлениями не следит вовсе, и пустая таблица означала бы
+ * не «всё в порядке», а «здесь ничего и не могло появиться».
+ *
+ * Пустой список объясняет себя словами: пустая таблица без объяснения
+ * читается как поломка, а это ровно тот раздел, куда человек приходит
+ * встревоженным — искать чужие деньги.
+ */
+function разделНеопознанных(поступления: UnmatchedReceipt[], cluster: Cluster, включено: boolean): string {
+  if (!включено) return '';
+
+  const тело =
+    поступления.length === 0
+      ? `<p>Пока ничего — это нормально: сюда попадают поступления, не подошедшие ни одному заказу.</p>`
+      : `<table>
+<thead>
+<tr><th>Дата</th><th>Сумма</th><th>Почему не опознано</th><th>Транзакция</th></tr>
+</thead>
+<tbody>${поступления.map((п) => строкаПоступления(п, cluster)).join('')}</tbody>
+</table>`;
+
+  return `<h2>Неопознанные поступления</h2>
+<p>Деньги пришли на кошелёк магазина, но ни один заказ по ним не закрылся. Разбирать вручную:
+сверьте сумму и время с заказом покупателя.</p>
+${тело}`;
+}
+
+function страницаСписка(
+  заказы: Order[],
+  поступления: UnmatchedReceipt[],
+  cluster: Cluster,
+  способВключён: boolean,
+): string {
   const строки = заказы.map(строкаЗаказа).join('');
   return обёртка(
     'Заказы',
@@ -410,6 +471,7 @@ function страницаСписка(заказы: Order[]): string {
 </thead>
 <tbody>${строки}</tbody>
 </table>
+${разделНеопознанных(поступления, cluster, способВключён)}
 <script src="/assets/admin.js"></script>`,
   );
 }
@@ -440,8 +502,13 @@ export function createAdminRoutes(): AdminRoutes {
       return;
     }
     const заказы = deps.store.listRecent(КОЛИЧЕСТВО_ЗАКАЗОВ_В_СПИСКЕ);
+    const поступления = deps.config.enableAmountMatching
+      ? deps.store.listUnmatched(КОЛИЧЕСТВО_ПОСТУПЛЕНИЙ_В_СПИСКЕ)
+      : [];
     res.writeHead(200, ЗАГОЛОВКИ_HTML);
-    res.end(страницаСписка(заказы));
+    res.end(
+      страницаСписка(заказы, поступления, deps.config.cluster, deps.config.enableAmountMatching),
+    );
   }
 
   function формаВхода(req: IncomingMessage, res: ServerResponse, deps: ЗависимостиСервера): void {

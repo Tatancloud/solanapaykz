@@ -2,7 +2,15 @@ import { describe, expect, it } from 'vitest';
 import type { Decision } from '../src/decision.js';
 import type { NewOrder, Order, Store } from '../src/db.js';
 import { createLog } from '../src/log.js';
-import { ссылкаНаТранзакцию, sendMerchantMail, type MailerDeps, type ПисьмоОпции } from '../src/mailer.js';
+import type { UnmatchedReceipt } from '../src/db.js';
+import {
+  ссылкаНаТранзакцию,
+  sendMerchantMail,
+  sendUnmatchedMail,
+  type MailerDeps,
+  type UnmatchedMailDeps,
+  type ПисьмоОпции,
+} from '../src/mailer.js';
 
 /** Полный заказ — то, что уже лежит в базе (см. tests/db.test.ts, tests/http.test.ts). */
 function заказ(изменения: Partial<Order> = {}): Order {
@@ -259,5 +267,96 @@ describe('ссылкаНаТранзакцию', () => {
 
   it('для mainnet ссылка без дополнительных параметров', () => {
     expect(ссылкаНаТранзакцию('подпись', 'mainnet')).toBe('https://explorer.solana.com/tx/подпись');
+  });
+});
+
+describe('sendUnmatchedMail', () => {
+  const поступление: UnmatchedReceipt = {
+    signature: 'подпись-чужого-платежа-11111111111111111111',
+    amountUnits: '420001',
+    tokenSymbol: 'SOL',
+    blockTime: 1_789_300_000,
+    reason: 'нет заказа с такой суммой',
+    seenAt: 1_789_300_010,
+    mailedAt: null,
+  };
+
+  /** Стенд: письма собираются в массив, база отвечает заданным «когда писали в прошлый раз». */
+  function стенд(последнееПисьмо: number | null): {
+    deps: UnmatchedMailDeps;
+    письма: ПисьмоОпции[];
+    отмечено: Array<{ signature: string; at: number }>;
+  } {
+    const письма: ПисьмоОпции[] = [];
+    const отмечено: Array<{ signature: string; at: number }> = [];
+    return {
+      письма,
+      отмечено,
+      deps: {
+        config: { ...config, cluster: 'mainnet' },
+        store: {
+          lastUnmatchedMailAt: () => последнееПисьмо,
+          markUnmatchedMailed: (signature: string, at: number) => {
+            отмечено.push({ signature, at });
+          },
+        },
+        log: createLog(() => {}),
+        тест: {
+          отправка: async (о) => {
+            письма.push(о);
+            return { messageId: 'тест' };
+          },
+          сейчас: () => 1_789_300_020,
+        },
+      },
+    };
+  }
+
+  it('пишет продавцу о поступлении: сумма в токене, причина и ссылка на транзакцию', async () => {
+    const { deps, письма, отмечено } = стенд(null);
+
+    const отправлено = await sendUnmatchedMail(поступление, deps);
+
+    expect(отправлено).toBe(true);
+    expect(письма).toHaveLength(1);
+    expect(письма[0]?.subject).toContain('0.000420001 SOL');
+    expect(письма[0]?.text).toContain('нет заказа с такой суммой');
+    expect(письма[0]?.text).toContain('explorer.solana.com/tx/подпись-чужого-платежа');
+    expect(отмечено).toEqual([{ signature: поступление.signature, at: 1_789_300_020 }]);
+  });
+
+  it('не утверждает, что деньги потеряны: они у продавца', async () => {
+    const { deps, письма } = стенд(null);
+
+    await sendUnmatchedMail(поступление, deps);
+
+    expect(письма[0]?.text).toContain('Деньги у вас');
+  });
+
+  it('молчит, если письмо уже уходило меньше часа назад', async () => {
+    const { deps, письма } = стенд(1_789_300_020 - 60);
+
+    const отправлено = await sendUnmatchedMail(поступление, deps);
+
+    expect(отправлено).toBe(false);
+    expect(письма).toHaveLength(0);
+  });
+
+  it('пишет снова, когда час прошёл', async () => {
+    const { deps, письма } = стенд(1_789_300_020 - 3601);
+
+    await sendUnmatchedMail(поступление, deps);
+
+    expect(письма).toHaveLength(1);
+  });
+
+  it('неудача отправки не роняет вызов и не отмечает письмо', async () => {
+    const { deps, отмечено } = стенд(null);
+    deps.тест = { ...deps.тест, отправка: async () => { throw new Error('SMTP недоступен'); } };
+
+    const отправлено = await sendUnmatchedMail(поступление, deps);
+
+    expect(отправлено).toBe(false);
+    expect(отмечено).toEqual([]);
   });
 });
