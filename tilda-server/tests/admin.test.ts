@@ -38,6 +38,7 @@ const config: Config = {
   listenHost: '127.0.0.1',
   trustedProxyAddresses: ['127.0.0.1', '::1', '::ffff:127.0.0.1'],
   enableFormWebhook: false,
+  enableAmountMatching: false,
 };
 
 /** Фейковый клиент SDK — тесты этого файла не про оплату, сеть не нужна (см. tests/http.test.ts). */

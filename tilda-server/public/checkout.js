@@ -12,6 +12,49 @@
 (function () {
     'use strict';
 
+    // Кнопки «скопировать» у адреса и суммы (блок перевода вручную).
+    // Ставятся раньше проверки контейнера опроса: блок с адресом может
+    // жить на странице и сам по себе, а обработчик из встроенного
+    // onclick запрещён той же политикой CSP, что и встроенный <script>.
+    (function настроитьКопирование() {
+        var кнопки = document.querySelectorAll('.solanapaykz__copy');
+        var i;
+        for (i = 0; i < кнопки.length; i += 1) {
+            кнопки[i].addEventListener('click', копировать);
+        }
+    }());
+
+    function копировать(событие) {
+        var кнопка = событие.currentTarget;
+        var поле = document.getElementById(кнопка.getAttribute('data-target'));
+        if (!поле) {
+            return;
+        }
+        var текст = (поле.textContent || '').trim();
+        var было = кнопка.textContent;
+
+        function получилось() {
+            кнопка.textContent = 'Скопировано';
+            window.setTimeout(function () { кнопка.textContent = было; }, 2000);
+        }
+
+        function неполучилось() {
+            // Тупик молчанием здесь недопустим: покупатель решит, что
+            // сумма скопирована, вставит старое содержимое буфера и
+            // отправит не ту сумму — а именно сумма и опознаёт платёж.
+            кнопка.textContent = 'Выделите и скопируйте вручную';
+        }
+
+        // navigator.clipboard существует только на https и localhost, а
+        // при запрете доступа к буферу в настройках браузера отклоняет
+        // обещание уже после вызова — отрабатываем оба случая.
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(текст).then(получилось, неполучилось);
+        } else {
+            неполучилось();
+        }
+    }
+
     var container = document.getElementById('solanapaykz');
 
     if (!container) {

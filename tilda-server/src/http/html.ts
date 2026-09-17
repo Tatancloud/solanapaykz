@@ -172,7 +172,53 @@ ${body}
  * ввод, а строка, которую сама же наша серверная библиотека QR построила
  * из уже сохранённой платёжной ссылки.
  */
-export function страницаОплаты(order: Order, секундОсталось: number, qrSvg: string): string {
+/**
+ * Блок «перевести вручную»: адрес кошелька магазина и точная сумма.
+ *
+ * Показывается только когда включена оплата по уникальной сумме И этому
+ * заказу уникальную сумму подобрали. Без наблюдения за поступлениями
+ * перевод по адресу не опознаётся никем, и показать адрес значило бы
+ * пригласить покупателя отправить деньги, которых никто не ждёт.
+ *
+ * Решение заказчика (17 сентября 2026): блок открыт сразу всем, а не
+ * спрятан под ссылку — его покупатели платят и с бирж, и кошельками без
+ * поддержки Solana Pay.
+ */
+function блокПереводаВручную(order: Order, показать: boolean): string {
+  if (!показать) return '';
+
+  const сеть = order.cluster === 'mainnet' ? 'основная' : 'тестовая (devnet)';
+
+  return `
+  <section class="solanapaykz__manual">
+    <h2 class="solanapaykz__manual-title">Кошелёк не читает код QR? Переведите вручную</h2>
+    <p class="solanapaykz__warn">
+      Отправьте <strong>ровно эту сумму</strong>, до последнего знака — именно по ней
+      платёж и опознаётся. Перевод на другую сумму придётся разбирать вручную.
+    </p>
+    <p class="solanapaykz__field">
+      <span class="solanapaykz__label">Адрес кошелька:</span>
+      <code id="solanapaykz-address">${экранироватьHtml(order.recipient)}</code>
+      <button type="button" class="solanapaykz__copy" data-copy="address"
+              data-target="solanapaykz-address">Скопировать</button>
+    </p>
+    <p class="solanapaykz__field">
+      <span class="solanapaykz__label">Сумма:</span>
+      <code id="solanapaykz-amount">${экранироватьHtml(order.amountToken)}</code>
+      <span>${экранироватьHtml(order.tokenSymbol)}</span>
+      <button type="button" class="solanapaykz__copy" data-copy="amount"
+              data-target="solanapaykz-amount">Скопировать</button>
+    </p>
+    <p class="solanapaykz__hint">Сеть: Solana, ${экранироватьHtml(сеть)}.</p>
+  </section>`;
+}
+
+export function страницаОплаты(
+  order: Order,
+  секундОсталось: number,
+  qrSvg: string,
+  показатьПереводВручную = false,
+): string {
   const описание = order.description
     ? `<p class="solanapaykz__description">${экранироватьHtml(order.description)}</p>`
     : '';
@@ -219,6 +265,7 @@ export function страницаОплаты(order: Order, секундОста�
   ${строкаНаценки}
   <div class="solanapaykz__qr" id="solanapaykz-qr">${qrSvg}</div>
   <p class="solanapaykz__hint">Отсканируйте код кошельком Solana. Деньги придут продавцу напрямую.</p>
+  ${блокПереводаВручную(order, показатьПереводВручную)}
   <p class="solanapaykz__timer" id="solanapaykz-timer" aria-live="polite"></p>
   <p class="solanapaykz__status" id="solanapaykz-status" role="status" aria-live="polite">Ожидаем оплату…</p>
   <p class="solanapaykz__link">
