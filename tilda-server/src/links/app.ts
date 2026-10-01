@@ -29,6 +29,8 @@ export interface LinksAppOptions {
   rpcUrl: string;
   publicUrl: string;
   databasePath: string;
+  /** Config `trustedProxyAddresses`: peers whose X-Forwarded-For is trusted for rate limits. */
+  trustedProxies?: readonly string[];
   smtp: { host: string; port: number; user: string; pass: string; from: string };
   log: { info(m: string, f?: object): void; warn(m: string, f?: object): void };
   overrides?: Partial<{
@@ -77,6 +79,7 @@ export function createLinksApp(o: LinksAppOptions): LinksApp {
     store, links: o.links, cluster: o.cluster, now, quoter, publicUrl: o.publicUrl, feeWallet: o.links.feeWallet,
     latestBlockhash, txLimiter: createRateLimiter(30, 60_000), auth, probe, host: new URL(o.publicUrl).host,
     authLimiter: createRateLimiter(10, 60_000),
+    ...(o.trustedProxies ? { trustedProxies: o.trustedProxies } : {}),
     ...(o.links.telegram ? { botUsername: o.links.telegram.botUsername } : {}),
   };
 

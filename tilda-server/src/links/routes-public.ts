@@ -15,6 +15,8 @@ export interface PublicDeps extends InvoiceDeps {
   feeWallet: string;
   latestBlockhash: () => Promise<{ blockhash: string; lastValidBlockHeight: bigint }>;
   txLimiter: RateLimiter;
+  /** Peers whose X-Forwarded-For is trusted; defaults to loopback. */
+  trustedProxies?: readonly string[];
 }
 
 const INVOICE_PAGE = /^\/i\/([A-Za-z0-9_-]{1,32})$/;
@@ -73,7 +75,7 @@ export async function handlePublic(req: IncomingMessage, res: ServerResponse, ur
     return true;
   }
   if (pay && method === 'POST') {
-    if (!d.txLimiter.allow(clientIp(req), d.now())) { sendJson(res, 429, { error: 'Too many requests' }); return true; }
+    if (!d.txLimiter.allow(clientIp(req, d.trustedProxies), d.now())) { sendJson(res, 429, { error: 'Too many requests' }); return true; }
     let body: Record<string, unknown>;
     try { body = await readJson(req); } catch { sendJson(res, 400, { error: 'Invalid JSON' }); return true; }
     const r = await buildInvoiceTransaction(d, pay[1]!, body.account);

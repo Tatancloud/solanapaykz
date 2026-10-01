@@ -244,3 +244,13 @@ describe('manual scan load: no transaction fetches for history older than the ol
     expect(w.f.fetched.filter((s) => s.startsWith('old'))).toEqual([]);
   });
 });
+
+describe('deploy: behind docker-proxy the peer is the bridge gateway, not loopback', () => {
+  const req = (remoteAddress: string, headers: Record<string, string>) =>
+    ({ socket: { remoteAddress }, headers } as unknown as IncomingMessage);
+  it('trusts X-Forwarded-For from a configured proxy address', () => {
+    const r = req('172.30.81.1', { 'x-forwarded-for': '6.6.6.6, 203.0.113.9' });
+    expect(clientIp(r, ['127.0.0.1', '172.30.81.1'])).toBe('203.0.113.9');
+    expect(clientIp(r)).toBe('172.30.81.1');
+  });
+});
