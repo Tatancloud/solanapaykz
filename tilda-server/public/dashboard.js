@@ -21,12 +21,12 @@
     emailForm.addEventListener('submit', async (e) => {
       e.preventDefault();
       const r = await api(emailForm.dataset.start, 'POST', { email: emailForm.email.value, lang });
-      if (r.status !== 200) return msg(r.data.error || 'error');
+      if (r.status !== 200) return msg(r.data.message || r.data.error || 'error');
       emailForm.code.parentElement.hidden = false; $('#lk-verify').hidden = false;
     });
     $('#lk-verify').addEventListener('click', async () => {
       const r = await api(emailForm.dataset.verify, 'POST', { email: emailForm.email.value, code: emailForm.code.value, lang });
-      if (r.status === 200) location.href = '/m'; else msg(r.data.error || 'error');
+      if (r.status === 200) location.href = '/m'; else msg(r.data.message || r.data.error || 'error');
     });
     $('#lk-wallet').addEventListener('click', async () => {
       const w = window.phantom?.solana || window.solflare || window.solana;
@@ -36,7 +36,7 @@
       const signed = await w.signMessage(new TextEncoder().encode(n.data.message), 'utf8');
       const sig = signed.signature || signed;
       const r = await api('/api/auth/wallet/verify', 'POST', { address: publicKey.toString(), nonce: n.data.nonce, signature: b58(sig), lang });
-      if (r.status === 200) location.href = '/m'; else msg(r.data.error || 'error');
+      if (r.status === 200) location.href = '/m'; else msg(r.data.message || r.data.error || 'error');
     });
   }
 
@@ -44,7 +44,7 @@
   if (newForm) newForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     const r = await api('/api/merchant/invoices', 'POST', { amountKzt: newForm.amountKzt.value, description: newForm.description.value, token: newForm.token.value });
-    if (r.status !== 200) return msg(r.data.error || 'error');
+    if (r.status !== 200) return msg(r.data.message || r.data.error || 'error');
     $('#lk-url').textContent = r.data.url; $('#lk-result').hidden = false;
     $('#lk-share').onclick = async () => {
       if (navigator.share) { try { await navigator.share({ url: r.data.url }); return; } catch { /* fall through */ } }
@@ -54,14 +54,14 @@
 
   document.querySelectorAll('[data-repay]').forEach((b) => b.addEventListener('click', async () => {
     const r = await api('/api/merchant/fees/repay', 'POST', { token: b.dataset.repay });
-    if (r.status === 200) location.href = r.data.url; else msg(r.data.error || 'error');
+    if (r.status === 200) location.href = r.data.url; else msg(r.data.message || r.data.error || 'error');
   }));
 
   const settings = $('#lk-settings');
   if (settings) settings.addEventListener('submit', async (e) => {
     e.preventDefault();
     const r = await api('/api/merchant/settings', 'PUT', { recipient: settings.recipient.value.trim(), name: settings.name.value, lang: settings.lang.value });
-    msg(r.status === 200 ? $('#lk-msg').dataset.saved : (r.data.error || 'error'));
+    msg(r.status === 200 ? $('#lk-msg').dataset.saved : (r.data.message || r.data.error || 'error'));
   });
 
   const tg = $('#lk-tg');

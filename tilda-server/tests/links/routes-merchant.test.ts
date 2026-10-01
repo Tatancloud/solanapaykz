@@ -112,3 +112,28 @@ describe('invoicesCsv', () => {
     expect(csv).toContain(`"'=HYPERLINK(""x""), ""q"""`);
   });
 });
+
+describe('error messages people can read', () => {
+  it('settings: the fee wallet is refused with a sentence in the merchant language', async () => {
+    const s = await signIn('a@shop.kz');
+    await call('/api/merchant/settings', s, 'PUT', { lang: 'ru' });
+    const r = await (await call('/api/merchant/settings', s, 'PUT', { recipient: FEE })).json() as { error: string; message: string };
+    expect(r.error).toBe('is_fee_wallet');
+    expect(r.message).toBe('Это кошелёк комиссии сервиса. Вставьте адрес своего кошелька.');
+  });
+
+  it('sign-in: a wrong code and a too-early resend get sentences, not codes', async () => {
+    await fetch(`${base}/api/auth/email/start`, { method: 'POST', body: JSON.stringify({ email: 'b@shop.kz', lang: 'en' }) });
+    const again = await (await fetch(`${base}/api/auth/email/start`, { method: 'POST', body: JSON.stringify({ email: 'b@shop.kz', lang: 'en' }) })).json() as { message: string };
+    expect(again.message).toMatch(/wait/i);
+    const wrong = await (await fetch(`${base}/api/auth/email/verify`, { method: 'POST', body: JSON.stringify({ email: 'b@shop.kz', code: '000000', lang: 'ru' }) })).json() as { error: string; message: string };
+    expect(wrong.error).toBe('invalid');
+    expect(wrong.message).toMatch(/код/i);
+  });
+
+  it('invoice creation without a wallet explains what to do', async () => {
+    const s = await signIn('c@shop.kz');
+    const r = await (await call('/api/merchant/invoices', s, 'POST', { amountKzt: '5000' })).json() as { message: string };
+    expect(r.message).toBe('Add your receiving wallet in Settings first.');
+  });
+});
