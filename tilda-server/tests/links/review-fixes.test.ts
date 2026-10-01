@@ -254,3 +254,23 @@ describe('deploy: behind docker-proxy the peer is the bridge gateway, not loopba
     expect(clientIp(r)).toBe('172.30.81.1');
   });
 });
+
+describe('pages: KZT amount formatting', () => {
+  it('groups thousands and uses the language decimal separator', async () => {
+    const { formatKzt } = await import('../../src/links/pages.js');
+    expect(formatKzt('5000', 'en')).toBe('5\u202F000');
+    expect(formatKzt('1250000.5', 'ru')).toBe('1\u202F250\u202F000,50');
+    expect(formatKzt('999.00', 'en')).toBe('999');
+    expect(formatKzt('18500.25', 'en')).toBe('18\u202F500.25');
+  });
+});
+
+describe('pages: fee debt notice', () => {
+  it('hides zero debts however they are formatted and trims trailing zeros', async () => {
+    const { dashboardPage } = await import('../../src/links/pages.js');
+    const m = { id: 1, email: 'a@b.c', walletLogin: null, lang: 'en', name: 'Shop', recipient: 'R', telegramChatId: null, createdAt: 0 } as never;
+    const html = dashboardPage(m, 'csrf', [{ token: 'USDC', amount: '0.420000' }, { token: 'SOL', amount: '0.000000000' }]);
+    expect(html).toContain('0.42 USDC');
+    expect(html).not.toContain('data-repay="SOL"');
+  });
+});

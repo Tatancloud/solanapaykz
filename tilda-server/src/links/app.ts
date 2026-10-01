@@ -1,5 +1,5 @@
 // tilda-server/src/links/app.ts
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -48,6 +48,8 @@ const ASSETS: Record<string, string> = {
   '/assets/link.css': 'text/css; charset=utf-8',
   '/assets/icon.png': 'image/png',
 };
+// Self-hosted fonts (the page CSP is default-src 'self'): only the .woff2 files shipped in public/fonts.
+for (const f of readdirSync(join(PUBLIC_DIR, 'fonts'))) if (f.endsWith('.woff2')) ASSETS[`/assets/fonts/${f}`] = 'font/woff2';
 
 export function createLinksApp(o: LinksAppOptions): LinksApp {
   const ov = o.overrides ?? {};
@@ -98,7 +100,8 @@ export function createLinksApp(o: LinksAppOptions): LinksApp {
       const url = new URL(req.url ?? '/', 'http://localhost');
       const type = ASSETS[url.pathname];
       if (type && req.method === 'GET') {
-        res.writeHead(200, { 'content-type': type, 'cache-control': 'public, max-age=300' });
+        const maxAge = type === 'font/woff2' ? 31536000 : 300;
+        res.writeHead(200, { 'content-type': type, 'cache-control': `public, max-age=${maxAge}` });
         res.end(readFileSync(join(PUBLIC_DIR, url.pathname.slice('/assets/'.length))));
         return true;
       }
