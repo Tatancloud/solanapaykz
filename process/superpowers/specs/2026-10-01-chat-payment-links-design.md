@@ -131,7 +131,8 @@ Detector (background loop) ─► finds tx by reference, or incoming transfer wi
 - Manual amount: `total + offset`, where `offset ∈ [1, 9999]` minor units, unique among this merchant's unexpired
   quotes; the offset is part of the merchant's revenue.
 - Fee debt (manual payments): `floor(total × fee_bps / 10000)` accrued in the paid token.
-- Debt threshold: invoice creation is blocked while the merchant's debt is worth more than **20 USD** at current rates.
+- Debt threshold: invoice creation is blocked while the merchant's debt in any token exceeds that token's limit
+  from config (`debtLimit`, default `USDC: "20"`, `SOL: "0.15"`).
 
 ## 8. Invoice states
 
@@ -173,7 +174,7 @@ Telegram (`POST /tg/<secret-path>` webhook): `/start <code>` links the chat; `/i
 ## 10. Transaction builder
 
 Input: invoice, quote, buyer account. Output: unsigned versioned transaction (base64), fee payer = buyer, recent
-blockhash, compute-unit price instruction.
+blockhash. No compute-unit price instruction in the MVP (avoids an extra dependency; fees are already low).
 
 USDC: `transferChecked` buyer ATA → merchant ATA (`merchant_token`), `transferChecked` buyer ATA → fee wallet ATA
 (`fee_token`), `reference` as a read-only non-signer key on the first transfer, memo `inv:<id>`.
