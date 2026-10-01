@@ -153,6 +153,8 @@ function этоИзвестныйСистемныйАдрес(значение: 
 
 /** Известные ключи верхнего уровня — опечатка вроде `markupPercnt` не должна молча превратиться в «поле не задано, беру значение по умолчанию». */
 const ИЗВЕСТНЫЕ_КЛЮЧИ = new Set<string>([
+  // Section of the chat payment links subsystem, parsed by src/links/config.ts at startup.
+  'links',
   'recipient',
   'rpcUrl',
   'cluster',
