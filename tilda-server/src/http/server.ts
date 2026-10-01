@@ -21,6 +21,8 @@ import { createAdminRoutes } from './routes-admin.js';
 import { обработатьTildaPay } from './routes-pay.js';
 import { обработатьСтатус, обработатьСтраницуОплаты } from './routes-page.js';
 import { createWebhookRoutes } from './routes-webhook.js';
+import { createLinksApp, type LinksApp } from '../links/app.js';
+import { loadLinksConfig } from '../links/config.js';
 
 /**
  * Тестовые крюки этого модуля — не для боевого кода. Собраны в одно
@@ -59,6 +61,8 @@ export interface ЗависимостиСервера {
   log: Log;
   /** Только для тестов. */
   тест?: ЗависимостиСервераТест;
+  /** Chat payment links subsystem (src/links); absent when the "links" config section is missing. */
+  links?: LinksApp;
 }
 
 // dist/http/server.js и src/http/server.ts лежат на одной глубине от корня
@@ -228,6 +232,8 @@ async function обработатьЗапрос(
     }
   }
 
+  if (deps.links && (await deps.links.handle(req, res))) return;
+
   res.writeHead(404, { 'content-type': 'text/html; charset=utf-8' });
   res.end(страница404());
 }
@@ -276,11 +282,21 @@ export async function запуститьСервер(): Promise<{ server: http.S
     throw new Error(`Не удалось запустить сервер: настройки «${путь}»: ${(е as Error).message}`);
   }
 
-  const log = createLog((строка) => process.stdout.write(строка + '\n'), секретыНастроек(config));
+  // Optional "links" section (chat payment links), parsed separately from the Tilda settings.
+  const сырыеСсылки = (JSON.parse(readFileSync(путь, 'utf8')) as { links?: unknown }).links;
+  const перецСессий = (сырыеСсылки as { sessionPepper?: unknown } | undefined)?.sessionPepper;
+  const log = createLog((строка) => process.stdout.write(строка + '\n'), [
+    ...секретыНастроек(config),
+    ...(typeof перецСессий === 'string' ? [перецСессий] : []),
+  ]);
   const store = openDatabase(config.databasePath);
   const client = создатьКлиент(config);
+  const links = сырыеСсылки === undefined ? undefined : createLinksApp({
+    links: loadLinksConfig(сырыеСсылки), cluster: config.cluster, rpcUrl: config.rpcUrl, publicUrl: config.publicUrl,
+    databasePath: config.databasePath, smtp: config.smtp, log,
+  });
 
-  const server = createServer({ config, store, client, log });
+  const server = createServer({ config, store, client, log, ...(links ? { links } : {}) });
   const остановитьОбход = startChecker({ config, store, client, log });
 
   // По умолчанию только loopback (см. `config.listenHost`) — обратный
@@ -301,6 +317,7 @@ export async function запуститьСервер(): Promise<{ server: http.S
     if (остановлен) return;
     остановлен = true;
     остановитьОбход();
+    links?.stop();
     await new Promise<void>((res) => server.close(() => res()));
   }
 

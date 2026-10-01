@@ -27,3 +27,7 @@ export {
   RateUnavailableError,
   SolanaPayKzError,
 } from './errors.js';
+export { formatUnits, parseDecimalToUnits } from './money.js';
+export { resolveToken } from './config.js';
+export type { TokenInfo } from './config.js';
+export { generateReference } from './payment/request.js';

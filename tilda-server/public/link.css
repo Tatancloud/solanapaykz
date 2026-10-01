@@ -1,0 +1,22 @@
+/* tilda-server/public/link.css */
+:root { --fg:#111; --muted:#666; --accent:#6c4cf1; --ok:#0a7d38; --warn:#a15c00; --bg:#fafafa; }
+* { box-sizing: border-box; }
+body { margin:0; font:16px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; color:var(--fg); background:var(--bg); }
+.lk { max-width:440px; margin:0 auto; padding:20px 16px 48px; }
+.lk h1 { font-size:1.3rem; margin:8px 0; }
+.lk-lang { float:right; color:var(--muted); text-decoration:none; }
+.lk-desc, .lk-hint, small { color:var(--muted); }
+.lk-qr svg { width:240px; height:240px; display:block; margin:12px auto; background:#fff; }
+.lk-btn, button { display:inline-block; background:var(--accent); color:#fff; border:0; border-radius:10px; padding:12px 18px;
+  text-decoration:none; font-size:1rem; cursor:pointer; }
+.lk-btn { display:block; text-align:center; margin:12px 0; }
+.lk-manual { margin-top:16px; background:#fff; border:1px solid #e5e5e5; border-radius:10px; padding:12px; }
+.lk-copy { display:flex; gap:8px; align-items:center; margin:4px 0 10px; }
+.lk-copy code { flex:1; overflow-wrap:anywhere; font-size:.85rem; }
+.lk-copy button { padding:6px 10px; font-size:.85rem; }
+.lk-warn { color:var(--warn); font-weight:600; }
+.lk-status { margin-top:18px; font-weight:600; }
+.lk-paid { color:var(--ok); } .lk-needs_review { color:var(--warn); }
+form label { display:block; margin-top:10px; } input, select { width:100%; padding:10px; font-size:1rem; border:1px solid #ccc; border-radius:8px; }
+table { width:100%; border-collapse:collapse; font-size:.9rem; } td, th { padding:6px 4px; border-bottom:1px solid #eee; text-align:left; }
+nav a { margin-right:12px; }

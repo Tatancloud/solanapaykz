@@ -98,6 +98,34 @@ documents, the implementation plans and the review findings that shaped the
 code. Anyone judging the engineering can read the reasoning, not just the
 result.
 
+## Chat payment links (Colosseum Crypto World's Fair, Sept–Oct 2026)
+
+Sellers who trade in WhatsApp, Instagram or Telegram create a payment link priced in tenge and paste it into the
+chat. The buyer pays USDC or SOL on Solana in one tap (Solana Pay transaction request), by a manual transfer from any
+wallet or exchange, or as a Blink. Funds go straight to the seller's own wallet; the service takes 0.5% inside the
+same transaction and never holds funds or keys. See [docs/links.md](docs/links.md).
+
+## Prior work disclosure
+
+Before the contest period (2026-09-14) this repository already contained the core SDK, the WooCommerce plugin and a
+single-merchant Tilda payment server — release [`v0.1.0`](../../releases/tag/v0.1.0) (2026-09-13). Everything after
+that tag was built during the hackathon: multi-merchant accounts, email and wallet sign-in, chat payment links,
+the on-chain fee split, manual exchange payments with unique amounts, Solana Actions (Blinks), the merchant
+dashboard, the fee ledger and the Telegram bot. Full diff: [`v0.1.0...main`](../../compare/v0.1.0...main).
+
+## Legal status and roadmap
+
+Kazakhstan currently does not allow crypto-assets to be used as payment for goods and services; the legal route is
+conversion to tenge through a licensed provider (since July 2026 the National Bank's unified QR accepts crypto
+wallets with conversion through AIFC exchanges). This project lets merchants receive to their own wallets and is
+demonstrated on mainnet with team-owned test merchants and pilot merchants recruited by the team.
+
+Roadmap:
+1. Partner with a licensed AIFC provider to accept SOL/USDC on Solana and settle merchants in tenge.
+2. Settlement mode in the product: route payments to the partner's address with a merchant identifier.
+3. More local currencies (the quote engine already prices from fiat).
+4. Optional on-chain splitter program so manual payments also pay the fee on-chain.
+
 ## Requirements
 
 - **Own Solana RPC endpoint.** Public nodes are rate-limited and do not keep

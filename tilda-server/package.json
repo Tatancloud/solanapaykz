@@ -12,6 +12,10 @@
     "start": "node dist/http/server.js"
   },
   "dependencies": {
+    "@solana-program/memo": "0.11.2",
+    "@solana-program/system": "0.12.2",
+    "@solana-program/token": "0.12.0",
+    "@solana/kit": "6.10.0",
     "@solanapaykz/core": "file:..",
     "nodemailer": "6.9.16",
     "qrcode": "1.5.4"
