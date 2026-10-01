@@ -12,8 +12,9 @@ import { handleUpdate, telegramSender } from './bot.js';
 import type { LinksConfig } from './config.js';
 import { openLinksStore } from './db.js';
 import { createRpc, startDetector, type DetectRpc } from './detect.js';
-import { readJson, sendJson } from './http.js';
-import { t } from './i18n.js';
+import { readJson, sendHtml, sendJson } from './http.js';
+import { pickLang, t } from './i18n.js';
+import { landingPage } from './landing.js';
 import type { Quoter } from './invoices.js';
 import { createNotifier } from './notify.js';
 import { feeWalletProblems, type AccountProbe } from './recipient.js';
@@ -106,6 +107,10 @@ export function createLinksApp(o: LinksAppOptions): LinksApp {
         const maxAge = type === 'font/woff2' ? 31536000 : 300;
         res.writeHead(200, { 'content-type': type, 'cache-control': `public, max-age=${maxAge}` });
         res.end(readFileSync(join(PUBLIC_DIR, url.pathname.slice('/assets/'.length))));
+        return true;
+      }
+      if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) {
+        sendHtml(res, 200, landingPage(pickLang(url.searchParams.get('lang'), req.headers['accept-language'])));
         return true;
       }
       const tg = o.links.telegram;

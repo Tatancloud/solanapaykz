@@ -759,6 +759,28 @@ describe('корневой адрес', () => {
     expect(ответ.body).toContain('fraud');
   });
 
+  it('при включённых платёжных ссылках корень отдаёт их лендинг', async () => {
+    const сЛендингом = createServer({
+      config, store, client: фейковыйКлиент(), log: createLog(() => {}),
+      links: {
+        handle: async (req, res) => {
+          if (req.url !== '/') return false;
+          res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+          res.end('LANDING');
+          return true;
+        },
+        stop: () => {},
+      },
+    });
+    await new Promise<void>((resolve) => сЛендингом.listen(0, '127.0.0.1', resolve));
+    const адрес = сЛендингом.address() as AddressInfo;
+    try {
+      expect(await (await fetch(`http://127.0.0.1:${адрес.port}/`)).text()).toBe('LANDING');
+    } finally {
+      await new Promise<void>((resolve) => сЛендингом.close(() => resolve()));
+    }
+  });
+
   it('на корне не раскрывает ни настроек, ни секретов', async () => {
     const ответ = await запрос('GET', '/');
 

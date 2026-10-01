@@ -175,6 +175,39 @@ td:nth-child(4) { min-width: 220px }
 td .lk-pill { white-space: normal; line-height: 1.3; border-radius: 12px; align-items: baseline }
 .lk-pill::before { flex: none; transform: translateY(-1px) }
 
+/* landing (GET /) */
+.lk.lp { max-width: 1040px; gap: 20px }
+.lp-top { max-width: 1040px; gap: 12px 16px }
+.lp-top .lk-nav { order: 2 } .lp-top .lk-lang { order: 3 }
+.lp-hero { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 420px); gap: 32px; align-items: center; padding-block: 28px 12px }
+.lp-copy { display: grid; gap: 18px; align-content: start }
+.lp-copy h1 { margin: 0; font: 700 clamp(30px, 5.2vw, 52px)/1.08 var(--f-display); letter-spacing: -0.03em; text-wrap: balance }
+.lp-lead { margin: 0; font-size: 18px; line-height: 1.55; color: var(--muted); max-width: 54ch }
+.lp-actions { display: flex; flex-wrap: wrap; gap: 10px }
+.lp-actions .lk-btn { width: auto; padding-inline: 22px }
+.lp-example { margin: 0; display: grid; gap: 8px }
+.lp-example figcaption { font-size: 13px; color: var(--muted) }
+.lp-example .lk-card { box-shadow: 0 18px 40px -24px rgba(11, 34, 51, .35) }
+.lp-example .lk-btn { pointer-events: none }
+.lp-strong { margin: 0; font-weight: 600 }
+.lp-section h2, .lp-note h2, .lp-tilda h2 { margin: 0; font: 700 20px/1.25 var(--f-display); letter-spacing: -0.01em }
+.lp-steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; counter-reset: step }
+.lp-steps li { counter-increment: step; display: grid; gap: 6px; align-content: start }
+.lp-steps li::before { content: counter(step); width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center;
+  font: 700 14px/1 var(--f-display); background: var(--sky-soft); color: var(--sky) }
+.lp-steps h3 { margin: 4px 0 0; font-size: 17px; font-weight: 600 }
+.lp-steps p, .lp-facts dd { margin: 0; color: var(--muted); font-size: 15px }
+.lp-facts { margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 28px }
+.lp-facts dt { font-weight: 600; margin-bottom: 4px }
+.lp-note, .lp-tilda { display: grid; gap: 8px; padding: 4px 4px 0; max-width: 78ch }
+.lp-note p, .lp-tilda p { margin: 0; color: var(--muted) }
+.lp-note { border-left: 3px solid var(--sun); padding-left: 16px }
+.lp-foot { display: flex; flex-wrap: wrap; gap: 8px 22px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14px }
+@media (max-width: 860px) {
+  .lp-hero { grid-template-columns: minmax(0, 1fr); padding-top: 12px }
+  .lp-steps, .lp-facts { grid-template-columns: minmax(0, 1fr) }
+}
+
 @media (max-width: 420px) {
   .lk-card { padding: 18px; border-radius: 16px }
   .lk-table { margin: 0 -18px; padding: 0 18px }
