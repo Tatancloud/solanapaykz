@@ -45,6 +45,22 @@ describe('links app', () => {
     expect((await fetch(`${base}/assets/link.js`)).status).toBe(200);
   });
 
+  it('serves the landing page at the root in English and Russian', async () => {
+    const en = await fetch(`${base}/`);
+    expect(en.status).toBe(200);
+    const html = await en.text();
+    expect(html).toContain('Payment links in tenge');
+    expect(html).toContain('href="/m"');
+    expect(html).toContain('seed phrase');
+    // English by default even for a Russian browser; Russian only via the switch (?lang=ru)
+    const ruBrowser = await (await fetch(`${base}/`, { headers: { 'accept-language': 'ru-RU,ru;q=0.9' } })).text();
+    expect(ruBrowser).toContain('Payment links in tenge');
+    const ru = await (await fetch(`${base}/?lang=ru`)).text();
+    expect(ru).toContain('Платёжные ссылки в тенге');
+    expect(ru).toContain('href="/m?lang=ru"');
+    expect(ru).toContain('seed-фразу');
+  });
+
   it('serves the brand mark, favicon and touch icon', async () => {
     const svg = await fetch(`${base}/assets/logo.svg`);
     expect(svg.status).toBe(200);
