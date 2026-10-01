@@ -25,6 +25,11 @@ export function clientIp(req: IncomingMessage): string {
   const remote = req.socket.remoteAddress ?? '';
   const local = remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1';
   const fwd = req.headers['x-forwarded-for'];
-  if (local && typeof fwd === 'string' && fwd.trim() !== '') return fwd.split(',')[0]!.trim();
+  if (!local) return remote;
+  // Behind Cloudflare the edge sets CF-Connecting-IP; otherwise our proxy appended the real peer as the LAST
+  // X-Forwarded-For entry. Earlier entries come from the client and can be forged.
+  const cf = req.headers['cf-connecting-ip'];
+  if (typeof cf === 'string' && cf.trim() !== '') return cf.trim();
+  if (typeof fwd === 'string' && fwd.trim() !== '') return fwd.split(',').at(-1)!.trim();
   return remote;
 }

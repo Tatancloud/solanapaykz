@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { generateReference, parseDecimalToUnits, resolveToken } from '@solanapaykz/core';
 import type { LinksConfig } from './config.js';
 import type { Invoice, LinksStore, Merchant, QuoteRow, Token } from './db.js';
+import { LATE_WINDOW_MS } from './detect.js';
 import { pickManualOffset, splitFee } from './money.js';
 
 export const QUOTE_TTL_MS = 15 * 60 * 1000;
@@ -65,7 +66,9 @@ export async function activeQuote(d: InvoiceDeps, invoice: Invoice): Promise<Quo
   const decimals = resolveToken(d.cluster, invoice.token).decimals;
   const totalUnits = parseDecimalToUnits(amountToken, decimals);
   const { fee, merchant } = splitFee(totalUnits, invoice.feeBps);
-  const used = new Set(d.store.activeManualUnits(invoice.merchantId, invoice.token, now).map((u) => u - totalUnits));
+  // Unique among every quote the detector may still match on this wallet (quotes expired less than LATE_WINDOW_MS ago).
+  const used = new Set(d.store.manualUnitsInUse(invoice.recipient, invoice.token, now - LATE_WINDOW_MS)
+    .map((u) => u - totalUnits));
   const offset = pickManualOffset(used);
   return d.store.insertQuote({
     invoiceId: invoice.id, totalUnits, feeUnits: fee, merchantUnits: merchant, manualUnits: totalUnits + offset,

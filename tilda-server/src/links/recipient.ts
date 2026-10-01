@@ -12,8 +12,9 @@ export async function usdcAccountOf(cluster: 'mainnet' | 'devnet', owner: string
   return ata;
 }
 
-export async function checkRecipient(probe: AccountProbe, cluster: 'mainnet' | 'devnet', raw: unknown):
-  Promise<{ ok: true; address: string } | { ok: false; error: 'format' | 'is_mint' | 'no_usdc_account' }> {
+export async function checkRecipient(probe: AccountProbe, cluster: 'mainnet' | 'devnet', raw: unknown,
+  forbidden: string[] = []):
+  Promise<{ ok: true; address: string } | { ok: false; error: 'format' | 'is_mint' | 'is_fee_wallet' | 'no_usdc_account' }> {
   const value = typeof raw === 'string' ? raw.trim() : '';
   let owner: string;
   try {
@@ -23,8 +24,15 @@ export async function checkRecipient(probe: AccountProbe, cluster: 'mainnet' | '
   }
   const mints = (['mainnet', 'devnet'] as const).map((c) => resolveToken(c, 'USDC').mint);
   if (mints.includes(owner)) return { ok: false, error: 'is_mint' };
+  if (forbidden.includes(owner)) return { ok: false, error: 'is_fee_wallet' };
   if (!(await probe.exists(await usdcAccountOf(cluster, owner)))) return { ok: false, error: 'no_usdc_account' };
   return { ok: true, address: owner };
+}
+
+/** Startup check: fee transfers fail on-chain when the fee wallet has no USDC account. */
+export async function feeWalletProblems(probe: AccountProbe, cluster: 'mainnet' | 'devnet', feeWallet: string):
+  Promise<string[]> {
+  return (await probe.exists(await usdcAccountOf(cluster, feeWallet))) ? [] : ['fee wallet has no USDC account'];
 }
 
 export function saveSettings(store: LinksStore, merchantId: number,

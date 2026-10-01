@@ -32,13 +32,15 @@ describe('links store', () => {
     expect(s.quotesForInvoice('inv1').map((x) => x.totalUnits)).toEqual([10_870_001n, 2n]);
   });
 
-  it('lists manual amounts of active quotes per merchant and token only', () => {
-    const { s, m } = seed();
+  it('lists manual amounts of quotes expiring after `since`, per receiving wallet and token only', () => {
+    const { s } = seed();
+    const recipient = s.getInvoice('inv1')!.recipient;
     s.insertQuote({ invoiceId: 'inv1', totalUnits: 1n, feeUnits: 0n, merchantUnits: 1n, manualUnits: 77n,
       rate: '1', rateSource: 'x', reference: 'r', createdAt: 1000, expiresAt: 1900 });
-    expect(s.activeManualUnits(m.id, 'USDC', 1500)).toEqual([77n]);
-    expect(s.activeManualUnits(m.id, 'USDC', 2000)).toEqual([]);
-    expect(s.activeManualUnits(m.id, 'SOL', 1500)).toEqual([]);
+    expect(s.manualUnitsInUse(recipient, 'USDC', 1500)).toEqual([77n]);
+    expect(s.manualUnitsInUse(recipient, 'USDC', 2000)).toEqual([]);
+    expect(s.manualUnitsInUse(recipient, 'SOL', 1500)).toEqual([]);
+    expect(s.manualUnitsInUse('OtherWallet', 'USDC', 1500)).toEqual([]);
   });
 
   it('takes a nonce and a bot link only once', () => {

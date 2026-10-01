@@ -9,6 +9,7 @@ import { createRateLimiter } from '../../src/links/ratelimit.js';
 import { handleMerchant, invoicesCsv, type MerchantDeps } from '../../src/links/routes-merchant.js';
 
 const R = '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM';
+const FEE = '6UnyHquRaHTjq3XjvmXyhWeeRHA5eHQgyCKmW6rP8XC2';
 const BUYER = generateReference();
 let server: http.Server; let base: string; let d: MerchantDeps; let codes: string[];
 
@@ -16,9 +17,9 @@ beforeEach(async () => {
   codes = [];
   const store = openLinksStore(':memory:');
   d = {
-    store, links: loadLinksConfig({ feeWallet: R, sessionPepper: 'pepper-pepper-pepper' }), cluster: 'devnet',
+    store, links: loadLinksConfig({ feeWallet: FEE, sessionPepper: 'pepper-pepper-pepper' }), cluster: 'devnet',
     now: () => 1_000_000, quoter: { quote: async () => ({ amountToken: '10.87', rate: '460', rateSource: 'binance' }) },
-    publicUrl: 'https://pay.test', feeWallet: R, txLimiter: createRateLimiter(100, 60_000), host: 'pay.test',
+    publicUrl: 'https://pay.test', feeWallet: FEE, txLimiter: createRateLimiter(100, 60_000), host: 'pay.test',
     latestBlockhash: async () => ({ blockhash: generateReference(), lastValidBlockHeight: 1n }),
     auth: { store, pepper: 'pepper-pepper-pepper', now: () => 1_000_000, sendCode: async (_e, c) => { codes.push(c); } },
     probe: { exists: async () => true }, authLimiter: createRateLimiter(100, 60_000), botUsername: 'spk_bot',

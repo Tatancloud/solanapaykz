@@ -16,7 +16,7 @@ import { readJson, sendJson } from './http.js';
 import { t } from './i18n.js';
 import type { Quoter } from './invoices.js';
 import { createNotifier } from './notify.js';
-import type { AccountProbe } from './recipient.js';
+import { feeWalletProblems, type AccountProbe } from './recipient.js';
 import { handleActions } from './routes-actions.js';
 import { handleMerchant, type MerchantDeps } from './routes-merchant.js';
 import { handlePublic } from './routes-public.js';
@@ -80,6 +80,11 @@ export function createLinksApp(o: LinksAppOptions): LinksApp {
     ...(o.links.telegram ? { botUsername: o.links.telegram.botUsername } : {}),
   };
 
+  if (ov.startDetector !== false) {
+    feeWalletProblems(probe, o.cluster, o.links.feeWallet)
+      .then((problems) => { for (const p of problems) o.log.warn(`links: ${p}`, { feeWallet: o.links.feeWallet }); })
+      .catch((e: unknown) => o.log.warn('links: fee wallet check failed', { message: (e as Error).message }));
+  }
   const stopDetector = ov.startDetector === false ? () => {} : startDetector({
     store, rpc: ov.rpc ?? createRpc(o.rpcUrl), cluster: o.cluster, feeWallet: o.links.feeWallet, now, log: o.log,
     onEvent: createNotifier({ store, publicUrl: o.publicUrl, sendMail, ...(sendTelegram ? { sendTelegram } : {}) }),

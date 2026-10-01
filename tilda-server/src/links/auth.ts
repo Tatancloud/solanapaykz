@@ -7,6 +7,9 @@ export const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const CODE_TTL_MS = 10 * 60 * 1000;
 const CODE_RESEND_MS = 60 * 1000;
 const MAX_ATTEMPTS = 5;
+/** Codes per email per window; wrong attempts also carry over within the window. */
+const MAX_SENDS = 5;
+const SEND_WINDOW_MS = 60 * 60 * 1000;
 
 export interface AuthDeps {
   store: LinksStore;
@@ -36,8 +39,11 @@ export async function startEmailLogin(d: AuthDeps, rawEmail: unknown, lang: Lang
   const now = d.now();
   const existing = d.store.getEmailCode(email);
   if (existing && now - existing.createdAt < CODE_RESEND_MS) return { ok: false, error: 'too_soon' };
+  if (existing && existing.sends >= MAX_SENDS && now - existing.windowStart < SEND_WINDOW_MS) {
+    return { ok: false, error: 'too_soon' };
+  }
   const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
-  d.store.putEmailCode(email, hashCode(d.pepper, email, code), now, now + CODE_TTL_MS);
+  d.store.putEmailCode(email, hashCode(d.pepper, email, code), now, now + CODE_TTL_MS, SEND_WINDOW_MS);
   await d.sendCode(email, code, lang);
   return { ok: true };
 }

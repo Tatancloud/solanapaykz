@@ -7,6 +7,7 @@ import { loadLinksConfig } from '../../src/links/config.js';
 import { activeQuote, createInvoiceFor } from '../../src/links/invoices.js';
 import { buildPaymentTransaction } from '../../src/links/tx.js';
 import { createRpc, detectOnce } from '../../src/links/detect.js';
+import { generateReference } from '@solanapaykz/core';
 
 const secret = process.env.DEVNET_PAYER_SECRET;
 const RPC = process.env.DEVNET_RPC ?? 'https://api.devnet.solana.com';
@@ -17,8 +18,20 @@ describe.skipIf(!secret)('devnet: pay an invoice in SOL and detect it', () => {
     const payer = await createKeyPairSignerFromBytes(getBase58Encoder().encode(secret!));
     const merchant = address('9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM');
     const store = openLinksStore(':memory:');
-    // Fee wallet = the payer's own (already existing) account: lamports sent to a new account below rent-exemption fail.
-    const links = loadLinksConfig({ feeWallet: payer.address, sessionPepper: 'pepper-pepper-pepper' });
+    // A fresh fee wallet, funded above rent-exemption first: a fee below that minimum to a new account fails on-chain,
+    // and using the payer as the fee wallet makes its balance delta negative (the split check then says mismatch).
+    const feeWallet = address(generateReference());
+    const fund = await buildPaymentTransaction({ cluster: 'devnet', token: 'SOL', buyer: payer.address, merchant: feeWallet,
+      feeWallet, merchantUnits: 2_000_000n, feeUnits: 0n, reference: generateReference(), memo: 'fund fee wallet',
+      blockhash: (await rpc.getLatestBlockhash().send()).value });
+    const fundSigned = await signTransaction([payer.keyPair], getTransactionDecoder().decode(getBase64Encoder().encode(fund)));
+    const fundSig = await rpc.sendTransaction(getBase64EncodedWireTransaction(fundSigned), { encoding: 'base64' }).send();
+    for (let i = 0; i < 20; i++) {
+      const st = (await rpc.getSignatureStatuses([fundSig]).send()).value[0];
+      if (st?.confirmationStatus === 'confirmed' || st?.confirmationStatus === 'finalized') break;
+      await new Promise((ok) => setTimeout(ok, 1500));
+    }
+    const links = loadLinksConfig({ feeWallet, sessionPepper: 'pepper-pepper-pepper' });
     const deps = { store, links, cluster: 'devnet' as const, now: () => Date.now(),
       quoter: { quote: async () => ({ amountToken: '0.001', rate: '1', rateSource: 'test' }) } };
     const m = store.createMerchant({ email: 'it@test', walletLogin: null, lang: 'en', now: Date.now() });

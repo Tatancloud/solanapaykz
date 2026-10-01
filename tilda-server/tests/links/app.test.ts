@@ -8,11 +8,12 @@ import { loadLinksConfig } from '../../src/links/config.js';
 import http from 'node:http';
 
 const R = '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM';
+const FEE = '6UnyHquRaHTjq3XjvmXyhWeeRHA5eHQgyCKmW6rP8XC2';
 let app: LinksApp; let server: Server; let base: string; const codes: string[] = [];
 
 beforeEach(async () => {
   app = createLinksApp({
-    links: loadLinksConfig({ feeWallet: R, sessionPepper: 'pepper-pepper-pepper' }), cluster: 'devnet',
+    links: loadLinksConfig({ feeWallet: FEE, sessionPepper: 'pepper-pepper-pepper' }), cluster: 'devnet',
     rpcUrl: 'https://api.devnet.solana.com', publicUrl: 'https://pay.test', databasePath: ':memory:',
     smtp: { host: 'smtp.test', port: 465, user: 'u', pass: 'p', from: 'noreply@pay.test' },
     log: { info: () => {}, warn: () => {} },

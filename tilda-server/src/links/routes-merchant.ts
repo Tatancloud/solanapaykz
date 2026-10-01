@@ -156,7 +156,7 @@ export async function handleMerchant(req: IncomingMessage, res: ServerResponse, 
   if (method === 'PUT' && path === '/api/merchant/settings') {
     let recipient: string | undefined;
     if (b.recipient !== undefined && b.recipient !== merchant.recipient) {
-      const c = await checkRecipient(d.probe, d.cluster, b.recipient);
+      const c = await checkRecipient(d.probe, d.cluster, b.recipient, [d.feeWallet]);
       if (!c.ok) { sendJson(res, 400, c); return true; }
       recipient = c.address;
     }

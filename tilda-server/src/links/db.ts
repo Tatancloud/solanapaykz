@@ -40,8 +40,10 @@ export interface LinksStore {
   findMerchantByTelegram(chatId: string): Merchant | null;
   updateMerchant(id: number, patch: MerchantPatch): void;
 
-  putEmailCode(email: string, codeHash: string, createdAt: number, expiresAt: number): void;
-  getEmailCode(email: string): { codeHash: string; createdAt: number; expiresAt: number; attempts: number } | null;
+  /** Stores a new code. Attempts and the send counter carry over until `windowMs` after the first send. */
+  putEmailCode(email: string, codeHash: string, createdAt: number, expiresAt: number, windowMs: number): void;
+  getEmailCode(email: string): { codeHash: string; createdAt: number; expiresAt: number; attempts: number;
+    sends: number; windowStart: number } | null;
   bumpEmailCodeAttempts(email: string): void;
   deleteEmailCode(email: string): void;
   putNonce(nonce: string, expiresAt: number): void;
@@ -62,17 +64,21 @@ export interface LinksStore {
   insertQuote(q: NewQuote): QuoteRow;
   latestQuote(invoiceId: string): QuoteRow | null;
   quotesForInvoice(invoiceId: string): QuoteRow[];
-  activeManualUnits(merchantId: number, token: Token, now: number): bigint[];
+  /** Manual amounts of quotes the detector may still match for this receiving wallet and token. */
+  manualUnitsInUse(recipient: string, token: Token, since: number): bigint[];
 
   addFeeEntry(e: { merchantId: number; token: Token; amount: bigint; invoiceId: string | null;
     txSignature: string | null; createdAt: number }): void;
   feeDebt(merchantId: number, token: Token): bigint;
   createRepayment(r: { merchantId: number; token: Token; units: bigint; reference: string; createdAt: number }): Repayment;
   getRepayment(id: number): Repayment | null;
-  pendingRepayments(): Repayment[];
+  pendingRepayments(since: number): Repayment[];
   markRepaymentPaid(id: number, txSignature: string): void;
 
-  markProcessed(signature: string): boolean;
+  markProcessed(key: string): boolean;
+  isProcessed(key: string): boolean;
+  /** Runs fn inside one SQLite transaction. */
+  atomic<T>(fn: () => T): T;
   getCheckpoint(key: string): string | null;
   setCheckpoint(key: string, signature: string): void;
   close(): void;
@@ -88,7 +94,8 @@ CREATE TABLE IF NOT EXISTS lk_merchants (
 );
 CREATE TABLE IF NOT EXISTS lk_email_codes (
   email TEXT PRIMARY KEY, code_hash TEXT NOT NULL, created_at INTEGER NOT NULL,
-  expires_at INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0
+  expires_at INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
+  sends INTEGER NOT NULL DEFAULT 1, window_start INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS lk_nonces (nonce TEXT PRIMARY KEY, expires_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS lk_sessions (
@@ -189,15 +196,21 @@ export function openLinksStore(path: string): LinksStore {
       }
     },
 
-    putEmailCode(email, codeHash, createdAt, expiresAt) {
-      run(`INSERT INTO lk_email_codes (email, code_hash, created_at, expires_at, attempts) VALUES (?, ?, ?, ?, 0)
+    putEmailCode(email, codeHash, createdAt, expiresAt, windowMs) {
+      const cur = store.getEmailCode(email);
+      const fresh = !cur || cur.windowStart <= createdAt - windowMs;
+      run(`INSERT INTO lk_email_codes (email, code_hash, created_at, expires_at, attempts, sends, window_start)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(email) DO UPDATE SET code_hash = excluded.code_hash, created_at = excluded.created_at,
-           expires_at = excluded.expires_at, attempts = 0`, email, codeHash, createdAt, expiresAt);
+           expires_at = excluded.expires_at, attempts = excluded.attempts, sends = excluded.sends,
+           window_start = excluded.window_start`,
+        email, codeHash, createdAt, expiresAt, fresh ? 0 : cur.attempts, fresh ? 1 : cur.sends + 1,
+        fresh ? createdAt : cur.windowStart);
     },
     getEmailCode(email) {
       const r = one('SELECT * FROM lk_email_codes WHERE email = ?', email);
       return r ? { codeHash: String(r.code_hash), createdAt: Number(r.created_at), expiresAt: Number(r.expires_at),
-        attempts: Number(r.attempts) } : null;
+        attempts: Number(r.attempts), sends: Number(r.sends), windowStart: Number(r.window_start) } : null;
     },
     bumpEmailCodeAttempts(email) { run('UPDATE lk_email_codes SET attempts = attempts + 1 WHERE email = ?', email); },
     deleteEmailCode(email) { run('DELETE FROM lk_email_codes WHERE email = ?', email); },
@@ -235,8 +248,10 @@ export function openLinksStore(path: string): LinksStore {
         .map(invoiceFrom);
     },
     candidateInvoices(now, lateWindowMs) {
+      const since = now - lateWindowMs;
       return all(`SELECT * FROM lk_invoices WHERE state = 'open'
-                  OR (state IN ('expired', 'paid', 'needs_review') AND created_at > ?)`, now - lateWindowMs)
+                  OR (state = 'expired' AND expires_at > ?)
+                  OR (state IN ('paid', 'needs_review') AND COALESCE(paid_at, created_at) > ?)`, since, since)
         .map(invoiceFrom);
     },
     updateInvoice(id, u) {
@@ -264,9 +279,9 @@ export function openLinksStore(path: string): LinksStore {
     quotesForInvoice(invoiceId) {
       return all('SELECT * FROM lk_quotes WHERE invoice_id = ? ORDER BY created_at, id', invoiceId).map(quoteFrom);
     },
-    activeManualUnits(merchantId, token, now) {
+    manualUnitsInUse(recipient, token, since) {
       return all(`SELECT q.manual_units FROM lk_quotes q JOIN lk_invoices i ON i.id = q.invoice_id
-                  WHERE i.merchant_id = ? AND i.token = ? AND q.expires_at > ?`, merchantId, token, now)
+                  WHERE i.recipient = ? AND i.token = ? AND q.expires_at > ?`, recipient, token, since)
         .map((r) => BigInt(r.manual_units as string));
     },
 
@@ -284,11 +299,18 @@ export function openLinksStore(path: string): LinksStore {
       return store.getRepayment(Number(res.lastInsertRowid))!;
     },
     getRepayment(id) { const r = one('SELECT * FROM lk_repayments WHERE id = ?', id); return r ? repaymentFrom(r) : null; },
-    pendingRepayments() { return all(`SELECT * FROM lk_repayments WHERE state = 'pending'`).map(repaymentFrom); },
+    pendingRepayments(since) {
+      return all(`SELECT * FROM lk_repayments WHERE state = 'pending' AND created_at > ?`, since).map(repaymentFrom);
+    },
     markRepaymentPaid(id, sig) { run(`UPDATE lk_repayments SET state = 'paid', tx_signature = ? WHERE id = ?`, sig, id); },
 
-    markProcessed(signature) {
-      return Number(run('INSERT OR IGNORE INTO lk_processed (signature) VALUES (?)', signature).changes) === 1;
+    isProcessed(key) { return one('SELECT 1 AS x FROM lk_processed WHERE signature = ?', key) !== undefined; },
+    atomic(fn) {
+      db.exec('BEGIN');
+      try { const r = fn(); db.exec('COMMIT'); return r; } catch (e) { db.exec('ROLLBACK'); throw e; }
+    },
+    markProcessed(key) {
+      return Number(run('INSERT OR IGNORE INTO lk_processed (signature) VALUES (?)', key).changes) === 1;
     },
     getCheckpoint(key) { const r = one('SELECT signature FROM lk_checkpoints WHERE key = ?', key); return r ? String(r.signature) : null; },
     setCheckpoint(key, signature) {
