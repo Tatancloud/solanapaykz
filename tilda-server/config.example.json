@@ -51,5 +51,15 @@
   "trustedProxyAddresses": ["127.0.0.1", "::1", "::ffff:127.0.0.1", "172.21.0.1"],
 
   "_комментарий_вебхук": "Запасной вход POST /tilda/webhook — обычный вебхук ФОРМЫ Tilda, без подписи (см. README, «Ограничения запасного входа»). Нужен, только если платёжная интеграция ещё не одобрена Tilda или недоступна и вместо неё используется обычная форма на сайте. По умолчанию выключен — не держите открытым лишний неподписанный вход, если им не пользуетесь.",
-  "enableFormWebhook": false
+  "enableFormWebhook": false,
+  "_comment_links": "Chat payment links (hackathon 2026). Remove this whole section to run only the Tilda server. Replace every <...> placeholder; the telegram block is optional.",
+  "links": {
+    "feeWallet": "<SERVICE_FEE_WALLET_ADDRESS>",
+    "feeBps": 50,
+    "invoiceTtlDays": 7,
+    "debtLimit": { "USDC": "20", "SOL": "0.15" },
+    "sessionPepper": "<32+ random characters>",
+    "iconUrl": "/assets/icon.png",
+    "telegram": { "botToken": "<BOT_TOKEN>", "botUsername": "<bot_username>", "webhookSecret": "<32+ random characters>" }
+  }
 }
