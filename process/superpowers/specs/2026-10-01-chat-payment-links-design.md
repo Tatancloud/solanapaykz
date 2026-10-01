@@ -58,7 +58,9 @@ National Bank's unified QR accepts crypto wallets with conversion through AIFC e
 
 Decisions:
 - The product lets merchants enter **their own receiving wallets** (as designed). No partner settlement in the MVP.
-- The hackathon demo on mainnet uses a **team-owned test merchant** only; no real sales to Kazakhstan merchants.
+- The hackathon demo on mainnet uses a team-owned test merchant plus up to two **pilot merchants recruited by the
+  team**. The team is responsible for the pilots' legal standing under the rules above (merchants outside Kazakhstan
+  or test purchases without a real sale are the low-risk options).
 - The submission states this openly. The roadmap's first item is **finding a licensed AIFC partner** to accept
   SOL/USDC on Solana and settle merchants in tenge, aligned with the unified-QR model.
 
@@ -229,7 +231,7 @@ English. Dashboard: merchant `lang`. Bot: merchant `lang`, initially from Telegr
 | 6 | Solana Actions / Blink | Same invoice paid as a Blink |
 | 7 | dashboard list, CSV, fee repayment | Merchant dashboard |
 | 8 | Telegram bot (cut first if behind) | Invoice from the bot |
-| 9 | mainnet config, deploy to solanapaykz.site, team test merchant, real transactions | Explorer links |
+| 9 | mainnet config, deploy to solanapaykz.site, team test merchant + pilot merchants, real transactions | Explorer links |
 | 10–11 | English README + prior-work disclosure + legal note + roadmap, pitch, 3-min video | Submission materials |
 | 12 | buffer, submit before 23:59 PT | Submitted |
 
