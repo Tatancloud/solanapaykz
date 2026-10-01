@@ -70,7 +70,9 @@ Without the `links` section the server runs only the Tilda integration, as befor
 
 - No private keys anywhere: not the merchant's, not the buyer's, not the service's (the fee wallet is a public address).
   The server only builds unsigned transactions for the buyer's wallet to sign.
-- Email codes: 6 digits, stored hashed, valid 10 minutes, 5 attempts, one new code per minute.
+- Email codes: 6 digits, stored hashed, valid 10 minutes; one new code per minute and at most 5 per hour; the 5 wrong
+  attempts are counted per hour, not per code, so requesting a new code does not reset them.
+- Client IP for rate limits: `CF-Connecting-IP`, else the last `X-Forwarded-For` entry added by the local proxy.
 - Wallet sign-in: single-use nonce valid 5 minutes, bound to the host; ed25519 signature verified on the server.
 - Sessions: random IDs in an httpOnly, Secure, SameSite=Lax cookie, 30 days. Dashboard changes require a CSRF header.
 - Rate limits on sign-in (10/min per IP) and transaction building (30/min per IP).
