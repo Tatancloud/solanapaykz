@@ -423,3 +423,10 @@ JSON-объект с `amount` внутри (и ещё `orderid`, `products`, `de
 сервер и принять от него уведомление. Он не подключается к серверу как
 библиотека Tilda — это независимая реализация протокола для тестов (см.
 `tests/e2e.test.ts`).
+
+## Chat payment links (English)
+
+This server also hosts the multi-merchant **chat payment links** subsystem (`src/links/`): merchants sign in at `/m`,
+create KZT-priced Solana payment links for WhatsApp/Instagram/Telegram, buyers pay in one tap, manually from an exchange,
+or as a Blink, with a 0.5% on-chain fee. It is enabled by the optional `links` section of `config.json`
+(see `config.example.json`) and documented in [`../docs/links.md`](../docs/links.md).
