@@ -50,3 +50,59 @@ export function invoicePage(v: InvoiceView): string {
 export function notFoundPage(lang: Lang): string {
   return layout(lang, t(lang, 'not_found'), `<h1>${esc(t(lang, 'not_found'))}</h1>`);
 }
+export function loginPage(lang: Lang): string {
+  return layout(lang, t(lang, 'sign_in'), `${langSwitch('/m', lang)}<h1>${esc(t(lang, 'sign_in'))}</h1>
+<form id="lk-email" data-start="/api/auth/email/start" data-verify="/api/auth/email/verify" data-lang="${lang}">
+<label>${esc(t(lang, 'email'))}<input name="email" type="email" required autocomplete="email"></label>
+<button type="submit">${esc(t(lang, 'send_code'))}</button>
+<label hidden>${esc(t(lang, 'code'))}<input name="code" inputmode="numeric" pattern="\\d{6}"></label>
+<button type="button" id="lk-verify" hidden>${esc(t(lang, 'verify'))}</button></form>
+<p>${esc(t(lang, 'or'))}</p><button type="button" id="lk-wallet">${esc(t(lang, 'sign_in_wallet'))}</button>
+<p id="lk-msg" class="lk-hint"></p>`, ['/assets/dashboard.js']);
+}
+
+function nav(lang: Lang): string {
+  return `<nav><a href="/m">${esc(t(lang, 'new_invoice'))}</a><a href="/m/invoices">${esc(t(lang, 'invoices'))}</a>
+<a href="/m/settings">${esc(t(lang, 'settings'))}</a></nav>`;
+}
+
+export function dashboardPage(m: Merchant, csrf: string, debts: { token: string; amount: string }[]): string {
+  const lang = m.lang;
+  const debt = debts.filter((x) => x.amount !== '0').map((x) =>
+    `<p class="lk-warn">${esc(t(lang, 'fee_debt', { amount: x.amount, token: x.token }))}
+ <button type="button" data-repay="${x.token}">${esc(t(lang, 'repay'))}</button></p>`).join('');
+  return layout(lang, t(lang, 'new_invoice'), `<div data-csrf="${esc(csrf)}" id="lk-session"></div>${nav(lang)}
+${m.recipient ? '' : `<p class="lk-warn">${esc(t(lang, 'err_no_recipient'))}</p>`}${debt}
+<h1>${esc(t(lang, 'new_invoice'))}</h1><form id="lk-new">
+<label>${esc(t(lang, 'amount_kzt'))}, ₸<input name="amountKzt" inputmode="decimal" required></label>
+<label>${esc(t(lang, 'description'))}<input name="description" maxlength="140"></label>
+<label>Token<select name="token"><option>USDC</option><option>SOL</option></select></label>
+<button type="submit">${esc(t(lang, 'create'))}</button></form>
+<div id="lk-result" hidden><code id="lk-url"></code> <button type="button" id="lk-share">${esc(t(lang, 'share'))}</button></div>
+<p id="lk-msg" class="lk-hint"></p>`, ['/assets/dashboard.js']);
+}
+
+export function invoicesPage(m: Merchant, csrf: string, invoices: Invoice[], explorer: (sig: string) => string): string {
+  const lang = m.lang;
+  const rows = invoices.map((i) => `<tr id="${esc(i.id)}"><td>${new Date(i.createdAt).toISOString().slice(0, 16).replace('T', ' ')}</td>
+<td>${esc(i.amountKzt)} ₸</td><td>${esc(i.description)}</td><td class="lk-${i.state}">${esc(t(lang, `status_${i.state}` as Key))}
+${i.reviewReason ? ` (${esc(i.reviewReason)})` : ''}</td>
+<td>${i.txSignature ? `<a href="${esc(explorer(i.txSignature))}" rel="noopener">tx</a>` : `<a href="/i/${esc(i.id)}">link</a>`}</td></tr>`).join('');
+  return layout(lang, t(lang, 'invoices'), `<div data-csrf="${esc(csrf)}" id="lk-session"></div>${nav(lang)}
+<h1>${esc(t(lang, 'invoices'))}</h1><p><a href="/m/invoices.csv">${esc(t(lang, 'export_csv'))}</a></p>
+<table><tbody>${rows}</tbody></table>`, ['/assets/dashboard.js']);
+}
+
+export function settingsPage(m: Merchant, csrf: string, hasBot: boolean): string {
+  const lang = m.lang;
+  return layout(lang, t(lang, 'settings'), `<div data-csrf="${esc(csrf)}" id="lk-session"></div>${nav(lang)}
+<h1>${esc(t(lang, 'settings'))}</h1><form id="lk-settings">
+<label>${esc(t(lang, 'receiving_wallet'))}<input name="recipient" value="${esc(m.recipient ?? '')}" autocomplete="off" spellcheck="false"></label>
+<label>${esc(t(lang, 'shop_name'))}<input name="name" maxlength="80" value="${esc(m.name)}"></label>
+<label>${esc(t(lang, 'language'))}<select name="lang"><option value="en"${lang === 'en' ? ' selected' : ''}>English</option>
+<option value="ru"${lang === 'ru' ? ' selected' : ''}>Русский</option></select></label>
+<button type="submit">${esc(t(lang, 'save'))}</button></form>
+${hasBot ? `<p><button type="button" id="lk-tg">${esc(t(lang, 'link_telegram'))}</button></p>` : ''}
+<form method="post" action="/api/auth/logout"><button type="submit">${esc(t(lang, 'sign_out'))}</button></form>
+<p id="lk-msg" class="lk-hint" data-saved="${esc(t(lang, 'saved'))}"></p>`, ['/assets/dashboard.js']);
+}
