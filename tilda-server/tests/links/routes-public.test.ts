@@ -44,7 +44,7 @@ describe('public invoice routes', () => {
     const res = await fetch(`${base}/i/${invoiceId}?lang=en`);
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain('5000');
+    expect(html).toContain('5\u202F000'); // KZT amount, grouped by thousands
     expect(html).toContain('10.87');
     expect(html).toContain('Shop &lt;A&gt;');
     expect(html).toContain('<svg');

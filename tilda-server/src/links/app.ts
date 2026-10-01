@@ -1,5 +1,5 @@
 // tilda-server/src/links/app.ts
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -29,6 +29,8 @@ export interface LinksAppOptions {
   rpcUrl: string;
   publicUrl: string;
   databasePath: string;
+  /** Config `trustedProxyAddresses`: peers whose X-Forwarded-For is trusted for rate limits. */
+  trustedProxies?: readonly string[];
   smtp: { host: string; port: number; user: string; pass: string; from: string };
   log: { info(m: string, f?: object): void; warn(m: string, f?: object): void };
   overrides?: Partial<{
@@ -45,7 +47,12 @@ const ASSETS: Record<string, string> = {
   '/assets/dashboard.js': 'text/javascript; charset=utf-8',
   '/assets/link.css': 'text/css; charset=utf-8',
   '/assets/icon.png': 'image/png',
+  '/assets/logo.svg': 'image/svg+xml',
+  '/assets/favicon-32.png': 'image/png',
+  '/assets/apple-touch-icon.png': 'image/png',
 };
+// Self-hosted fonts (the page CSP is default-src 'self'): only the .woff2 files shipped in public/fonts.
+for (const f of readdirSync(join(PUBLIC_DIR, 'fonts'))) if (f.endsWith('.woff2')) ASSETS[`/assets/fonts/${f}`] = 'font/woff2';
 
 export function createLinksApp(o: LinksAppOptions): LinksApp {
   const ov = o.overrides ?? {};
@@ -77,6 +84,7 @@ export function createLinksApp(o: LinksAppOptions): LinksApp {
     store, links: o.links, cluster: o.cluster, now, quoter, publicUrl: o.publicUrl, feeWallet: o.links.feeWallet,
     latestBlockhash, txLimiter: createRateLimiter(30, 60_000), auth, probe, host: new URL(o.publicUrl).host,
     authLimiter: createRateLimiter(10, 60_000),
+    ...(o.trustedProxies ? { trustedProxies: o.trustedProxies } : {}),
     ...(o.links.telegram ? { botUsername: o.links.telegram.botUsername } : {}),
   };
 
@@ -95,7 +103,8 @@ export function createLinksApp(o: LinksAppOptions): LinksApp {
       const url = new URL(req.url ?? '/', 'http://localhost');
       const type = ASSETS[url.pathname];
       if (type && req.method === 'GET') {
-        res.writeHead(200, { 'content-type': type, 'cache-control': 'public, max-age=300' });
+        const maxAge = type === 'font/woff2' ? 31536000 : 300;
+        res.writeHead(200, { 'content-type': type, 'cache-control': `public, max-age=${maxAge}` });
         res.end(readFileSync(join(PUBLIC_DIR, url.pathname.slice('/assets/'.length))));
         return true;
       }

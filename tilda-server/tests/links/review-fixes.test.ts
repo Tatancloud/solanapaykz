@@ -244,3 +244,33 @@ describe('manual scan load: no transaction fetches for history older than the ol
     expect(w.f.fetched.filter((s) => s.startsWith('old'))).toEqual([]);
   });
 });
+
+describe('deploy: behind docker-proxy the peer is the bridge gateway, not loopback', () => {
+  const req = (remoteAddress: string, headers: Record<string, string>) =>
+    ({ socket: { remoteAddress }, headers } as unknown as IncomingMessage);
+  it('trusts X-Forwarded-For from a configured proxy address', () => {
+    const r = req('172.30.81.1', { 'x-forwarded-for': '6.6.6.6, 203.0.113.9' });
+    expect(clientIp(r, ['127.0.0.1', '172.30.81.1'])).toBe('203.0.113.9');
+    expect(clientIp(r)).toBe('172.30.81.1');
+  });
+});
+
+describe('pages: KZT amount formatting', () => {
+  it('groups thousands and uses the language decimal separator', async () => {
+    const { formatKzt } = await import('../../src/links/pages.js');
+    expect(formatKzt('5000', 'en')).toBe('5\u202F000');
+    expect(formatKzt('1250000.5', 'ru')).toBe('1\u202F250\u202F000,50');
+    expect(formatKzt('999.00', 'en')).toBe('999');
+    expect(formatKzt('18500.25', 'en')).toBe('18\u202F500.25');
+  });
+});
+
+describe('pages: fee debt notice', () => {
+  it('hides zero debts however they are formatted and trims trailing zeros', async () => {
+    const { dashboardPage } = await import('../../src/links/pages.js');
+    const m = { id: 1, email: 'a@b.c', walletLogin: null, lang: 'en', name: 'Shop', recipient: 'R', telegramChatId: null, createdAt: 0 } as never;
+    const html = dashboardPage(m, 'csrf', [{ token: 'USDC', amount: '0.420000' }, { token: 'SOL', amount: '0.000000000' }]);
+    expect(html).toContain('0.42 USDC');
+    expect(html).not.toContain('data-repay="SOL"');
+  });
+});

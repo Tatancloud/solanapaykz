@@ -293,7 +293,7 @@ export async function запуститьСервер(): Promise<{ server: http.S
   const client = создатьКлиент(config);
   const links = сырыеСсылки === undefined ? undefined : createLinksApp({
     links: loadLinksConfig(сырыеСсылки), cluster: config.cluster, rpcUrl: config.rpcUrl, publicUrl: config.publicUrl,
-    databasePath: config.databasePath, smtp: config.smtp, log,
+    databasePath: config.databasePath, smtp: config.smtp, log, trustedProxies: config.trustedProxyAddresses,
   });
 
   const server = createServer({ config, store, client, log, ...(links ? { links } : {}) });

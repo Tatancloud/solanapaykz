@@ -74,7 +74,7 @@ export async function handleMerchant(req: IncomingMessage, res: ServerResponse, 
 
   // --- auth endpoints ---
   if (path.startsWith('/api/auth/') && method === 'POST') {
-    if (!d.authLimiter.allow(clientIp(req), now)) { sendJson(res, 429, { error: 'too_many' }); return true; }
+    if (!d.authLimiter.allow(clientIp(req, d.trustedProxies), now)) { sendJson(res, 429, { error: 'too_many' }); return true; }
     if (path === '/api/auth/logout') {
       const s = readSession(d.auth, req.headers.cookie);
       if (s) d.store.deleteSession(s.id);

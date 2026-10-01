@@ -20,12 +20,16 @@ export async function readJson(req: IncomingMessage): Promise<Record<string, unk
   return v as Record<string, unknown>;
 }
 
-/** Remote address; behind the local nginx the first X-Forwarded-For entry is the client. */
-export function clientIp(req: IncomingMessage): string {
+const LOOPBACK = ['127.0.0.1', '::1', '::ffff:127.0.0.1'];
+
+/**
+ * Client address for rate limits. Forwarding headers are trusted only when the peer is one of `trustedProxies`
+ * (config `trustedProxyAddresses`; in Docker the peer is the bridge gateway, not loopback).
+ */
+export function clientIp(req: IncomingMessage, trustedProxies: readonly string[] = LOOPBACK): string {
   const remote = req.socket.remoteAddress ?? '';
-  const local = remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1';
   const fwd = req.headers['x-forwarded-for'];
-  if (!local) return remote;
+  if (!trustedProxies.includes(remote)) return remote;
   // Behind Cloudflare the edge sets CF-Connecting-IP; otherwise our proxy appended the real peer as the LAST
   // X-Forwarded-For entry. Earlier entries come from the client and can be forged.
   const cf = req.headers['cf-connecting-ip'];

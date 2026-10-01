@@ -1,3 +1,5 @@
+<p><img src="docs/brand/logo-lockup.svg" alt="SolanaPay-KZ" width="376" height="64"></p>
+
 # SolanaPay-KZ
 
 [English version](README.md) · [Документация](https://tatancloud.github.io/solanapaykz/ru/)
