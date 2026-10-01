@@ -56,6 +56,18 @@ export const en = {
   err_is_fee_wallet: 'This is the service fee wallet. Paste your own wallet address.',
   err_no_usdc_account: 'This wallet has no USDC account yet. Receive any amount of USDC to it once, then try again.',
   err_generic: 'Something went wrong. Try again.',
+  err_invalid_email: 'Enter a valid email address.',
+  err_too_soon: 'A code was just sent. Wait a minute before asking for a new one (up to 5 codes an hour).',
+  err_invalid: 'Wrong code. Check the latest email and try again.',
+  err_expired: 'The code has expired. Ask for a new one.',
+  err_locked: 'Too many wrong attempts. Try again in an hour.',
+  err_too_many: 'Too many requests. Wait a minute and try again.',
+  err_nonce: 'The sign-in request expired. Sign in with your wallet again.',
+  err_signature: 'The wallet signature did not match. Try again.',
+  err_csrf: 'Your session changed. Reload the page and try again.',
+  err_unauthorized: 'Sign in again.',
+  err_name: 'The shop name can be up to 80 characters.',
+  err_no_debt: 'There is no fee to pay.',
   bot_linked: 'Telegram linked. Create invoices with /invoice 5000 Description',
   bot_help: 'Commands: /invoice <amount in KZT> <description>, /list',
   bot_unknown: 'Link this chat first: open Settings in the dashboard and press "Link Telegram bot".',
@@ -121,6 +133,18 @@ export const ru: Dict = {
   err_is_fee_wallet: 'Это кошелёк комиссии сервиса. Вставьте адрес своего кошелька.',
   err_no_usdc_account: 'У этого кошелька ещё нет счёта USDC. Получите на него любую сумму USDC один раз и повторите.',
   err_generic: 'Что-то пошло не так. Попробуйте ещё раз.',
+  err_invalid_email: 'Введите корректный email.',
+  err_too_soon: 'Код только что отправлен. Подождите минуту, прежде чем запрашивать новый (не больше 5 кодов в час).',
+  err_invalid: 'Неверный код. Проверьте последнее письмо и попробуйте ещё раз.',
+  err_expired: 'Срок кода истёк. Запросите новый.',
+  err_locked: 'Слишком много неверных попыток. Попробуйте через час.',
+  err_too_many: 'Слишком много запросов. Подождите минуту и попробуйте снова.',
+  err_nonce: 'Запрос на вход устарел. Войдите кошельком ещё раз.',
+  err_signature: 'Подпись кошелька не совпала. Попробуйте ещё раз.',
+  err_csrf: 'Сессия изменилась. Обновите страницу и повторите.',
+  err_unauthorized: 'Войдите снова.',
+  err_name: 'Название магазина — не длиннее 80 символов.',
+  err_no_debt: 'Долга по комиссии нет.',
   bot_linked: 'Telegram привязан. Создавайте счета командой /invoice 5000 Описание',
   bot_help: 'Команды: /invoice <сумма в тенге> <описание>, /list',
   bot_unknown: 'Сначала привяжите чат: откройте «Настройки» в кабинете и нажмите «Привязать Telegram-бота».',
@@ -132,6 +156,12 @@ const DICTS: Record<Lang, Dict> = { en, ru };
 
 export function t(lang: Lang, key: Key, vars: Record<string, string> = {}): string {
   return DICTS[lang][key].replace(/\{(\w+)\}/g, (m, name: string) => vars[name] ?? m);
+}
+
+/** Human-readable text for an API error code; unknown codes get the generic message. */
+export function errorMessage(lang: Lang, code: string): string {
+  const key = `err_${code}`;
+  return key in DICTS[lang] ? DICTS[lang][key as Key] : DICTS[lang].err_generic;
 }
 
 export function pickLang(query: string | null, acceptLanguage: string | undefined): Lang {

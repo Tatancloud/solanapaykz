@@ -6,6 +6,7 @@ import { clearSessionCookie, createSessionFor, randomToken, readSession, startEm
 import type { Invoice, Lang, Token } from './db.js';
 import { clientIp, readJson, sendHtml, sendJson } from './http.js';
 import { createInvoiceFor } from './invoices.js';
+import { errorMessage, pickLang } from './i18n.js';
 import { dashboardPage, invoicesPage, loginPage, settingsPage } from './pages.js';
 import type { RateLimiter } from './ratelimit.js';
 import { checkRecipient, saveSettings, type AccountProbe } from './recipient.js';
@@ -41,6 +42,11 @@ function explorer(cluster: 'mainnet' | 'devnet'): (sig: string) => string {
 
 function langOf(v: unknown): Lang { return v === 'ru' ? 'ru' : 'en'; }
 
+/** Error response with the machine code plus a sentence the dashboard shows as is. */
+function fail(res: ServerResponse, status: number, lang: Lang, body: { error: string }): void {
+  sendJson(res, status, { ...body, message: errorMessage(lang, body.error) });
+}
+
 async function body(req: IncomingMessage, res: ServerResponse): Promise<Record<string, unknown> | null> {
   try { return await readJson(req); } catch { sendJson(res, 400, { error: 'invalid_json' }); return null; }
 }
@@ -74,7 +80,9 @@ export async function handleMerchant(req: IncomingMessage, res: ServerResponse, 
 
   // --- auth endpoints ---
   if (path.startsWith('/api/auth/') && method === 'POST') {
-    if (!d.authLimiter.allow(clientIp(req, d.trustedProxies), now)) { sendJson(res, 429, { error: 'too_many' }); return true; }
+    if (!d.authLimiter.allow(clientIp(req, d.trustedProxies), now)) {
+      fail(res, 429, pickLang(url.searchParams.get('lang'), req.headers['accept-language']), { error: 'too_many' }); return true;
+    }
     if (path === '/api/auth/logout') {
       const s = readSession(d.auth, req.headers.cookie);
       if (s) d.store.deleteSession(s.id);
@@ -84,12 +92,12 @@ export async function handleMerchant(req: IncomingMessage, res: ServerResponse, 
     const b = await body(req, res); if (!b) return true;
     if (path === '/api/auth/email/start') {
       const r = await startEmailLogin(d.auth, b.email, langOf(b.lang));
-      sendJson(res, r.ok ? 200 : 400, r);
+      if (r.ok) sendJson(res, 200, r); else fail(res, 400, langOf(b.lang), r);
       return true;
     }
     if (path === '/api/auth/email/verify') {
       const r = verifyEmailLogin(d.auth, b.email, b.code, langOf(b.lang));
-      if (r.ok) signedIn(res, d, r.merchantId); else sendJson(res, 400, r);
+      if (r.ok) signedIn(res, d, r.merchantId); else fail(res, 400, langOf(b.lang), r);
       return true;
     }
     if (path === '/api/auth/wallet/nonce') {
@@ -99,7 +107,7 @@ export async function handleMerchant(req: IncomingMessage, res: ServerResponse, 
     }
     if (path === '/api/auth/wallet/verify') {
       const r = verifyWalletSignIn(d.store, now, { host: d.host, address: b.address, nonce: b.nonce, signature: b.signature, lang: langOf(b.lang) });
-      if (r.ok) signedIn(res, d, r.merchantId); else sendJson(res, 400, r);
+      if (r.ok) signedIn(res, d, r.merchantId); else fail(res, 400, langOf(b.lang), r);
       return true;
     }
     return false;
@@ -144,12 +152,12 @@ export async function handleMerchant(req: IncomingMessage, res: ServerResponse, 
     return true;
   }
 
-  if (req.headers['x-csrf-token'] !== session.csrf) { sendJson(res, 403, { error: 'csrf' }); return true; }
+  if (req.headers['x-csrf-token'] !== session.csrf) { fail(res, 403, merchant.lang, { error: 'csrf' }); return true; }
   const b = await body(req, res); if (!b) return true;
 
   if (method === 'POST' && path === '/api/merchant/invoices') {
     const r = createInvoiceFor(d, merchant, { amountKzt: b.amountKzt, description: b.description, token: b.token }, 'link');
-    if (!r.ok) sendJson(res, 400, r);
+    if (!r.ok) fail(res, 400, merchant.lang, r);
     else sendJson(res, 200, { id: r.invoice.id, url: `${d.publicUrl}/i/${r.invoice.id}` });
     return true;
   }
@@ -157,17 +165,17 @@ export async function handleMerchant(req: IncomingMessage, res: ServerResponse, 
     let recipient: string | undefined;
     if (b.recipient !== undefined && b.recipient !== merchant.recipient) {
       const c = await checkRecipient(d.probe, d.cluster, b.recipient, [d.feeWallet]);
-      if (!c.ok) { sendJson(res, 400, c); return true; }
+      if (!c.ok) { fail(res, 400, merchant.lang, c); return true; }
       recipient = c.address;
     }
     const r = saveSettings(d.store, merchant.id, { recipient, name: b.name, lang: b.lang });
-    sendJson(res, r.ok ? 200 : 400, r);
+    if (r.ok) sendJson(res, 200, r); else fail(res, 400, merchant.lang, r);
     return true;
   }
   if (method === 'POST' && path === '/api/merchant/fees/repay') {
     const token: Token = b.token === 'SOL' ? 'SOL' : 'USDC';
     const units = d.store.feeDebt(merchant.id, token);
-    if (units <= 0n) { sendJson(res, 400, { error: 'no_debt' }); return true; }
+    if (units <= 0n) { fail(res, 400, merchant.lang, { error: 'no_debt' }); return true; }
     const r = d.store.createRepayment({ merchantId: merchant.id, token, units, reference: generateReference(), createdAt: now });
     sendJson(res, 200, { url: `solana:${d.publicUrl}/api/fees/${r.id}` });
     return true;
