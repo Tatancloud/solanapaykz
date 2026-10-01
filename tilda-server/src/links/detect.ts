@@ -36,7 +36,8 @@ function mintOf(d: DetectDeps, token: Invoice['token']): string | null {
 function record(d: DetectDeps, invoice: Invoice, quote: QuoteRow, signature: string, tx: ParsedTx,
   verdict: 'ok' | 'mismatch', mode: 'request' | 'manual'): PaymentEvent {
   const current = d.store.getInvoice(invoice.id)!;
-  const paidAtMs = (tx.blockTime ?? Math.floor(d.now() / 1000)) * 1000;
+  // Number(): @solana/kit returns blockTime as a bigint.
+  const paidAtMs = (tx.blockTime == null ? Math.floor(d.now() / 1000) : Number(tx.blockTime)) * 1000;
   let state: 'paid' | 'needs_review' = 'paid';
   let reason: string | null = null;
   if (current.state === 'paid' || current.state === 'needs_review') { state = 'needs_review'; reason = 'duplicate'; }
@@ -80,10 +81,11 @@ async function scanManual(d: DetectDeps, recipient: string, token: Invoice['toke
   const watched = token === 'SOL' ? recipient : await usdcAccountOf(d.cluster, recipient);
   const checkpointKey = `manual:${watched}`;
   const until = d.store.getCheckpoint(checkpointKey);
-  const oldestSec = Math.floor(Math.min(...invoices.map((i) => i.createdAt)) / 1000);
+  // A payment cannot predate its invoice; 60 s of slack for server vs. chain clock skew.
+  const oldestSec = Math.floor(Math.min(...invoices.map((i) => i.createdAt)) / 1000) - 60;
 
   // Page back to the checkpoint, or past the oldest candidate invoice when there is none yet.
-  const list: { signature: string; err: unknown }[] = [];
+  const list: { signature: string; err: unknown; blockTime?: number | null }[] = [];
   let complete = false;
   let before: string | undefined;
   for (let page = 0; page < MAX_PAGES; page++) {
@@ -101,6 +103,7 @@ async function scanManual(d: DetectDeps, recipient: string, token: Invoice['toke
   for (const s of [...list].reverse()) {
     const key = `man:${s.signature}`;
     if (s.err !== null || d.store.isProcessed(key)) continue;
+    if (s.blockTime != null && s.blockTime < oldestSec) continue;
     const tx = await d.rpc.transaction(s.signature);
     if (!tx) { complete = false; continue; }
     // A wallet payment carries a quote reference; the request scan owns it.
@@ -203,7 +206,8 @@ export function createRpc(rpcUrl: string): DetectRpc {
       const tx = await rpc.getTransaction(signature as Signature, {
         encoding: 'jsonParsed', maxSupportedTransactionVersion: 0, commitment: 'confirmed',
       }).send();
-      return (tx as unknown as ParsedTx | null) ?? null;
+      if (!tx) return null;
+      return { ...(tx as unknown as ParsedTx), blockTime: tx.blockTime === null ? null : Number(tx.blockTime) };
     },
   };
 }

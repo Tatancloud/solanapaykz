@@ -33,6 +33,8 @@ function tokenTx(blockTime: number, merchantGot: bigint, feeGot: bigint, extraKe
 function fakeRpc() {
   const sigs = new Map<string, string[]>();
   const txs = new Map<string, ParsedTx | null>();
+  const times = new Map<string, number>();
+  const fetched: string[] = [];
   let failFor: string | null = null;
   const rpc: DetectRpc = {
     async signaturesFor(addr, opts) {
@@ -42,13 +44,18 @@ function fakeRpc() {
       if (opts.before) start = all.indexOf(opts.before) + 1;
       let end = all.length;
       if (opts.until) { const u = all.indexOf(opts.until); if (u >= 0) end = u; }
-      return all.slice(start, Math.min(end, start + opts.limit)).map((signature) => ({ signature, err: null }));
+      return all.slice(start, Math.min(end, start + opts.limit))
+        .map((signature) => ({ signature, err: null, ...(times.has(signature) ? { blockTime: times.get(signature)! } : {}) }));
     },
-    async transaction(s) { return txs.get(s) ?? null; },
+    async transaction(s) { fetched.push(s); return txs.get(s) ?? null; },
   };
   return {
     rpc,
-    add(addr: string, sig: string, tx: ParsedTx | null) { sigs.set(addr, [sig, ...(sigs.get(addr) ?? [])]); txs.set(sig, tx); },
+    fetched,
+    add(addr: string, sig: string, tx: ParsedTx | null, blockTime?: number) {
+      sigs.set(addr, [sig, ...(sigs.get(addr) ?? [])]); txs.set(sig, tx);
+      if (blockTime !== undefined) times.set(sig, blockTime);
+    },
     setTx(sig: string, tx: ParsedTx) { txs.set(sig, tx); },
     failOn(addr: string | null) { failFor = addr; },
   };
@@ -211,5 +218,29 @@ describe('I7: fee wallet checks', () => {
   it('reports a fee wallet without a USDC account', async () => {
     expect(await feeWalletProblems({ exists: async () => false }, 'devnet', FEE)).toEqual(['fee wallet has no USDC account']);
     expect(await feeWalletProblems({ exists: async () => true }, 'devnet', FEE)).toEqual([]);
+  });
+});
+
+describe('RPC numbers: @solana/kit returns blockTime as a bigint', () => {
+  it('still credits the payment', async () => {
+    const w = await world();
+    const { invoice, quote } = await w.make('Shirt');
+    const tx = tokenTx(w.sec(), quote.merchantUnits, quote.feeUnits, [quote.reference]);
+    w.f.add(quote.reference, 'sigA', { ...tx, blockTime: BigInt(w.sec()) as unknown as number });
+    expect(await detectOnce(w.d)).toEqual({ errors: 0 });
+    expect(w.store.getInvoice(invoice.id)!.state).toBe('paid');
+  });
+});
+
+describe('manual scan load: no transaction fetches for history older than the oldest candidate invoice', () => {
+  it('skips old signatures on the first scan of a busy wallet', async () => {
+    const w = await world();
+    const old = w.sec() - 3600;
+    for (let i = 0; i < 30; i++) w.f.add(w.merchantAta, `old${i}`, tokenTx(old, 1n, 0n), old);
+    const { invoice, quote } = await w.make('Shirt');
+    w.f.add(w.merchantAta, 'sigM', tokenTx(w.sec(), quote.manualUnits, 0n), w.sec());
+    await detectOnce(w.d);
+    expect(w.store.getInvoice(invoice.id)!.state).toBe('paid');
+    expect(w.f.fetched.filter((s) => s.startsWith('old'))).toEqual([]);
   });
 });

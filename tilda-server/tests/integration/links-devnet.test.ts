@@ -48,7 +48,7 @@ describe.skipIf(!secret)('devnet: pay an invoice in SOL and detect it', () => {
     for (let i = 0; i < 20 && store.getInvoice(r.invoice.id)!.state === 'open'; i++) {
       await new Promise((ok) => setTimeout(ok, 3000));
       await detectOnce({ store, rpc: createRpc(RPC), cluster: 'devnet', feeWallet: links.feeWallet, now: () => Date.now(),
-        onEvent: async (e) => { events.push(e.kind); }, log: { warn: () => {} } });
+        onEvent: async (e) => { events.push(e.kind); }, log: { warn: (m, f) => console.warn(m, f) } });
     }
     expect(store.getInvoice(r.invoice.id)!.state).toBe('paid');
     expect(events).toEqual(['paid']);
