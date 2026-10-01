@@ -52,6 +52,9 @@ describe('links app', () => {
     expect(html).toContain('Payment links in tenge');
     expect(html).toContain('href="/m"');
     expect(html).toContain('seed phrase');
+    // English by default even for a Russian browser; Russian only via the switch (?lang=ru)
+    const ruBrowser = await (await fetch(`${base}/`, { headers: { 'accept-language': 'ru-RU,ru;q=0.9' } })).text();
+    expect(ruBrowser).toContain('Payment links in tenge');
     const ru = await (await fetch(`${base}/?lang=ru`)).text();
     expect(ru).toContain('Платёжные ссылки в тенге');
     expect(ru).toContain('href="/m?lang=ru"');

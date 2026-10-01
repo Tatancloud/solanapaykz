@@ -13,7 +13,7 @@ import type { LinksConfig } from './config.js';
 import { openLinksStore } from './db.js';
 import { createRpc, startDetector, type DetectRpc } from './detect.js';
 import { readJson, sendHtml, sendJson } from './http.js';
-import { pickLang, t } from './i18n.js';
+import { t } from './i18n.js';
 import { landingPage } from './landing.js';
 import type { Quoter } from './invoices.js';
 import { createNotifier } from './notify.js';
@@ -110,7 +110,8 @@ export function createLinksApp(o: LinksAppOptions): LinksApp {
         return true;
       }
       if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) {
-        sendHtml(res, 200, landingPage(pickLang(url.searchParams.get('lang'), req.headers['accept-language'])));
+        // The landing is English by default (owner's decision); Russian only via the language switch.
+        sendHtml(res, 200, landingPage(url.searchParams.get('lang') === 'ru' ? 'ru' : 'en'));
         return true;
       }
       const tg = o.links.telegram;
