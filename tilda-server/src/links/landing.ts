@@ -5,6 +5,8 @@ import { formatKzt, langSwitch, layout } from './pages.js';
 
 const REPO = 'https://github.com/Tatancloud/solanapaykz';
 const DOCS = 'https://tatancloud.github.io/solanapaykz/';
+const RELEASE = 'https://github.com/Tatancloud/solanapaykz/releases/tag/v0.1.0';
+const NPM = 'https://www.npmjs.com/package/@solanapaykz/core';
 
 const COPY = {
   en: {
@@ -35,9 +37,19 @@ const COPY = {
     ],
     statusTitle: 'Status',
     status: 'This site runs on Solana devnet with test tokens for the Colosseum hackathon. Kazakhstan does not allow crypto-assets as payment for goods; the legal route is conversion to tenge through a licensed provider. We are looking for a licensed AIFC partner before accepting real payments here.',
-    tildaTitle: 'Shops on Tilda',
-    tilda: 'This server also accepts USDC and SOL for Tilda shops through the Tilda payment integration.',
-    tildaLink: 'Tilda setup guide',
+    integrationsTitle: 'Other ways to accept payment',
+    integrations: [
+      { title: 'WordPress / WooCommerce',
+        text: 'A payment method for WordPress/WooCommerce: the buyer sees the order amount in tenge (KZT), and pays in USDC or SOL via a QR code straight from their own wallet. Money goes directly to the merchant\u2019s wallet \u2014 the plugin never receives it, never holds it, and can\u2019t hold it.',
+        links: [['Plugin guide', 'woocommerce'], ['Download v0.1.0', RELEASE], ['Live demo shop', 'https://shop.pagafox.kz']] },
+      { title: 'SDK for developers',
+        text: '@solanapaykz/core is a TypeScript package for accepting USDC/SOL payments on the Solana network, with automatic conversion from tenge (KZT) at the current exchange rate. It works in both Node.js 20.18+ and the browser and covers three steps of accepting a payment: quote, payment request, and verification.',
+        code: 'npm install @solanapaykz/core',
+        links: [['Library guide', 'sdk'], ['npm', NPM]] },
+      { title: 'Shops on Tilda',
+        text: 'Accepts payment in USDC or SOL on Solana for an order placed on a site built on the Tilda platform, converting the amount from tenge (KZT). Money goes directly from the buyer\u2019s wallet to the merchant\u2019s wallet \u2014 the server never holds it or forwards it.',
+        links: [['Tilda setup guide', 'tilda']] },
+    ],
     source: 'Source code',
     docs: 'Documentation',
     licence: 'MIT licence',
@@ -70,9 +82,19 @@ const COPY = {
     ],
     statusTitle: 'Статус',
     status: 'Сайт работает в тестовой сети Solana devnet на тестовых токенах для хакатона Colosseum. В Казахстане оплата товаров криптоактивами запрещена; законный путь — конвертация в тенге через лицензированного провайдера. Прежде чем принимать здесь реальные платежи, мы ищем лицензированного партнёра МФЦА.',
-    tildaTitle: 'Магазины на Tilda',
-    tilda: 'Этот сервер также принимает USDC и SOL для магазинов на Tilda через платёжную интеграцию Tilda.',
-    tildaLink: 'Инструкция для Tilda',
+    integrationsTitle: 'Другие способы принимать оплату',
+    integrations: [
+      { title: 'WordPress / WooCommerce',
+        text: 'Способ оплаты для WordPress/WooCommerce: покупатель видит сумму заказа в тенге, платит в USDC или SOL по QR-коду прямо со своего кошелька. Деньги идут напрямую на кошелёк продавца \u2014 плагин их не получает, не удерживает и не может удержать.',
+        links: [['Инструкция по плагину', 'ru/woocommerce'], ['Скачать v0.1.0', RELEASE], ['Демо-магазин', 'https://shop.pagafox.kz']] },
+      { title: 'SDK для разработчиков',
+        text: '@solanapaykz/core \u2014 пакет на TypeScript для приёма платежей в USDC/SOL сети Solana с автоматической конвертацией из тенге по текущему курсу. Работает и в Node.js 20.18+, и в браузере и закрывает три шага приёма платежа: котировка, платёжный запрос и проверка.',
+        code: 'npm install @solanapaykz/core',
+        links: [['Описание библиотеки', 'ru/sdk'], ['npm', NPM]] },
+      { title: 'Магазины на Tilda',
+        text: 'Принимает оплату в USDC или SOL на Solana за заказ, оформленный на сайте на платформе Tilda, с пересчётом суммы из тенге. Деньги идут напрямую с кошелька покупателя на кошелёк продавца \u2014 сервер их не хранит и не пересылает.',
+        links: [['Инструкция для Tilda', 'ru/tilda']] },
+    ],
     source: 'Исходный код',
     docs: 'Документация',
     licence: 'Лицензия MIT',
@@ -93,6 +115,10 @@ export function landingPage(lang: Lang): string {
 <p class="lk-status">${esc(c.waiting)}</p><span class="lk-btn">${esc(c.openWallet)}</span></div></figure>`;
 
   const steps = c.steps.map(([h, p]) => `<li><h3>${esc(h)}</h3><p>${esc(p)}</p></li>`).join('');
+  // Links are either absolute URLs or paths inside the documentation site.
+  const href = (l: string) => (l.startsWith('https://') ? l : DOCS + l);
+  const integrations = c.integrations.map((it) => `<article class="lk-card lp-int"><h3>${esc(it.title)}</h3><p>${esc(it.text)}</p>
+${'code' in it ? `<code class="lp-code">${esc(it.code)}</code>` : ''}<p class="lp-links">${it.links.map(([label, l]) => `<a href="${esc(href(l))}">${esc(label)}</a>`).join('')}</p></article>`).join('');
   const facts = c.facts.map(([h, p]) => `<div><dt>${esc(h)}</dt><dd>${esc(p)}</dd></div>`).join('');
 
   const body = `<section class="lp-hero"><div class="lp-copy"><h1>${esc(c.h1)}</h1><p class="lp-lead">${esc(c.lead)}</p>
@@ -101,7 +127,7 @@ ${example}</section>
 <section class="lk-card lp-section" id="how"><h2>${esc(c.stepsTitle)}</h2><ol class="lp-steps">${steps}</ol></section>
 <section class="lk-card lp-section"><h2>${esc(c.factsTitle)}</h2><dl class="lp-facts">${facts}</dl></section>
 <section class="lp-note"><h2>${esc(c.statusTitle)}</h2><p>${esc(c.status)}</p></section>
-<section class="lp-tilda"><h2>${esc(c.tildaTitle)}</h2><p>${esc(c.tilda)} <a href="${DOCS}tilda">${esc(c.tildaLink)}</a></p></section>
+<section class="lp-integrations"><h2>${esc(c.integrationsTitle)}</h2><div class="lp-cards">${integrations}</div></section>
 <footer class="lp-foot"><a href="${REPO}">${esc(c.source)}</a><a href="${DOCS}">${esc(c.docs)}</a><span>${esc(c.licence)}</span></footer>`;
 
   return layout(lang, c.title, body, [], top).replace('<main class="lk">', '<main class="lk lp">');

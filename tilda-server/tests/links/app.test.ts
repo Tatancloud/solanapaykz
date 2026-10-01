@@ -59,6 +59,11 @@ describe('links app', () => {
     expect(ru).toContain('Платёжные ссылки в тенге');
     expect(ru).toContain('href="/m?lang=ru"');
     expect(ru).toContain('seed-фразу');
+    // Integration blocks, in order: WooCommerce, SDK, Tilda
+    const order = ['WordPress / WooCommerce', 'npm install @solanapaykz/core', 'Shops on Tilda'].map((s) => html.indexOf(s));
+    expect(order.every((i) => i > 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(ru).toContain('tatancloud.github.io/solanapaykz/ru/woocommerce');
   });
 
   it('serves the brand mark, favicon and touch icon', async () => {
