@@ -70,7 +70,7 @@ a { color: var(--sky) }
 .lk-top { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; max-width: 760px; margin: 0 auto; padding: 18px 16px 0 }
 .lk-top-pay { max-width: 472px }
 .lk-brand { display: inline-flex; align-items: center; gap: 9px; font: 700 15px/1 var(--f-display); letter-spacing: -0.01em; color: var(--ink); margin-right: auto }
-.lk-mark { width: 22px; height: 22px; border-radius: 50%; background: conic-gradient(from 210deg, var(--sun) 0 25%, var(--sky) 0 100%); flex: none }
+.lk-mark { width: 24px; height: 24px; display: block; flex: none }
 .lk-lang { font-size: 14px; color: var(--muted); text-decoration: none; padding: 6px 2px }
 .lk-lang:hover { color: var(--sky) }
 .lk-nav { display: flex; flex-wrap: wrap; gap: 4px }

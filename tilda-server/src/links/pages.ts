@@ -3,13 +3,14 @@ import { экранироватьHtml as esc } from '../http/html.js';
 import type { Invoice, Lang, Merchant } from './db.js';
 import { t, type Key } from './i18n.js';
 
-const BRAND = `<span class="lk-brand"><span class="lk-mark" aria-hidden="true"></span>SolanaPay-KZ</span>`;
+const BRAND = `<span class="lk-brand"><img class="lk-mark" src="/assets/logo.svg" alt="" width="24" height="24">SolanaPay-KZ</span>`;
 
 export function layout(lang: Lang, title: string, body: string, scripts: string[] = [], top = ''): string {
   return `<!doctype html><html lang="${lang}"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(title)}</title>
 <link rel="preload" href="/assets/fonts/unbounded-latin-700-normal.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="/assets/link.css"></head><body>${top}<main class="lk">${body}</main>
+<link rel="icon" href="/assets/logo.svg" type="image/svg+xml"><link rel="icon" href="/assets/favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="/assets/apple-touch-icon.png"><link rel="stylesheet" href="/assets/link.css"></head><body>${top}<main class="lk">${body}</main>
 ${scripts.map((s) => `<script src="${s}" defer></script>`).join('')}</body></html>`;
 }
 

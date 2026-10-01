@@ -47,6 +47,9 @@ const ASSETS: Record<string, string> = {
   '/assets/dashboard.js': 'text/javascript; charset=utf-8',
   '/assets/link.css': 'text/css; charset=utf-8',
   '/assets/icon.png': 'image/png',
+  '/assets/logo.svg': 'image/svg+xml',
+  '/assets/favicon-32.png': 'image/png',
+  '/assets/apple-touch-icon.png': 'image/png',
 };
 // Self-hosted fonts (the page CSP is default-src 'self'): only the .woff2 files shipped in public/fonts.
 for (const f of readdirSync(join(PUBLIC_DIR, 'fonts'))) if (f.endsWith('.woff2')) ASSETS[`/assets/fonts/${f}`] = 'font/woff2';

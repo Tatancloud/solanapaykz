@@ -45,6 +45,15 @@ describe('links app', () => {
     expect((await fetch(`${base}/assets/link.js`)).status).toBe(200);
   });
 
+  it('serves the brand mark, favicon and touch icon', async () => {
+    const svg = await fetch(`${base}/assets/logo.svg`);
+    expect(svg.status).toBe(200);
+    expect(svg.headers.get('content-type')).toBe('image/svg+xml');
+    expect((await fetch(`${base}/assets/favicon-32.png`)).headers.get('content-type')).toBe('image/png');
+    expect((await fetch(`${base}/assets/apple-touch-icon.png`)).headers.get('content-type')).toBe('image/png');
+    expect(await (await fetch(`${base}/m`)).text()).toContain('rel="icon" href="/assets/logo.svg"');
+  });
+
   it('serves bundled fonts and nothing else under /assets/fonts', async () => {
     const font = await fetch(`${base}/assets/fonts/golos-text-latin-400-normal.woff2`);
     expect(font.status).toBe(200);
