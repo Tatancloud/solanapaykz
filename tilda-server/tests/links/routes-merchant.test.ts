@@ -1,6 +1,8 @@
 // tilda-server/tests/links/routes-merchant.test.ts
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { generateReference } from '@solanapaykz/core';
+import { generateKeyPairSync, sign } from 'node:crypto';
+import { getAddressDecoder, getBase58Decoder } from '@solana/kit';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { openLinksStore } from '../../src/links/db.js';
@@ -135,5 +137,50 @@ describe('error messages people can read', () => {
     const s = await signIn('c@shop.kz');
     const r = await (await call('/api/merchant/invoices', s, 'POST', { amountKzt: '5000' })).json() as { message: string };
     expect(r.message).toBe('Add your receiving wallet in Settings first.');
+  });
+});
+
+function testWallet() {
+  const { publicKey, privateKey } = generateKeyPairSync('ed25519');
+  const address = getAddressDecoder().decode(Buffer.from(publicKey.export({ format: 'jwk' }).x!, 'base64url'));
+  return { address, signB58: (text: string) => getBase58Decoder().decode(sign(null, Buffer.from(text, 'utf8'), privateKey)) };
+}
+
+async function signedNonce(w: ReturnType<typeof testWallet>) {
+  const n = await (await fetch(`${base}/api/auth/wallet/nonce`, { method: 'POST', body: '{}' })).json() as { nonce: string; message: string };
+  return { address: w.address, nonce: n.nonce, signature: w.signB58(n.message) };
+}
+
+describe('sign-in wallet linked to an email account', () => {
+  it('links a wallet in settings; signing in with it opens the same account', async () => {
+    const s = await signIn('a@shop.kz');
+    const w = testWallet();
+    expect((await call('/api/merchant/wallet-login', s, 'POST', await signedNonce(w))).status).toBe(200);
+    expect(await (await call('/m/settings', s)).text()).toContain(w.address.slice(0, 4));
+    const login = await fetch(`${base}/api/auth/wallet/verify`, { method: 'POST', body: JSON.stringify({ ...(await signedNonce(w)), lang: 'en' }) });
+    expect(login.status).toBe(200);
+    const cookie = login.headers.get('set-cookie')!.split(';')[0]!;
+    const { csrf } = await login.json() as { csrf: string };
+    const page = await (await call('/m/settings', { cookie, csrf })).text();
+    expect(page).toContain(w.address.slice(0, 4));
+    expect(d.store.findMerchantByEmail('a@shop.kz')!.walletLogin).toBe(w.address);
+  });
+
+  it('refuses a wallet that signs in to another account, and requires CSRF', async () => {
+    const w = testWallet();
+    expect((await fetch(`${base}/api/auth/wallet/verify`, { method: 'POST', body: JSON.stringify({ ...(await signedNonce(w)), lang: 'en' }) })).status).toBe(200);
+    const s = await signIn('b@shop.kz');
+    const taken = await (await call('/api/merchant/wallet-login', s, 'POST', await signedNonce(w))).json() as { error: string; message: string };
+    expect(taken.error).toBe('wallet_taken');
+    expect(taken.message).toMatch(/another/i);
+    const noCsrf = await fetch(`${base}/api/merchant/wallet-login`, { method: 'POST', headers: { cookie: s.cookie }, body: JSON.stringify(await signedNonce(testWallet())) });
+    expect(noCsrf.status).toBe(403);
+  });
+
+  it('sign-in page offers "Open in Phantom" and a translated no-wallet message', async () => {
+    const ru = await (await fetch(`${base}/m?lang=ru`)).text();
+    expect(ru).toContain('id="lk-phantom"');
+    expect(ru).toContain('Открыть в Phantom');
+    expect(ru).toMatch(/data-no-wallet="[^"]*кошел/);
   });
 });

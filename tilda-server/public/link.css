@@ -151,6 +151,9 @@ input.lk-mono { font-family: var(--f-mono); font-size: 14px }
 .lk-result { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 12px; border-radius: 12px; background: var(--sky-soft) }
 .lk-result code { font: 500 14px/1.4 var(--f-mono); overflow-wrap: anywhere }
 .lk-signout { margin: 0; border-top: 1px solid var(--line); padding-top: 8px }
+.lk-walletlogin { display: grid; gap: 10px; border-top: 1px solid var(--line); padding-top: 16px }
+.lk-walletlogin h2 { margin: 0; font: 600 18px/1.3 var(--f-ui) }
+.lk-walletlogin .lk-btn { width: auto; justify-self: start }
 
 /* notices */
 .lk-notice { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: space-between; padding: 14px 16px;

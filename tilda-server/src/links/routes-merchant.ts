@@ -12,7 +12,7 @@ import type { RateLimiter } from './ratelimit.js';
 import { checkRecipient, saveSettings, type AccountProbe } from './recipient.js';
 import type { PublicDeps } from './routes-public.js';
 import { buildPaymentTransaction } from './tx.js';
-import { issueNonce, signInMessage, verifyWalletSignIn } from './wallet-auth.js';
+import { issueNonce, linkWalletLogin, signInMessage, verifyWalletSignIn } from './wallet-auth.js';
 
 export interface MerchantDeps extends PublicDeps {
   auth: AuthDeps;
@@ -178,6 +178,11 @@ export async function handleMerchant(req: IncomingMessage, res: ServerResponse, 
     if (units <= 0n) { fail(res, 400, merchant.lang, { error: 'no_debt' }); return true; }
     const r = d.store.createRepayment({ merchantId: merchant.id, token, units, reference: generateReference(), createdAt: now });
     sendJson(res, 200, { url: `solana:${d.publicUrl}/api/fees/${r.id}` });
+    return true;
+  }
+  if (method === 'POST' && path === '/api/merchant/wallet-login') {
+    const r = linkWalletLogin(d.store, now, merchant.id, { host: d.host, address: b.address, nonce: b.nonce, signature: b.signature });
+    if (r.ok) sendJson(res, 200, r); else fail(res, 400, merchant.lang, r);
     return true;
   }
   if (method === 'POST' && path === '/api/merchant/telegram-link') {

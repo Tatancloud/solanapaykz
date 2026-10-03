@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { generateKeyPairSync, sign } from 'node:crypto';
 import { getAddressDecoder, getBase58Decoder } from '@solana/kit';
 import { openLinksStore } from '../../src/links/db.js';
-import { issueNonce, signInMessage, verifyEd25519, verifyWalletSignIn } from '../../src/links/wallet-auth.js';
+import { issueNonce, linkWalletLogin, signInMessage, verifyEd25519, verifyWalletSignIn } from '../../src/links/wallet-auth.js';
 
 function wallet() {
   const { publicKey, privateKey } = generateKeyPairSync('ed25519');
@@ -50,5 +50,33 @@ describe('wallet sign-in', () => {
     const n3 = issueNonce(store, 0);
     expect(verifyWalletSignIn(store, 1, { ...ok, nonce: n3,
       signature: w.signB58(signInMessage('evil.test', n3)) })).toEqual({ ok: false, error: 'signature' });
+  });
+});
+
+describe('linking a sign-in wallet to an existing account', () => {
+  it('links, then wallet sign-in opens the same (email) account', () => {
+    const store = openLinksStore(':memory:');
+    const m = store.createMerchant({ email: 'a@shop.kz', walletLogin: null, lang: 'en', now: 1 });
+    const w = wallet();
+    const n = issueNonce(store, 1000);
+    expect(linkWalletLogin(store, 2000, m.id, { host: 'pay.test', address: w.address, nonce: n,
+      signature: w.signB58(signInMessage('pay.test', n)) })).toEqual({ ok: true });
+    const n2 = issueNonce(store, 3000);
+    expect(verifyWalletSignIn(store, 4000, { host: 'pay.test', address: w.address, nonce: n2,
+      signature: w.signB58(signInMessage('pay.test', n2)), lang: 'en' })).toEqual({ ok: true, merchantId: m.id });
+  });
+
+  it('refuses a wallet that already signs in to another account, and a bad signature', () => {
+    const store = openLinksStore(':memory:');
+    const w = wallet();
+    const other = store.createMerchant({ email: null, walletLogin: w.address, lang: 'en', now: 1 });
+    const m = store.createMerchant({ email: 'b@shop.kz', walletLogin: null, lang: 'en', now: 1 });
+    const n = issueNonce(store, 1000);
+    expect(linkWalletLogin(store, 2000, m.id, { host: 'pay.test', address: w.address, nonce: n,
+      signature: w.signB58(signInMessage('pay.test', n)) })).toEqual({ ok: false, error: 'wallet_taken' });
+    expect(store.getMerchant(other.id)!.walletLogin).toBe(w.address);
+    const n2 = issueNonce(store, 3000);
+    expect(linkWalletLogin(store, 4000, m.id, { host: 'pay.test', address: w.address, nonce: n2,
+      signature: w.signB58('something else') })).toEqual({ ok: false, error: 'signature' });
   });
 });
