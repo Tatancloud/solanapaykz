@@ -86,7 +86,8 @@ export function loginPage(lang: Lang): string {
 <button type="submit" class="lk-btn">${esc(t(lang, 'send_code'))}</button>
 <label hidden>${esc(t(lang, 'code'))}<input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="\\d{6}"></label>
 <button type="button" class="lk-btn" id="lk-verify" hidden>${esc(t(lang, 'verify'))}</button></form>
-<p class="lk-or"><span>${esc(t(lang, 'or'))}</span></p><button type="button" class="lk-btn lk-btn-2" id="lk-wallet">${esc(t(lang, 'sign_in_wallet'))}</button>
+<p class="lk-or"><span>${esc(t(lang, 'or'))}</span></p><button type="button" class="lk-btn lk-btn-2" id="lk-wallet" data-no-wallet="${esc(t(lang, 'no_wallet'))}">${esc(t(lang, 'sign_in_wallet'))}</button>
+<a class="lk-btn lk-btn-2" id="lk-phantom" hidden>${esc(t(lang, 'open_in_phantom'))}</a>
 <p id="lk-msg" class="lk-hint" role="status"></p></section>`, ['/assets/dashboard.js'],
     `<header class="lk-top">${BRAND}${langSwitch('/m', lang)}</header>`);
 }
@@ -139,6 +140,12 @@ export function settingsPage(m: Merchant, csrf: string, hasBot: boolean): string
 <option value="ru"${lang === 'ru' ? ' selected' : ''}>Русский</option></select></label>
 <button type="submit" class="lk-btn">${esc(t(lang, 'save'))}</button></form>
 <p id="lk-msg" class="lk-hint" role="status" data-saved="${esc(t(lang, 'saved'))}"></p>
+<div class="lk-walletlogin"><h2>${esc(t(lang, 'wallet_login_title'))}</h2>
+<p class="lk-hint">${m.walletLogin
+    ? esc(t(lang, 'wallet_login_current', { address: `${m.walletLogin.slice(0, 4)}…${m.walletLogin.slice(-4)}` }))
+    : esc(t(lang, 'wallet_login_none'))}</p>
+<button type="button" class="lk-btn lk-btn-2" id="lk-link-wallet" data-no-wallet="${esc(t(lang, 'no_wallet'))}" data-linked="${esc(t(lang, 'wallet_linked'))}">${esc(t(lang, m.walletLogin ? 'relink_wallet' : 'link_wallet'))}</button>
+<a class="lk-btn lk-btn-2" id="lk-phantom" hidden>${esc(t(lang, 'open_in_phantom'))}</a></div>
 ${hasBot ? `<p><button type="button" class="lk-btn lk-btn-2" id="lk-tg">${esc(t(lang, 'link_telegram'))}</button></p>` : ''}
 <form method="post" action="/api/auth/logout" class="lk-signout"><button type="submit" class="lk-link">${esc(t(lang, 'sign_out'))}</button></form></section>`,
   ['/assets/dashboard.js'], merchantTop(lang, 'settings'));

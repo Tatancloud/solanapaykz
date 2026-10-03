@@ -15,6 +15,25 @@
     for (const b of bytes) { if (b !== 0) break; s = '1' + s; } return s;
   };
 
+  // No wallet in this browser (usually a phone browser): offer to reopen this page inside the Phantom app.
+  const offerPhantom = () => {
+    const a = $('#lk-phantom');
+    if (!a) return;
+    a.href = 'https://phantom.app/ul/browse/' + encodeURIComponent(location.href) + '?ref=' + encodeURIComponent(location.origin);
+    a.hidden = false;
+  };
+  // Signs the server's one-time sign-in message with the browser wallet; null when there is no wallet or the user cancels.
+  const walletSign = async (button) => {
+    const w = window.phantom?.solana || window.solflare || window.solana;
+    if (!w) { msg(button.dataset.noWallet); offerPhantom(); return null; }
+    try {
+      const { publicKey } = await w.connect();
+      const n = await api('/api/auth/wallet/nonce', 'POST', {});
+      const signed = await w.signMessage(new TextEncoder().encode(n.data.message), 'utf8');
+      return { address: publicKey.toString(), nonce: n.data.nonce, signature: b58(signed.signature || signed) };
+    } catch (e) { msg((e && e.message) || 'error'); return null; }
+  };
+
   const emailForm = $('#lk-email');
   if (emailForm) {
     const lang = emailForm.dataset.lang;
@@ -29,13 +48,9 @@
       if (r.status === 200) location.href = '/m'; else msg(r.data.message || r.data.error || 'error');
     });
     $('#lk-wallet').addEventListener('click', async () => {
-      const w = window.phantom?.solana || window.solflare || window.solana;
-      if (!w) return msg('Install Phantom or Solflare, or open this page in the wallet browser.');
-      const { publicKey } = await w.connect();
-      const n = await api('/api/auth/wallet/nonce', 'POST', {});
-      const signed = await w.signMessage(new TextEncoder().encode(n.data.message), 'utf8');
-      const sig = signed.signature || signed;
-      const r = await api('/api/auth/wallet/verify', 'POST', { address: publicKey.toString(), nonce: n.data.nonce, signature: b58(sig), lang });
+      const s = await walletSign($('#lk-wallet'));
+      if (!s) return;
+      const r = await api('/api/auth/wallet/verify', 'POST', { ...s, lang });
       if (r.status === 200) location.href = '/m'; else msg(r.data.message || r.data.error || 'error');
     });
   }
@@ -62,6 +77,16 @@
     e.preventDefault();
     const r = await api('/api/merchant/settings', 'PUT', { recipient: settings.recipient.value.trim(), name: settings.name.value, lang: settings.lang.value });
     msg(r.status === 200 ? $('#lk-msg').dataset.saved : (r.data.message || r.data.error || 'error'));
+  });
+
+  const linkWallet = $('#lk-link-wallet');
+  if (linkWallet) linkWallet.addEventListener('click', async () => {
+    const s = await walletSign(linkWallet);
+    if (!s) return;
+    const r = await api('/api/merchant/wallet-login', 'POST', s);
+    if (r.status !== 200) return msg(r.data.message || r.data.error || 'error');
+    msg(linkWallet.dataset.linked);
+    setTimeout(() => location.reload(), 1200);
   });
 
   const tg = $('#lk-tg');

@@ -29,18 +29,39 @@ export function verifyEd25519(addressB58: string, message: Uint8Array, signature
   }
 }
 
-export function verifyWalletSignIn(
-  store: LinksStore,
-  now: number,
-  p: { host: string; address: unknown; nonce: unknown; signature: unknown; lang: Lang },
-): { ok: true; merchantId: number } | { ok: false; error: 'bad_request' | 'nonce' | 'signature' } {
+type SignedNonce = { host: string; address: unknown; nonce: unknown; signature: unknown };
+
+/** Checks a signed sign-in message: the nonce is single-use and bound to this host. */
+function checkSignedNonce(store: LinksStore, now: number, p: SignedNonce):
+  { ok: true; address: string } | { ok: false; error: 'bad_request' | 'nonce' | 'signature' } {
   if (typeof p.address !== 'string' || typeof p.nonce !== 'string' || typeof p.signature !== 'string') {
     return { ok: false, error: 'bad_request' };
   }
   if (!store.takeNonce(p.nonce, now)) return { ok: false, error: 'nonce' };
   const message = Buffer.from(signInMessage(p.host, p.nonce), 'utf8');
   if (!verifyEd25519(p.address, message, p.signature)) return { ok: false, error: 'signature' };
-  const merchant = store.findMerchantByWallet(p.address)
-    ?? store.createMerchant({ email: null, walletLogin: p.address, lang: p.lang, now });
+  return { ok: true, address: p.address };
+}
+
+export function verifyWalletSignIn(
+  store: LinksStore,
+  now: number,
+  p: SignedNonce & { lang: Lang },
+): { ok: true; merchantId: number } | { ok: false; error: 'bad_request' | 'nonce' | 'signature' } {
+  const c = checkSignedNonce(store, now, p);
+  if (!c.ok) return c;
+  const merchant = store.findMerchantByWallet(c.address)
+    ?? store.createMerchant({ email: null, walletLogin: c.address, lang: p.lang, now });
   return { ok: true, merchantId: merchant.id };
+}
+
+/** Links a wallet to an existing (for example email) account, so the wallet signs in to that account. */
+export function linkWalletLogin(store: LinksStore, now: number, merchantId: number, p: SignedNonce):
+  { ok: true } | { ok: false; error: 'bad_request' | 'nonce' | 'signature' | 'wallet_taken' } {
+  const c = checkSignedNonce(store, now, p);
+  if (!c.ok) return c;
+  const owner = store.findMerchantByWallet(c.address);
+  if (owner && owner.id !== merchantId) return { ok: false, error: 'wallet_taken' };
+  store.updateMerchant(merchantId, { walletLogin: c.address });
+  return { ok: true };
 }
