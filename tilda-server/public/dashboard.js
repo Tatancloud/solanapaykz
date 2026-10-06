@@ -79,6 +79,13 @@
     msg(r.status === 200 ? $('#lk-msg').dataset.saved : (r.data.message || r.data.error || 'error'));
   });
 
+  document.querySelectorAll('[data-delete]').forEach((b) => b.addEventListener('click', async () => {
+    if (!window.confirm(b.dataset.confirm)) return;
+    const r = await api('/api/merchant/invoices/' + encodeURIComponent(b.dataset.delete), 'DELETE');
+    if (r.status === 200) { b.closest('tr').remove(); return; }
+    window.alert(r.data.message || r.data.error || 'error');
+  }));
+
   const linkWallet = $('#lk-link-wallet');
   if (linkWallet) linkWallet.addEventListener('click', async () => {
     const s = await walletSign(linkWallet);

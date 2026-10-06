@@ -43,6 +43,15 @@ describe('links store', () => {
     expect(s.manualUnitsInUse('OtherWallet', 'USDC', 1500)).toEqual([]);
   });
 
+  it('deletes an invoice together with its quotes', () => {
+    const { s } = seed();
+    s.insertQuote({ invoiceId: 'inv1', totalUnits: 1n, feeUnits: 0n, merchantUnits: 1n, manualUnits: 2n,
+      rate: '1', rateSource: 'x', reference: 'refdel', createdAt: 1000, expiresAt: 1900 });
+    s.deleteInvoice('inv1');
+    expect(s.getInvoice('inv1')).toBeNull();
+    expect(s.quotesForInvoice('inv1')).toEqual([]);
+  });
+
   it('takes a nonce and a bot link only once', () => {
     const { s, m } = seed();
     s.putNonce('n1', 100);

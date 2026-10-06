@@ -140,6 +140,38 @@ describe('error messages people can read', () => {
   });
 });
 
+describe('deleting a payment link', () => {
+  async function withInvoice(email: string) {
+    const s = await signIn(email);
+    await call('/api/merchant/settings', s, 'PUT', { recipient: R });
+    const r = await (await call('/api/merchant/invoices', s, 'POST', { amountKzt: '2000', description: 'slippers' })).json() as { id: string };
+    return { s, id: r.id };
+  }
+
+  it('deletes an unpaid link and shows a delete button only for unpaid links', async () => {
+    const { s, id } = await withInvoice('a@shop.kz');
+    const page = await (await call('/m/invoices', s)).text();
+    expect(page).toContain(`data-delete="${id}"`);
+    expect(page).toMatch(/data-confirm="[^"]+"/);
+    expect((await call(`/api/merchant/invoices/${id}`, s, 'DELETE')).status).toBe(200);
+    expect(d.store.getInvoice(id)).toBeNull();
+  });
+
+  it('keeps paid links, refuses other merchants and requires CSRF', async () => {
+    const { s, id } = await withInvoice('a@shop.kz');
+    const other = await signIn('b@shop.kz');
+    expect((await call(`/api/merchant/invoices/${id}`, other, 'DELETE')).status).toBe(404);
+    const noCsrf = await fetch(`${base}/api/merchant/invoices/${id}`, { method: 'DELETE', headers: { cookie: s.cookie } });
+    expect(noCsrf.status).toBe(403);
+    d.store.updateInvoice(id, { state: 'paid', paidAt: 1, txSignature: 'sig', paidMode: 'request', reviewReason: null });
+    const kept = await call(`/api/merchant/invoices/${id}`, s, 'DELETE');
+    expect(kept.status).toBe(409);
+    expect((await kept.json() as { message: string }).message).toMatch(/kept/i);
+    expect(d.store.getInvoice(id)).not.toBeNull();
+    expect(await (await call('/m/invoices', s)).text()).not.toContain(`data-delete="${id}"`);
+  });
+});
+
 function testWallet() {
   const { publicKey, privateKey } = generateKeyPairSync('ed25519');
   const address = getAddressDecoder().decode(Buffer.from(publicKey.export({ format: 'jwk' }).x!, 'base64url'));
