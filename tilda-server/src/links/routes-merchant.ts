@@ -23,6 +23,7 @@ export interface MerchantDeps extends PublicDeps {
 }
 
 const FEE_TX = /^\/api\/fees\/(\d{1,12})$/;
+const INVOICE_API = /^\/api\/merchant\/invoices\/([A-Za-z0-9_-]{1,32})$/;
 
 function csvCell(v: string): string {
   const safe = /^[=+\-@\t\r]/.test(v) ? `'${v}` : v;
@@ -178,6 +179,18 @@ export async function handleMerchant(req: IncomingMessage, res: ServerResponse, 
     if (units <= 0n) { fail(res, 400, merchant.lang, { error: 'no_debt' }); return true; }
     const r = d.store.createRepayment({ merchantId: merchant.id, token, units, reference: generateReference(), createdAt: now });
     sendJson(res, 200, { url: `solana:${d.publicUrl}/api/fees/${r.id}` });
+    return true;
+  }
+  const del = INVOICE_API.exec(path);
+  if (method === 'DELETE' && del) {
+    const inv = d.store.getInvoice(del[1]!);
+    if (!inv || inv.merchantId !== merchant.id) { fail(res, 404, merchant.lang, { error: 'not_found' }); return true; }
+    // Paid and needs-review invoices stay: they back the fee ledger and the merchant's records.
+    if ((inv.state !== 'open' && inv.state !== 'expired') || inv.txSignature) {
+      fail(res, 409, merchant.lang, { error: 'cannot_delete' }); return true;
+    }
+    d.store.deleteInvoice(inv.id);
+    sendJson(res, 200, { ok: true });
     return true;
   }
   if (method === 'POST' && path === '/api/merchant/wallet-login') {

@@ -56,6 +56,8 @@ export interface LinksStore {
 
   createInvoice(p: NewInvoice): Invoice;
   getInvoice(id: string): Invoice | null;
+  /** Removes an invoice and its quotes (callers allow this only for unpaid invoices). */
+  deleteInvoice(id: string): void;
   listInvoices(merchantId: number, limit: number): Invoice[];
   candidateInvoices(now: number, lateWindowMs: number): Invoice[];
   updateInvoice(id: string, u: InvoiceUpdate): void;
@@ -243,6 +245,9 @@ export function openLinksStore(path: string): LinksStore {
       return store.getInvoice(p.id)!;
     },
     getInvoice(id) { const r = one('SELECT * FROM lk_invoices WHERE id = ?', id); return r ? invoiceFrom(r) : null; },
+    deleteInvoice(id) {
+      store.atomic(() => { run('DELETE FROM lk_quotes WHERE invoice_id = ?', id); run('DELETE FROM lk_invoices WHERE id = ?', id); });
+    },
     listInvoices(merchantId, limit) {
       return all('SELECT * FROM lk_invoices WHERE merchant_id = ? ORDER BY created_at DESC LIMIT ?', merchantId, limit)
         .map(invoiceFrom);

@@ -39,6 +39,8 @@ function payTop(path: string, lang: Lang): string {
 export interface InvoiceView {
   invoice: Invoice; merchant: Merchant; lang: Lang; tokenAmount: string; manualAmount: string;
   qrSvg: string; requestUrl: string; deepLink: string; minutesLeft: number;
+  /** Wallet Standard chain id, e.g. solana:devnet — used when a browser-extension wallet pays in-page. */
+  chain: string;
 }
 
 function payHead(inv: Invoice, m: Merchant, lang: Lang, title: string): string {
@@ -63,7 +65,9 @@ export function invoicePage(v: InvoiceView): string {
  data-copied="${esc(t(lang, 'copied'))}" data-paid="${esc(t(lang, 'status_paid'))}"
  data-review="${esc(t(lang, 'status_needs_review'))}">${esc(t(lang, 'status_open'))}</p>
 <div class="lk-wallet"><div class="lk-qr">${v.qrSvg}</div><p class="lk-hint">${esc(t(lang, 'scan_qr'))}</p>
-<a class="lk-btn" href="${esc(v.deepLink)}">${esc(t(lang, 'open_wallet'))}</a></div>
+<a class="lk-btn" id="lk-open-wallet" href="${esc(v.deepLink)}" data-pay="/api/pay/${esc(inv.id)}" data-chain="${esc(v.chain)}"
+ data-confirm-wallet="${esc(t(lang, 'wallet_confirm'))}" data-sent="${esc(t(lang, 'wallet_sent'))}">${esc(t(lang, 'open_wallet'))}</a>
+<p class="lk-hint" id="lk-pay-msg" role="status"></p></div>
 <details class="lk-manual"><summary>${esc(t(lang, 'pay_manually'))}</summary>
 <p class="lk-warn">${esc(t(lang, 'network_warning'))}</p>
 <div class="lk-field"><span class="lk-label">${esc(t(lang, 'recipient_address'))}</span>
@@ -121,10 +125,12 @@ ${m.recipient ? '' : `<div class="lk-notice"><p>${esc(t(lang, 'err_no_recipient'
 
 export function invoicesPage(m: Merchant, csrf: string, invoices: Invoice[], explorer: (sig: string) => string): string {
   const lang = m.lang;
+  const deletable = (i: Invoice) => (i.state === 'open' || i.state === 'expired') && !i.txSignature;
   const pill = (i: Invoice) => `<span class="lk-pill lk-${i.state}">${esc(t(lang, `status_${i.state}` as Key))}</span>${i.reviewReason ? `<small>${esc(i.reviewReason)}</small>` : ''}`;
   const rows = invoices.map((i) => `<tr id="${esc(i.id)}"><td class="lk-num">${new Date(i.createdAt).toISOString().slice(0, 16).replace('T', ' ')}</td>
 <td class="lk-num">${esc(formatKzt(i.amountKzt, lang))} ₸</td><td>${esc(i.description)}</td><td>${pill(i)}</td>
-<td>${i.txSignature ? `<a href="${esc(explorer(i.txSignature))}" rel="noopener">Explorer</a>` : `<a href="/i/${esc(i.id)}">${esc(t(lang, 'open_link'))}</a>`}</td></tr>`).join('');
+<td>${i.txSignature ? `<a href="${esc(explorer(i.txSignature))}" rel="noopener">Explorer</a>` : `<a href="/i/${esc(i.id)}">${esc(t(lang, 'open_link'))}</a>`}
+${deletable(i) ? `<button type="button" class="lk-link lk-del" data-delete="${esc(i.id)}" data-confirm="${esc(t(lang, 'delete_confirm'))}">${esc(t(lang, 'delete'))}</button>` : ''}</td></tr>`).join('');
   return layout(lang, t(lang, 'invoices'), `<div data-csrf="${esc(csrf)}" id="lk-session"></div>
 <section class="lk-card lk-wide"><div class="lk-head"><h1>${esc(t(lang, 'invoices'))}</h1><a class="lk-btn lk-btn-sm lk-btn-2" href="/m/invoices.csv">${esc(t(lang, 'export_csv'))}</a></div>
 <div class="lk-table"><table><tbody>${rows}</tbody></table></div></section>`, ['/assets/dashboard.js'], merchantTop(lang, 'invoices'));

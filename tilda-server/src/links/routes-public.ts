@@ -54,12 +54,12 @@ export async function handlePublic(req: IncomingMessage, res: ServerResponse, ur
     const requestUrl = `solana:${d.publicUrl}/api/pay/${inv.id}`;
     if (inv.state !== 'open') {
       sendHtml(res, 200, invoicePage({ invoice: inv, merchant, lang, tokenAmount: '', manualAmount: '', qrSvg: '',
-        requestUrl, deepLink: requestUrl, minutesLeft: 0 }));
+        requestUrl, deepLink: requestUrl, minutesLeft: 0, chain: `solana:${d.cluster}` }));
       return true;
     }
     const q = await activeQuote(d, inv);
     sendHtml(res, 200, invoicePage({
-      invoice: inv, merchant, lang, requestUrl, deepLink: requestUrl,
+      invoice: inv, merchant, lang, requestUrl, deepLink: requestUrl, chain: `solana:${d.cluster}`,
       tokenAmount: formatUnits(q.totalUnits, decimals), manualAmount: formatUnits(q.manualUnits, decimals),
       qrSvg: await QRCode.toString(requestUrl, { type: 'svg', margin: 1, width: 240 }),
       minutesLeft: Math.max(1, Math.ceil((q.expiresAt - d.now()) / 60_000)),

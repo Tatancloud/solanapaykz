@@ -53,6 +53,14 @@ describe('public invoice routes', () => {
     expect(html).toContain('/assets/link.js');
   });
 
+  it('gives the wallet button what a browser-extension wallet needs (pay API and chain)', async () => {
+    const html = await (await fetch(`${base}/i/${invoiceId}?lang=ru`)).text();
+    expect(html).toContain('id="lk-open-wallet"');
+    expect(html).toContain(`data-pay="/api/pay/${invoiceId}"`);
+    expect(html).toContain('data-chain="solana:devnet"');
+    expect(html).toMatch(/data-confirm-wallet="[^"]*кошел/);
+  });
+
   it('shows the same quote on a second open', async () => {
     const a = await (await fetch(`${base}/i/${invoiceId}`)).text();
     const b = await (await fetch(`${base}/i/${invoiceId}`)).text();
