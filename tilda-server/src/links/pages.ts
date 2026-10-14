@@ -10,10 +10,10 @@ export function brand(lang: Lang): string {
 
 const SITE_FOOT = { en: 'Devnet demo.', ru: 'Демо в сети devnet.' } as const;
 const CONTACT = { en: 'Contact', ru: 'Связь' } as const;
-/** What the site keeps: the session cookie (after sign-in) and the merchant record in lk_merchants / lk_invoices. */
+/** What the site keeps: the session cookie (after sign-in), the merchant record, and Google analytics only on consent. */
 const DATA_NOTICE = {
-  en: 'Data: one cookie keeps you signed in; we store your email or sign-in wallet, shop name, receiving address and payment links. No analytics or ad trackers.',
-  ru: 'Данные: одна cookie нужна для входа; мы храним ваш email или кошелёк для входа, название магазина, адрес для получения оплаты и платёжные ссылки. Аналитики и рекламных трекеров нет.',
+  en: 'Data: one cookie keeps you signed in; we store your email or sign-in wallet, shop name, receiving address and payment links. If you accept cookies, Google Analytics and Google Tag Manager collect visit statistics.',
+  ru: 'Данные: одна cookie нужна для входа; мы храним ваш email или кошелёк для входа, название магазина, адрес для получения оплаты и платёжные ссылки. Если вы принимаете cookie, Google Analytics и Google Tag Manager собирают статистику посещений.',
 } as const;
 
 const CONSENT = {

@@ -108,6 +108,28 @@ describe('links app', () => {
     expect(js.headers.get('content-type')).toContain('text/javascript');
   });
 
+  it('loads Google Tag Manager and Analytics only from consent.js, and the CSP lets them in', async () => {
+    const js = await (await fetch(`${base}/assets/consent.js`)).text();
+    expect(js).toContain('GTM-5C97N359');
+    expect(js).toContain('G-JCX7CZC1PZ');
+    for (const path of ['/', '/m', '/i/nope']) {
+      const res = await fetch(`${base}${path}`);
+      const html = await res.text();
+      // No tag in the page itself: nothing reaches Google before the visitor accepts.
+      expect(html).not.toContain('googletagmanager.com');
+      const csp = res.headers.get('content-security-policy') ?? '';
+      expect(csp).toContain("script-src 'self' https://www.googletagmanager.com");
+      expect(csp).toContain('connect-src');
+      expect(csp).toContain('https://*.google-analytics.com');
+      expect(csp).toContain("frame-ancestors 'none'");
+    }
+    expect((await fetch(`${base}/`)).headers.get('content-security-policy')).toContain('frame-src https://www.youtube-nocookie.com');
+    const en = await (await fetch(`${base}/`)).text();
+    expect(en).not.toContain('No analytics');
+    expect(en).toContain('Google Analytics');
+    expect(await (await fetch(`${base}/?lang=ru`)).text()).toContain('Google Analytics');
+  });
+
   it('links the logo back to the home page in the visitor\'s language', async () => {
     const en = await (await fetch(`${base}/`)).text();
     expect(en).toContain('<a class="lk-brand" href="/">');
