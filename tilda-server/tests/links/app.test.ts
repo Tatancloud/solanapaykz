@@ -87,4 +87,47 @@ describe('links app', () => {
   it('does not claim unrelated paths', async () => {
     expect((await fetch(`${base}/tilda/pay`)).status).toBe(404);
   });
+
+  it('links the logo back to the home page in the visitor\'s language', async () => {
+    const en = await (await fetch(`${base}/`)).text();
+    expect(en).toContain('<a class="lk-brand" href="/">');
+    const ru = await (await fetch(`${base}/?lang=ru`)).text();
+    expect(ru).toContain('<a class="lk-brand" href="/?lang=ru">');
+    // Pages away from the landing too, e.g. sign-in and a missing invoice.
+    expect(await (await fetch(`${base}/m`)).text()).toContain('class="lk-brand" href="/');
+    expect(await (await fetch(`${base}/i/nope`)).text()).toContain('class="lk-brand" href="/');
+  });
+
+  it('shows the devnet note, the RPC and the Telegram contact in the footer of every page', async () => {
+    for (const path of ['/', '/?lang=ru', '/m', '/i/nope']) {
+      const html = await (await fetch(`${base}${path}`)).text();
+      expect(html).toContain('<footer class="lk-site-foot">');
+      expect(html).toContain('https://api.devnet.solana.com');
+      expect(html).toContain('href="https://t.me/RuslanUralsk"');
+    }
+    expect(await (await fetch(`${base}/`)).text()).toContain('Devnet demo');
+  });
+
+  it('shows the pitch and demo videos and the team on the landing in English and Russian', async () => {
+    const res = await fetch(`${base}/`);
+    const en = await res.text();
+    for (const id of ['QwVEPey9PfY', 'Jy2tIG_G8oA']) {
+      expect(en).toContain(`src="https://www.youtube-nocookie.com/embed/${id}"`);
+      expect(en).toContain(`href="https://youtu.be/${id}"`);
+    }
+    // The embeds load only if the landing's CSP lets YouTube frames in.
+    expect(res.headers.get('content-security-policy')).toContain('frame-src https://www.youtube-nocookie.com');
+    expect(en).toContain('Ruslan Satybaldin');
+    expect(en).toContain('10+ years in IT, client work and B2B sales in fintech, banking and a private medical laboratory.');
+    for (const href of ['https://t.me/RuslanUralsk', 'https://twitter.com/ruslantatankz', 'https://www.linkedin.com/in/ruslansatybaldin/']) {
+      expect(en).toContain(`href="${href}"`);
+    }
+    expect(en.indexOf('id="team"')).toBeGreaterThan(en.indexOf('id="videos"'));
+
+    const ru = await (await fetch(`${base}/?lang=ru`)).text();
+    expect(ru).toContain('Команда');
+    expect(ru).toContain('Руслан Сатыбалдин');
+    expect(ru).toContain('Более 10 лет в IT');
+    expect(ru).toContain('youtube-nocookie.com/embed/QwVEPey9PfY');
+  });
 });
