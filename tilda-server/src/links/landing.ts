@@ -59,13 +59,14 @@ const COPY = {
         links: [['Library guide', 'sdk'], ['npm', NPM]] },
       { title: 'Shops on Tilda',
         text: 'Accepts payment in USDC or SOL on Solana for an order placed on a site built on the Tilda platform, converting the amount from tenge (KZT). Money goes directly from the buyer\u2019s wallet to the merchant\u2019s wallet \u2014 the server never holds it or forwards it.',
-        links: [['Tilda setup guide', 'tilda']] },
+        links: [['Tilda setup guide', 'tilda'], ['Tilda demo shop', 'https://kzwedding.tilda.ws/solanapay']] },
     ],
     videosTitle: 'Videos',
     videos: [['Pitch', VIDEOS.pitch], ['Product demo', VIDEOS.demo]],
     watchOnYoutube: 'Watch on YouTube',
+    videosNote: 'The videos are played by YouTube; YouTube may store cookies when you play them.',
     teamTitle: 'Team',
-    founder: { name: 'Ruslan Satybaldin', initials: 'RS', role: 'Solo founder',
+    founder: { name: 'Ruslan Satybaldin', role: 'Solo founder',
       bio: '10+ years in IT, client work and B2B sales in fintech, banking and a private medical laboratory.' },
     source: 'Source code',
     docs: 'Documentation',
@@ -110,13 +111,14 @@ const COPY = {
         links: [['Описание библиотеки', 'ru/sdk'], ['npm', NPM]] },
       { title: 'Магазины на Tilda',
         text: 'Принимает оплату в USDC или SOL на Solana за заказ, оформленный на сайте на платформе Tilda, с пересчётом суммы из тенге. Деньги идут напрямую с кошелька покупателя на кошелёк продавца \u2014 сервер их не хранит и не пересылает.',
-        links: [['Инструкция для Tilda', 'ru/tilda']] },
+        links: [['Инструкция для Tilda', 'ru/tilda'], ['Демо-магазин на Tilda', 'https://kzwedding.tilda.ws/solanapayru']] },
     ],
     videosTitle: 'Видео',
     videos: [['Питч', VIDEOS.pitch], ['Демо продукта', VIDEOS.demo]],
     watchOnYoutube: 'Смотреть на YouTube',
+    videosNote: 'Видео воспроизводит YouTube; при просмотре YouTube может сохранять cookie.',
     teamTitle: 'Команда',
-    founder: { name: 'Руслан Сатыбалдин', initials: 'РС', role: 'Соло-основатель',
+    founder: { name: 'Руслан Сатыбалдин', role: 'Соло-основатель',
       bio: 'Более 10 лет в IT: работа с клиентами и B2B-продажи в финтехе, банках и частной медицинской лаборатории.' },
     source: 'Исходный код',
     docs: 'Документация',
@@ -158,9 +160,8 @@ ${example}</section>
 <section class="lk-card lp-section"><h2>${esc(c.factsTitle)}</h2><dl class="lp-facts">${facts}</dl></section>
 <section class="lp-note"><h2>${esc(c.statusTitle)}</h2><p>${esc(c.status)}</p></section>
 <section class="lp-integrations"><h2>${esc(c.integrationsTitle)}</h2><div class="lp-cards">${integrations}</div></section>
-<section class="lp-integrations" id="videos"><h2>${esc(c.videosTitle)}</h2><div class="lp-videos">${videos}</div></section>
-<section class="lk-card lp-section" id="team"><h2>${esc(c.teamTitle)}</h2><div class="lp-person"><span class="lk-av" aria-hidden="true">${esc(f.initials)}</span>
-<div><h3>${esc(f.name)}</h3><p class="lk-desc">${esc(f.role)}</p></div></div><p class="lp-bio">${esc(f.bio)}</p>
+<section class="lp-integrations" id="videos"><h2>${esc(c.videosTitle)}</h2><div class="lp-videos">${videos}</div><p class="lk-hint">${esc(c.videosNote)}</p></section>
+<section class="lk-card lp-section" id="team"><h2>${esc(c.teamTitle)}</h2><div class="lp-person"><h3>${esc(f.name)}</h3><p class="lk-desc">${esc(f.role)}</p></div><p class="lp-bio">${esc(f.bio)}</p>
 <p class="lp-social">${social}</p></section>
 <footer class="lp-foot"><a href="${REPO}">${esc(c.source)}</a><a href="${DOCS}">${esc(c.docs)}</a><span>${esc(c.licence)}</span></footer>`;
 

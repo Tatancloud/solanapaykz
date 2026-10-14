@@ -8,15 +8,32 @@ export function brand(lang: Lang): string {
   return `<a class="lk-brand" href="${lang === 'ru' ? '/?lang=ru' : '/'}"><img class="lk-mark" src="/assets/logo.svg" alt="" width="24" height="24">SolanaPay-KZ</a>`;
 }
 
-const SITE_FOOT = {
-  en: 'Devnet demo. RPC: https://api.devnet.solana.com',
-  ru: 'Демо в сети devnet. RPC: https://api.devnet.solana.com',
-} as const;
+const SITE_FOOT = { en: 'Devnet demo.', ru: 'Демо в сети devnet.' } as const;
 const CONTACT = { en: 'Contact', ru: 'Связь' } as const;
+/** What the site keeps: the session cookie (after sign-in) and the merchant record in lk_merchants / lk_invoices. */
+const DATA_NOTICE = {
+  en: 'Data: one cookie keeps you signed in; we store your email or sign-in wallet, shop name, receiving address and payment links. No analytics or ad trackers.',
+  ru: 'Данные: одна cookie нужна для входа; мы храним ваш email или кошелёк для входа, название магазина, адрес для получения оплаты и платёжные ссылки. Аналитики и рекламных трекеров нет.',
+} as const;
+
+const CONSENT = {
+  en: { text: 'We use cookies to improve your experience and remember your preferences.', accept: 'Accept all', decline: 'Decline', close: 'Close' },
+  ru: { text: 'Мы используем файлы cookie для улучшения вашего опыта и запоминания ваших предпочтений.', accept: 'Принять все', decline: 'Отклонить', close: 'Закрыть' },
+} as const;
+
+/** Cookie banner: hidden by default, consent.js shows it until the visitor chooses (the choice gates future analytics). */
+function consentBanner(lang: Lang): string {
+  const c = CONSENT[lang];
+  return `<aside class="lk-consent" id="lk-consent" hidden aria-label="Cookies">
+<button type="button" class="lk-consent-x" data-consent="close" aria-label="${esc(c.close)}">×</button>
+<p>${esc(c.text)}</p><div class="lk-consent-actions"><button type="button" class="lk-btn lk-btn-sm" data-consent="accept">${esc(c.accept)}</button>
+<button type="button" class="lk-btn lk-btn-sm lk-btn-2" data-consent="decline">${esc(c.decline)}</button></div></aside>`;
+}
 
 function siteFoot(lang: Lang): string {
   return `<footer class="lk-site-foot"><span>${esc(SITE_FOOT[lang])}</span>
-<span>${esc(CONTACT[lang])}: <a href="https://t.me/RuslanUralsk">Telegram @RuslanUralsk</a></span></footer>`;
+<span>${esc(CONTACT[lang])}: <a href="https://t.me/RuslanUralsk">Telegram @RuslanUralsk</a></span>
+<p class="lk-data">${esc(DATA_NOTICE[lang])}</p></footer>`;
 }
 
 export function layout(lang: Lang, title: string, body: string, scripts: string[] = [], top = ''): string {
@@ -25,8 +42,8 @@ export function layout(lang: Lang, title: string, body: string, scripts: string[
 <link rel="preload" href="/assets/fonts/unbounded-latin-700-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="icon" href="/assets/logo.svg" type="image/svg+xml"><link rel="icon" href="/assets/favicon-32.png" sizes="32x32">
 <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png"><link rel="stylesheet" href="/assets/link.css"></head><body>${top}<main class="lk">${body}</main>
-${siteFoot(lang)}
-${scripts.map((s) => `<script src="${s}" defer></script>`).join('')}</body></html>`;
+${siteFoot(lang)}${consentBanner(lang)}
+${[...scripts, '/assets/consent.js'].map((s) => `<script src="${s}" defer></script>`).join('')}</body></html>`;
 }
 
 export function langSwitch(path: string, lang: Lang): string {

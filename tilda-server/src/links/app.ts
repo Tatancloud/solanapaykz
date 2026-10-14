@@ -46,6 +46,7 @@ const PUBLIC_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'pu
 const ASSETS: Record<string, string> = {
   '/assets/link.js': 'text/javascript; charset=utf-8',
   '/assets/dashboard.js': 'text/javascript; charset=utf-8',
+  '/assets/consent.js': 'text/javascript; charset=utf-8',
   '/assets/link.css': 'text/css; charset=utf-8',
   '/assets/icon.png': 'image/png',
   '/assets/logo.svg': 'image/svg+xml',
