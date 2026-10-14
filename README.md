@@ -2,7 +2,7 @@
 
 # SolanaPay-KZ
 
-[Русская версия](README.ru.md) · [Documentation](https://tatancloud.github.io/solanapaykz/)
+[Русская версия](README.ru.md) · [Documentation](https://tatancloud.github.io/solanapaykz/). [Web site](https://solanapaykz.site/)   
 
 An open-source toolkit that lets online shops in Kazakhstan accept payment in
 **USDC** and **SOL** on Solana while showing prices in **tenge (KZT)**.
@@ -37,7 +37,7 @@ money.
 |---|---|---|---|
 | [`@solanapaykz/core`](https://www.npmjs.com/package/@solanapaykz/core) | developers on any platform | 126 | published on npm |
 | [WooCommerce plugin](https://tatancloud.github.io/solanapaykz/woocommerce) | WordPress shops | 222 | [released](https://github.com/Tatancloud/solanapaykz/releases/tag/v0.1.0) |
-| [Tilda server](https://tatancloud.github.io/solanapaykz/tilda) | Tilda shops | 310 | working, integration under review by Tilda |
+| [Tilda server](https://tatancloud.github.io/solanapaykz/tilda) | Tilda shops | 310 | [released](https://kzwedding.tilda.ws/solanapay) |
 
 658 automated tests across three languages, plus end-to-end verification with
 real payments on Solana devnet.
@@ -82,6 +82,7 @@ tests:
 
 - **Documentation:** <https://tatancloud.github.io/solanapaykz/>
 - **Live WooCommerce demo:** <https://shop.pagafox.kz>
+- **Live Tilda shop demo:** <https://kzwedding.tilda.ws/solanapay>
 
 ## Repository map
 
@@ -136,6 +137,15 @@ Roadmap:
 - PHP 8.1 with the `bcmath` extension for the WooCommerce plugin.
 - Node.js 22 for the library and the Tilda server.
 - Shop currency must be KZT.
+
+## About me & Contacts
+Ruslan Satybaldin
+Solo founder
+
+10+ years in IT, client work and B2B sales in fintech, banking and a private medical laboratory.
+Telegram: https://t.me/RuslanUralsk
+X: https://twitter.com/ruslantatankz
+LinkedIn: https://www.linkedin.com/in/ruslansatybaldin/ 
 
 ## Licence
 
