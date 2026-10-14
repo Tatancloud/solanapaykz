@@ -40,7 +40,7 @@ SolanaPay-KZ отвечает на все три: считает курс по �
 |---|---|---|---|
 | [`@solanapaykz/core`](https://www.npmjs.com/package/@solanapaykz/core) | разработчикам на любой платформе | 126 | опубликован в npm |
 | [Плагин WooCommerce](https://tatancloud.github.io/solanapaykz/ru/woocommerce) | магазинам на WordPress | 222 | [выпущен](https://github.com/Tatancloud/solanapaykz/releases/tag/v0.1.0) |
-| [Сервер для Tilda](https://tatancloud.github.io/solanapaykz/ru/tilda) | магазинам на Tilda | 310 | работает, интеграция на модерации Tilda |
+| [Сервер для Tilda](https://tatancloud.github.io/solanapaykz/ru/tilda) | магазинам на Tilda | 310 | [работает демо магазин](https://kzwedding.tilda.ws/solanapayru)
 
 658 автоматических проверок на трёх языках плюс сквозная проверка настоящими
 платежами в тестовой сети Solana.
@@ -84,6 +84,7 @@ SolanaPay-KZ отвечает на все три: считает курс по �
 
 - **Документация:** <https://tatancloud.github.io/solanapaykz/ru/>
 - **Живой демо-магазин на WooCommerce:** <https://shop.pagafox.kz>
+- **Живой демо-магазин в Tilda:** <https://kzwedding.tilda.ws/solanapayru>
 
 ## Что где лежит
 
@@ -110,6 +111,15 @@ SolanaPay-KZ отвечает на все три: считает курс по �
 - PHP 8.1 с расширением `bcmath` для плагина WooCommerce.
 - Node.js 22 для библиотеки и сервера Tilda.
 - Валюта магазина — тенге.
+
+## Контакты
+Руслан Сатыбалдин
+Соло-основатель
+
+Более 10 лет в IT: работа с клиентами и B2B-продажи в финтехе, банках и частной медицинской лаборатории.
+Telegram https://t.me/RuslanUralsk
+X https://twitter.com/ruslantatankz
+LinkedIn https://www.linkedin.com/in/ruslansatybaldin/
 
 ## Лицензия
 
