@@ -787,4 +787,44 @@ describe('корневой адрес', () => {
     expect(ответ.body).not.toContain('secret');
     expect(ответ.body.toLowerCase()).not.toContain('rpc');
   });
+
+  // HEAD шлют мониторинги доступности и `curl -I`: раньше маршруты знали
+  // только GET, и живой сайт отвечал им 404.
+  it('HEAD на корень отвечает как GET: 200, тот же content-type, без тела', async () => {
+    const ответ = await fetch(базовыйUrl + '/', { method: 'HEAD' });
+
+    expect(ответ.status).toBe(200);
+    expect(ответ.headers.get('content-type')).toContain('text/html');
+    expect(await ответ.text()).toBe('');
+  });
+
+  it('HEAD доходит до лендинга платёжных ссылок как GET', async () => {
+    const сЛендингом = createServer({
+      config, store, client: фейковыйКлиент(), log: createLog(() => {}),
+      links: {
+        handle: async (req, res) => {
+          if (req.method !== 'GET' || req.url !== '/') return false;
+          res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+          res.end('LANDING');
+          return true;
+        },
+        stop: () => {},
+      },
+    });
+    await new Promise<void>((resolve) => сЛендингом.listen(0, '127.0.0.1', resolve));
+    const адрес = сЛендингом.address() as AddressInfo;
+    try {
+      const ответ = await fetch(`http://127.0.0.1:${адрес.port}/`, { method: 'HEAD' });
+      expect(ответ.status).toBe(200);
+      expect(await ответ.text()).toBe('');
+    } finally {
+      await new Promise<void>((resolve) => сЛендингом.close(() => resolve()));
+    }
+  });
+
+  it('HEAD на несуществующий адрес по-прежнему 404', async () => {
+    const ответ = await fetch(базовыйUrl + '/нет-такого', { method: 'HEAD' });
+
+    expect(ответ.status).toBe(404);
+  });
 });
