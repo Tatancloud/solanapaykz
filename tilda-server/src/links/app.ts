@@ -14,7 +14,7 @@ import { openLinksStore } from './db.js';
 import { createRpc, startDetector, type DetectRpc } from './detect.js';
 import { readJson, sendHtml, sendJson } from './http.js';
 import { t } from './i18n.js';
-import { landingPage } from './landing.js';
+import { LANDING_CSP, landingPage } from './landing.js';
 import type { Quoter } from './invoices.js';
 import { createNotifier } from './notify.js';
 import { feeWalletProblems, type AccountProbe } from './recipient.js';
@@ -46,6 +46,7 @@ const PUBLIC_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'pu
 const ASSETS: Record<string, string> = {
   '/assets/link.js': 'text/javascript; charset=utf-8',
   '/assets/dashboard.js': 'text/javascript; charset=utf-8',
+  '/assets/consent.js': 'text/javascript; charset=utf-8',
   '/assets/link.css': 'text/css; charset=utf-8',
   '/assets/icon.png': 'image/png',
   '/assets/logo.svg': 'image/svg+xml',
@@ -111,7 +112,7 @@ export function createLinksApp(o: LinksAppOptions): LinksApp {
       }
       if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) {
         // The landing is English by default (owner's decision); Russian only via the language switch.
-        sendHtml(res, 200, landingPage(url.searchParams.get('lang') === 'ru' ? 'ru' : 'en'));
+        sendHtml(res, 200, landingPage(url.searchParams.get('lang') === 'ru' ? 'ru' : 'en'), { 'content-security-policy': LANDING_CSP });
         return true;
       }
       const tg = o.links.telegram;

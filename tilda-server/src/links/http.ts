@@ -7,8 +7,17 @@ export function sendJson(res: ServerResponse, status: number, body: unknown, hea
   res.end(JSON.stringify(body, (_k, v: unknown) => (typeof v === 'bigint' ? v.toString() : v)));
 }
 
+/**
+ * CSP of every links page: our own files, plus Google Tag Manager / Analytics, which public/consent.js
+ * loads only after the visitor accepts cookies. Inline scripts stay forbidden.
+ */
+export const PAGE_CSP = "default-src 'self'; script-src 'self' https://www.googletagmanager.com; "
+  + "img-src 'self' https://*.google-analytics.com https://*.googletagmanager.com; "
+  + "connect-src 'self' https://*.google-analytics.com https://*.analytics.google.com https://*.googletagmanager.com; "
+  + "frame-ancestors 'none'";
+
 export function sendHtml(res: ServerResponse, status: number, html: string, headers: Record<string, string> = {}): void {
-  res.writeHead(status, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', ...headers });
+  res.writeHead(status, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'content-security-policy': PAGE_CSP, ...headers });
   res.end(html);
 }
 

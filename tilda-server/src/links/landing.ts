@@ -1,12 +1,24 @@
 // tilda-server/src/links/landing.ts — the public home page (GET /) when chat payment links are enabled.
 import { экранироватьHtml as esc } from '../http/html.js';
 import type { Lang } from './db.js';
-import { formatKzt, langSwitch, layout } from './pages.js';
+import { PAGE_CSP } from './http.js';
+import { brand, formatKzt, langSwitch, layout } from './pages.js';
 
 const REPO = 'https://github.com/Tatancloud/solanapaykz';
 const DOCS = 'https://tatancloud.github.io/solanapaykz/';
 const RELEASE = 'https://github.com/Tatancloud/solanapaykz/releases/tag/v0.1.0';
 const NPM = 'https://www.npmjs.com/package/@solanapaykz/core';
+const VIDEOS = { pitch: 'QwVEPey9PfY', demo: 'Jy2tIG_G8oA' } as const;
+const SOCIAL = [
+  { name: 'Telegram', href: 'https://t.me/RuslanUralsk',
+    path: 'M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z' },
+  { name: 'X', href: 'https://twitter.com/ruslantatankz',
+    path: 'M18.901 1.153h3.68l-8.04 9.19L24 22.846h-7.406l-5.8-7.584-6.638 7.584H.474l8.6-9.83L0 1.154h7.594l5.243 6.932ZM17.61 20.644h2.039L6.486 3.24H4.298Z' },
+  { name: 'LinkedIn', href: 'https://www.linkedin.com/in/ruslansatybaldin/',
+    path: 'M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z' },
+] as const;
+/** The landing also embeds YouTube (privacy-enhanced domain); no other page frames anything. */
+export const LANDING_CSP = `${PAGE_CSP}; frame-src https://www.youtube-nocookie.com`;
 
 const COPY = {
   en: {
@@ -48,8 +60,15 @@ const COPY = {
         links: [['Library guide', 'sdk'], ['npm', NPM]] },
       { title: 'Shops on Tilda',
         text: 'Accepts payment in USDC or SOL on Solana for an order placed on a site built on the Tilda platform, converting the amount from tenge (KZT). Money goes directly from the buyer\u2019s wallet to the merchant\u2019s wallet \u2014 the server never holds it or forwards it.',
-        links: [['Tilda setup guide', 'tilda']] },
+        links: [['Tilda setup guide', 'tilda'], ['Tilda demo shop', 'https://kzwedding.tilda.ws/solanapay']] },
     ],
+    videosTitle: 'Videos',
+    videos: [['Pitch', VIDEOS.pitch], ['Product demo', VIDEOS.demo]],
+    watchOnYoutube: 'Watch on YouTube',
+    videosNote: 'The videos are played by YouTube; YouTube may store cookies when you play them.',
+    teamTitle: 'Team',
+    founder: { name: 'Ruslan Satybaldin', role: 'Solo founder',
+      bio: '10+ years in IT, client work and B2B sales in fintech, banking and a private medical laboratory.' },
     source: 'Source code',
     docs: 'Documentation',
     licence: 'MIT licence',
@@ -93,8 +112,15 @@ const COPY = {
         links: [['Описание библиотеки', 'ru/sdk'], ['npm', NPM]] },
       { title: 'Магазины на Tilda',
         text: 'Принимает оплату в USDC или SOL на Solana за заказ, оформленный на сайте на платформе Tilda, с пересчётом суммы из тенге. Деньги идут напрямую с кошелька покупателя на кошелёк продавца \u2014 сервер их не хранит и не пересылает.',
-        links: [['Инструкция для Tilda', 'ru/tilda']] },
+        links: [['Инструкция для Tilda', 'ru/tilda'], ['Демо-магазин на Tilda', 'https://kzwedding.tilda.ws/solanapayru']] },
     ],
+    videosTitle: 'Видео',
+    videos: [['Питч', VIDEOS.pitch], ['Демо продукта', VIDEOS.demo]],
+    watchOnYoutube: 'Смотреть на YouTube',
+    videosNote: 'Видео воспроизводит YouTube; при просмотре YouTube может сохранять cookie.',
+    teamTitle: 'Команда',
+    founder: { name: 'Руслан Сатыбалдин', role: 'Соло-основатель',
+      bio: 'Более 10 лет в IT: работа с клиентами и B2B-продажи в финтехе, банках и частной медицинской лаборатории.' },
     source: 'Исходный код',
     docs: 'Документация',
     licence: 'Лицензия MIT',
@@ -104,7 +130,7 @@ const COPY = {
 export function landingPage(lang: Lang): string {
   const c = COPY[lang];
   const q = lang === 'ru' ? '?lang=ru' : '';
-  const top = `<header class="lk-top lp-top"><span class="lk-brand"><img class="lk-mark" src="/assets/logo.svg" alt="" width="24" height="24">SolanaPay-KZ</span>
+  const top = `<header class="lk-top lp-top">${brand(lang)}
 <nav class="lk-nav"><a href="/m${q}">${esc(c.signIn)}</a></nav>${langSwitch('/', lang)}</header>`;
 
   const example = `<figure class="lp-example"><figcaption>${esc(c.example)}</figcaption>
@@ -119,6 +145,13 @@ export function landingPage(lang: Lang): string {
   const href = (l: string) => (l.startsWith('https://') ? l : DOCS + l);
   const integrations = c.integrations.map((it) => `<article class="lk-card lp-int"><h3>${esc(it.title)}</h3><p>${esc(it.text)}</p>
 ${'code' in it ? `<code class="lp-code">${esc(it.code)}</code>` : ''}<p class="lp-links">${it.links.map(([label, l]) => `<a href="${esc(href(l))}">${esc(label)}</a>`).join('')}</p></article>`).join('');
+  const videos = c.videos.map(([label, id]) => `<figure class="lp-video"><div class="lp-frame">
+<iframe src="https://www.youtube-nocookie.com/embed/${id}" title="${esc(label)}" loading="lazy"
+ referrerpolicy="strict-origin-when-cross-origin"
+ allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe></div>
+<figcaption><span class="lp-strong">${esc(label)}</span><a href="https://youtu.be/${id}">${esc(c.watchOnYoutube)}</a></figcaption></figure>`).join('');
+  const f = c.founder;
+  const social = SOCIAL.map((s) => `<a href="${s.href}" aria-label="${s.name}" title="${s.name}"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="${s.path}"/></svg></a>`).join('');
   const facts = c.facts.map(([h, p]) => `<div><dt>${esc(h)}</dt><dd>${esc(p)}</dd></div>`).join('');
 
   const body = `<section class="lp-hero"><div class="lp-copy"><h1>${esc(c.h1)}</h1><p class="lp-lead">${esc(c.lead)}</p>
@@ -128,6 +161,9 @@ ${example}</section>
 <section class="lk-card lp-section"><h2>${esc(c.factsTitle)}</h2><dl class="lp-facts">${facts}</dl></section>
 <section class="lp-note"><h2>${esc(c.statusTitle)}</h2><p>${esc(c.status)}</p></section>
 <section class="lp-integrations"><h2>${esc(c.integrationsTitle)}</h2><div class="lp-cards">${integrations}</div></section>
+<section class="lp-integrations" id="videos"><h2>${esc(c.videosTitle)}</h2><div class="lp-videos">${videos}</div><p class="lk-hint">${esc(c.videosNote)}</p></section>
+<section class="lk-card lp-section" id="team"><h2>${esc(c.teamTitle)}</h2><div class="lp-person"><h3>${esc(f.name)}</h3><p class="lk-desc">${esc(f.role)}</p></div><p class="lp-bio">${esc(f.bio)}</p>
+<p class="lp-social">${social}</p></section>
 <footer class="lp-foot"><a href="${REPO}">${esc(c.source)}</a><a href="${DOCS}">${esc(c.docs)}</a><span>${esc(c.licence)}</span></footer>`;
 
   return layout(lang, c.title, body, [], top).replace('<main class="lk">', '<main class="lk lp">');

@@ -3,7 +3,38 @@ import { экранироватьHtml as esc } from '../http/html.js';
 import type { Invoice, Lang, Merchant } from './db.js';
 import { t, type Key } from './i18n.js';
 
-const BRAND = `<span class="lk-brand"><img class="lk-mark" src="/assets/logo.svg" alt="" width="24" height="24">SolanaPay-KZ</span>`;
+/** The logo, linking back to the landing in the page's language (from /m/settings there was no way home). */
+export function brand(lang: Lang): string {
+  return `<a class="lk-brand" href="${lang === 'ru' ? '/?lang=ru' : '/'}"><img class="lk-mark" src="/assets/logo.svg" alt="" width="24" height="24">SolanaPay-KZ</a>`;
+}
+
+const SITE_FOOT = { en: 'Devnet demo.', ru: 'Демо в сети devnet.' } as const;
+const CONTACT = { en: 'Contact', ru: 'Связь' } as const;
+/** What the site keeps: the session cookie (after sign-in), the merchant record, and Google analytics only on consent. */
+const DATA_NOTICE = {
+  en: 'Data: one cookie keeps you signed in; we store your email or sign-in wallet, shop name, receiving address and payment links. If you accept cookies, Google Analytics and Google Tag Manager collect visit statistics.',
+  ru: 'Данные: одна cookie нужна для входа; мы храним ваш email или кошелёк для входа, название магазина, адрес для получения оплаты и платёжные ссылки. Если вы принимаете cookie, Google Analytics и Google Tag Manager собирают статистику посещений.',
+} as const;
+
+const CONSENT = {
+  en: { text: 'We use cookies to improve your experience and remember your preferences.', accept: 'Accept all', decline: 'Decline', close: 'Close' },
+  ru: { text: 'Мы используем файлы cookie для улучшения вашего опыта и запоминания ваших предпочтений.', accept: 'Принять все', decline: 'Отклонить', close: 'Закрыть' },
+} as const;
+
+/** Cookie banner: hidden by default, consent.js shows it until the visitor chooses (the choice gates future analytics). */
+function consentBanner(lang: Lang): string {
+  const c = CONSENT[lang];
+  return `<aside class="lk-consent" id="lk-consent" hidden aria-label="Cookies">
+<button type="button" class="lk-consent-x" data-consent="close" aria-label="${esc(c.close)}">×</button>
+<p>${esc(c.text)}</p><div class="lk-consent-actions"><button type="button" class="lk-btn lk-btn-sm" data-consent="accept">${esc(c.accept)}</button>
+<button type="button" class="lk-btn lk-btn-sm lk-btn-2" data-consent="decline">${esc(c.decline)}</button></div></aside>`;
+}
+
+function siteFoot(lang: Lang): string {
+  return `<footer class="lk-site-foot"><span>${esc(SITE_FOOT[lang])}</span>
+<span>${esc(CONTACT[lang])}: <a href="https://t.me/RuslanUralsk">Telegram @RuslanUralsk</a></span>
+<p class="lk-data">${esc(DATA_NOTICE[lang])}</p></footer>`;
+}
 
 export function layout(lang: Lang, title: string, body: string, scripts: string[] = [], top = ''): string {
   return `<!doctype html><html lang="${lang}"><head><meta charset="utf-8">
@@ -11,7 +42,8 @@ export function layout(lang: Lang, title: string, body: string, scripts: string[
 <link rel="preload" href="/assets/fonts/unbounded-latin-700-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="icon" href="/assets/logo.svg" type="image/svg+xml"><link rel="icon" href="/assets/favicon-32.png" sizes="32x32">
 <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png"><link rel="stylesheet" href="/assets/link.css"></head><body>${top}<main class="lk">${body}</main>
-${scripts.map((s) => `<script src="${s}" defer></script>`).join('')}</body></html>`;
+${siteFoot(lang)}${consentBanner(lang)}
+${[...scripts, '/assets/consent.js'].map((s) => `<script src="${s}" defer></script>`).join('')}</body></html>`;
 }
 
 export function langSwitch(path: string, lang: Lang): string {
@@ -33,7 +65,7 @@ function initials(name: string): string {
 }
 
 function payTop(path: string, lang: Lang): string {
-  return `<header class="lk-top lk-top-pay">${BRAND}${langSwitch(path, lang)}</header>`;
+  return `<header class="lk-top lk-top-pay">${brand(lang)}${langSwitch(path, lang)}</header>`;
 }
 
 export interface InvoiceView {
@@ -80,7 +112,7 @@ export function invoicePage(v: InvoiceView): string {
 
 export function notFoundPage(lang: Lang): string {
   return layout(lang, t(lang, 'not_found'), `<section class="lk-card"><h1>${esc(t(lang, 'not_found'))}</h1></section>`, [],
-    `<header class="lk-top lk-top-pay">${BRAND}</header>`);
+    `<header class="lk-top lk-top-pay">${brand(lang)}</header>`);
 }
 
 export function loginPage(lang: Lang): string {
@@ -93,7 +125,7 @@ export function loginPage(lang: Lang): string {
 <p class="lk-or"><span>${esc(t(lang, 'or'))}</span></p><button type="button" class="lk-btn lk-btn-2" id="lk-wallet" data-no-wallet="${esc(t(lang, 'no_wallet'))}">${esc(t(lang, 'sign_in_wallet'))}</button>
 <a class="lk-btn lk-btn-2" id="lk-phantom" hidden>${esc(t(lang, 'open_in_phantom'))}</a>
 <p id="lk-msg" class="lk-hint" role="status"></p></section>`, ['/assets/dashboard.js'],
-    `<header class="lk-top">${BRAND}${langSwitch('/m', lang)}</header>`);
+    `<header class="lk-top">${brand(lang)}${langSwitch('/m', lang)}</header>`);
 }
 
 type Section = 'new' | 'invoices' | 'settings';
@@ -101,7 +133,7 @@ type Section = 'new' | 'invoices' | 'settings';
 function merchantTop(lang: Lang, current: Section): string {
   const item = (s: Section, href: string, key: Key) =>
     `<a href="${href}"${s === current ? ' aria-current="page"' : ''}>${esc(t(lang, key))}</a>`;
-  return `<header class="lk-top">${BRAND}<nav class="lk-nav">${item('new', '/m', 'new_invoice')}${item('invoices', '/m/invoices', 'invoices')}
+  return `<header class="lk-top">${brand(lang)}<nav class="lk-nav">${item('new', '/m', 'new_invoice')}${item('invoices', '/m/invoices', 'invoices')}
 ${item('settings', '/m/settings', 'settings')}</nav></header>`;
 }
 

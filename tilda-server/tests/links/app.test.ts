@@ -87,4 +87,99 @@ describe('links app', () => {
   it('does not claim unrelated paths', async () => {
     expect((await fetch(`${base}/tilda/pay`)).status).toBe(404);
   });
+
+  it('renders the cookie banner (hidden until consent.js decides) with close, accept and decline in EN and RU', async () => {
+    for (const path of ['/', '/m', '/i/nope']) {
+      const html = await (await fetch(`${base}${path}`)).text();
+      expect(html).toContain('<aside class="lk-consent" id="lk-consent" hidden');
+      expect(html).toContain('<script src="/assets/consent.js" defer></script>');
+      for (const action of ['close', 'accept', 'decline']) expect(html).toContain(`data-consent="${action}"`);
+    }
+    const en = await (await fetch(`${base}/`)).text();
+    expect(en).toContain('We use cookies to improve your experience and remember your preferences.');
+    expect(en).toContain('>Accept all</button>');
+    expect(en).toContain('>Decline</button>');
+    const ru = await (await fetch(`${base}/?lang=ru`)).text();
+    expect(ru).toContain('Мы используем файлы cookie для улучшения вашего опыта и запоминания ваших предпочтений.');
+    expect(ru).toContain('>Принять все</button>');
+    expect(ru).toContain('>Отклонить</button>');
+    const js = await fetch(`${base}/assets/consent.js`);
+    expect(js.status).toBe(200);
+    expect(js.headers.get('content-type')).toContain('text/javascript');
+  });
+
+  it('loads Google Tag Manager and Analytics only from consent.js, and the CSP lets them in', async () => {
+    const js = await (await fetch(`${base}/assets/consent.js`)).text();
+    expect(js).toContain('GTM-5C97N359');
+    expect(js).toContain('G-JCX7CZC1PZ');
+    for (const path of ['/', '/m', '/i/nope']) {
+      const res = await fetch(`${base}${path}`);
+      const html = await res.text();
+      // No tag in the page itself: nothing reaches Google before the visitor accepts.
+      expect(html).not.toContain('googletagmanager.com');
+      const csp = res.headers.get('content-security-policy') ?? '';
+      expect(csp).toContain("script-src 'self' https://www.googletagmanager.com");
+      expect(csp).toContain('connect-src');
+      expect(csp).toContain('https://*.google-analytics.com');
+      expect(csp).toContain("frame-ancestors 'none'");
+    }
+    expect((await fetch(`${base}/`)).headers.get('content-security-policy')).toContain('frame-src https://www.youtube-nocookie.com');
+    const en = await (await fetch(`${base}/`)).text();
+    expect(en).not.toContain('No analytics');
+    expect(en).toContain('Google Analytics');
+    expect(await (await fetch(`${base}/?lang=ru`)).text()).toContain('Google Analytics');
+  });
+
+  it('links the logo back to the home page in the visitor\'s language', async () => {
+    const en = await (await fetch(`${base}/`)).text();
+    expect(en).toContain('<a class="lk-brand" href="/">');
+    const ru = await (await fetch(`${base}/?lang=ru`)).text();
+    expect(ru).toContain('<a class="lk-brand" href="/?lang=ru">');
+    // Pages away from the landing too, e.g. sign-in and a missing invoice.
+    expect(await (await fetch(`${base}/m`)).text()).toContain('class="lk-brand" href="/');
+    expect(await (await fetch(`${base}/i/nope`)).text()).toContain('class="lk-brand" href="/');
+  });
+
+  it('shows the devnet note, the data notice and the Telegram contact in the footer of every page', async () => {
+    for (const path of ['/', '/?lang=ru', '/m', '/i/nope']) {
+      const html = await (await fetch(`${base}${path}`)).text();
+      const foot = html.slice(html.indexOf('<footer class="lk-site-foot">'));
+      expect(foot).toContain('href="https://t.me/RuslanUralsk"');
+      expect(foot).toContain('class="lk-data"');
+      expect(foot).not.toContain('RPC');
+    }
+    const en = await (await fetch(`${base}/`)).text();
+    expect(en).toContain('Devnet demo');
+    expect(en).toContain('one cookie keeps you signed in');
+    expect(await (await fetch(`${base}/?lang=ru`)).text()).toContain('одна cookie нужна для входа');
+  });
+
+  it('shows the pitch and demo videos and the team on the landing in English and Russian', async () => {
+    const res = await fetch(`${base}/`);
+    const en = await res.text();
+    for (const id of ['QwVEPey9PfY', 'Jy2tIG_G8oA']) {
+      expect(en).toContain(`src="https://www.youtube-nocookie.com/embed/${id}"`);
+      expect(en).toContain(`href="https://youtu.be/${id}"`);
+    }
+    // The embeds load only if the landing's CSP lets YouTube frames in.
+    expect(res.headers.get('content-security-policy')).toContain('frame-src https://www.youtube-nocookie.com');
+    expect(en).toContain('Ruslan Satybaldin');
+    expect(en).toContain('10+ years in IT, client work and B2B sales in fintech, banking and a private medical laboratory.');
+    for (const href of ['https://t.me/RuslanUralsk', 'https://twitter.com/ruslantatankz', 'https://www.linkedin.com/in/ruslansatybaldin/']) {
+      expect(en).toContain(`href="${href}"`);
+    }
+    expect(en.indexOf('id="team"')).toBeGreaterThan(en.indexOf('id="videos"'));
+    expect(en).toContain('YouTube may store cookies');
+    // No initials badge next to the founder.
+    const team = en.slice(en.indexOf('id="team"'));
+    expect(team).not.toContain('lk-av');
+    expect(en).toContain('href="https://kzwedding.tilda.ws/solanapay">Tilda demo shop</a>');
+
+    const ru = await (await fetch(`${base}/?lang=ru`)).text();
+    expect(ru).toContain('Команда');
+    expect(ru).toContain('Руслан Сатыбалдин');
+    expect(ru).toContain('Более 10 лет в IT');
+    expect(ru).toContain('youtube-nocookie.com/embed/QwVEPey9PfY');
+    expect(ru).toContain('href="https://kzwedding.tilda.ws/solanapayru">Демо-магазин на Tilda</a>');
+  });
 });
