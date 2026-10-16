@@ -42,8 +42,7 @@ A small shop in Kazakhstan that wants to accept stablecoins faces three obstacle
 - **Problem:** No exchange quotes crypto against the tenge except one pair. The widely recommended price APIs do not
   support KZT at all — one of them answers a KZT request with HTTP 200 and an empty object, which a naive
   implementation reads as a rate of zero.
-- **SolanaPay-KZ:** computes the rate from the one pair that exists (Binance USDT/KZT) and freezes the amount with the
-  order for 15 minutes.
+- **SolanaPay-KZ:** computes the rate from the Binance SOL/KZT pair and freezes the amount with the order for 15 minutes.
 
 ### 2. No ready integration
 - **Problem:** Shop platforms ship card gateways, not wallets — and many sellers have no website at all and sell in
@@ -115,7 +114,7 @@ A small shop in Kazakhstan that wants to accept stablecoins faces three obstacle
 buyer                     shop                      Solana
   │                        │                          │
   │   places an order  ──> │                          │
-  │                        │ rate: Binance USDT/KZT   │
+  │                        │ rate: Binance SOL/KZT    │
   │                        │ amount frozen for 15 min │
   │  <── QR code / link ── │                          │
   │                                                   │
