@@ -42,7 +42,8 @@ A small shop in Kazakhstan that wants to accept stablecoins faces three obstacle
 - **Problem:** No exchange quotes crypto against the tenge except one pair. The widely recommended price APIs do not
   support KZT at all — one of them answers a KZT request with HTTP 200 and an empty object, which a naive
   implementation reads as a rate of zero.
-- **SolanaPay-KZ:** computes the rate from the Binance SOL/KZT pair and freezes the amount with the order for 15 minutes.
+- **SolanaPay-KZ:** computes the SOL/KZT and USDC/KZT rate from Binance (USDT/KZT × SOL/USDT or USDC/USDT) and
+  freezes the amount with the order for 15 minutes.
 
 ### 2. No ready integration
 - **Problem:** Shop platforms ship card gateways, not wallets — and many sellers have no website at all and sell in
@@ -102,7 +103,7 @@ A small shop in Kazakhstan that wants to accept stablecoins faces three obstacle
 | SDK | TypeScript · `@solana/kit` · `@solana/pay` · `@solana-program/token` |
 | Payment server and links app | Node.js 22 · `node:http` · `node:sqlite` · server-rendered pages |
 | WooCommerce plugin | PHP 8.1 · `bcmath` |
-| Rates | Binance USDT/KZT |
+| Rates | Binance USDT/KZT × SOL/USDT or USDC/USDT · fallback: open.er-api.com × CoinGecko |
 | Infrastructure | Docker · nginx · GitHub Actions · GitHub Pages (docs) |
 | Testing | Vitest · PHPUnit · devnet end-to-end |
 
@@ -115,6 +116,7 @@ buyer                     shop                      Solana
   │                        │                          │
   │   places an order  ──> │                          │
   │                        │ rate: Binance SOL/KZT    │
+  │                        │ (USDT/KZT × SOL/USDT)    │
   │                        │ amount frozen for 15 min │
   │  <── QR code / link ── │                          │
   │                                                   │
