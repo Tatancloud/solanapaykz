@@ -156,6 +156,11 @@ async function обработатьЗапрос(
   webhook: ReturnType<typeof createWebhookRoutes>,
 ): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://localhost');
+  // HEAD (мониторинги, `curl -I`) маршрутизируется как GET: маршруты здесь и
+  // в deps.links сверяют только 'GET', и без этого HEAD получал 404. Тело
+  // Node отбрасывает сам — ServerResponse запомнил HEAD при создании, до
+  // этой подмены.
+  if (req.method === 'HEAD') req.method = 'GET';
   const метод = req.method ?? 'GET';
 
   // Корень отдаёт короткую страницу о том, что это за сервер. Раньше здесь
