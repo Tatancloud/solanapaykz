@@ -6,7 +6,7 @@
 [![npm](https://img.shields.io/npm/v/@solanapaykz/core?color=00799A)](https://www.npmjs.com/package/@solanapaykz/core)
 [![License: MIT](https://img.shields.io/badge/License-MIT-F2C200.svg)](LICENSE)
 [![Solana](https://img.shields.io/badge/Solana-devnet-9945FF)](https://solana.com)
-[![Colosseum](https://img.shields.io/badge/Colosseum-Crypto%20World's%20Fair%202026-14F195)](https://colosseum.com)
+[![Colosseum](https://img.shields.io/badge/Colosseum-Crypto%20World's%20Fair%202026-14F195)](https://colosseum.com/arena/projects/solanapay-kz)
 
 **English** · [Русский](README.ru.md)
 
@@ -14,7 +14,7 @@
 > prices in **tenge (KZT)**. Money moves straight from the buyer's wallet to the merchant's wallet — nothing in this
 > project holds, routes or can freeze it, and private keys are never requested, created or stored.
 
-[Live app](https://solanapaykz.site/) · [Pitch video](https://youtu.be/QwVEPey9PfY) · [Demo video](https://youtu.be/Jy2tIG_G8oA) · [Docs](https://tatancloud.github.io/solanapaykz/) · [npm](https://www.npmjs.com/package/@solanapaykz/core)
+[Live app](https://solanapaykz.site/) · [Pitch video](https://youtu.be/QwVEPey9PfY) · [Demo video](https://youtu.be/Jy2tIG_G8oA) · [Docs](https://tatancloud.github.io/solanapaykz/) · [npm](https://www.npmjs.com/package/@solanapaykz/core) · [Colosseum project](https://colosseum.com/arena/projects/solanapay-kz)
 
 ---
 
@@ -23,6 +23,8 @@
 ---
 
 ## Submission to Colosseum — Crypto World's Fair (Sept–Oct 2026)
+
+Project page: <https://colosseum.com/arena/projects/solanapay-kz>
 
 | Name | Role | Contact |
 |------|------|---------|
@@ -234,6 +236,7 @@ demonstrated on mainnet with team-owned test merchants and pilot merchants recru
 - [Pitch video](https://youtu.be/QwVEPey9PfY)
 - [Product demo video](https://youtu.be/Jy2tIG_G8oA)
 - [Documentation](https://tatancloud.github.io/solanapaykz/)
+- [Colosseum project page](https://colosseum.com/arena/projects/solanapay-kz)
 - [Live WooCommerce demo shop](https://shop.pagafox.kz)
 - [Live Tilda demo shop](https://kzwedding.tilda.ws/solanapay)
 - [X / Twitter](https://twitter.com/ruslantatankz) · [Telegram](https://t.me/RuslanUralsk)

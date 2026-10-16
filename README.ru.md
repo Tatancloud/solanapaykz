@@ -6,7 +6,7 @@
 [![npm](https://img.shields.io/npm/v/@solanapaykz/core?color=00799A)](https://www.npmjs.com/package/@solanapaykz/core)
 [![License: MIT](https://img.shields.io/badge/License-MIT-F2C200.svg)](LICENSE)
 [![Solana](https://img.shields.io/badge/Solana-devnet-9945FF)](https://solana.com)
-[![Colosseum](https://img.shields.io/badge/Colosseum-Crypto%20World's%20Fair%202026-14F195)](https://colosseum.com)
+[![Colosseum](https://img.shields.io/badge/Colosseum-Crypto%20World's%20Fair%202026-14F195)](https://colosseum.com/arena/projects/solanapay-kz)
 
 [English](README.md) · **Русский**
 
@@ -15,7 +15,7 @@
 > продавца — ничто в этом проекте их не принимает, не хранит и не может задержать, а приватные ключи не
 > запрашиваются, не создаются и не хранятся.
 
-[Сайт](https://solanapaykz.site/?lang=ru) · [Видео-питч](https://youtu.be/QwVEPey9PfY) · [Демо-видео](https://youtu.be/Jy2tIG_G8oA) · [Документация](https://tatancloud.github.io/solanapaykz/ru/) · [npm](https://www.npmjs.com/package/@solanapaykz/core)
+[Сайт](https://solanapaykz.site/?lang=ru) · [Видео-питч](https://youtu.be/QwVEPey9PfY) · [Демо-видео](https://youtu.be/Jy2tIG_G8oA) · [Документация](https://tatancloud.github.io/solanapaykz/ru/) · [npm](https://www.npmjs.com/package/@solanapaykz/core) · [Проект на Colosseum](https://colosseum.com/arena/projects/solanapay-kz)
 
 ---
 
@@ -24,6 +24,8 @@
 ---
 
 ## Заявка на Colosseum — Crypto World's Fair (сентябрь–октябрь 2026)
+
+Страница проекта: <https://colosseum.com/arena/projects/solanapay-kz>
 
 | Имя | Роль | Контакты |
 |-----|------|----------|
@@ -238,6 +240,7 @@ Telegram-бот. Все изменения: [`v0.1.0...main`](../../compare/v0.1
 - [Видео-питч](https://youtu.be/QwVEPey9PfY)
 - [Демо-видео продукта](https://youtu.be/Jy2tIG_G8oA)
 - [Документация](https://tatancloud.github.io/solanapaykz/ru/)
+- [Страница проекта на Colosseum](https://colosseum.com/arena/projects/solanapay-kz)
 - [Живой демо-магазин на WooCommerce](https://shop.pagafox.kz)
 - [Живой демо-магазин на Tilda](https://kzwedding.tilda.ws/solanapayru)
 - [X / Twitter](https://twitter.com/ruslantatankz) · [Telegram](https://t.me/RuslanUralsk)
